@@ -1,29 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   fetchProjects,
   fetchProject,
@@ -38,14 +26,28 @@ import {
   type ProjectDetail,
 } from '@/lib/api';
 
+// Layout components
+import { Sidebar, Header, ActivityPanel } from '@/components/layout';
+
+// View components
+import { 
+  DashboardView, 
+  ChapterListView, 
+  GenerateView, 
+  OutlineView, 
+  BibleView 
+} from '@/components/views';
+
 function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState('dashboard');
 
-  // New project form
+  // New project dialog
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectBible, setNewProjectBible] = useState('');
   const [newProjectChapters, setNewProjectChapters] = useState('400');
@@ -62,84 +64,9 @@ function App() {
   // Generate form
   const [generateCount, setGenerateCount] = useState('1');
 
-  // Chapter viewer
-  const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string } | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
-
   const log = useCallback((msg: string) => {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
-
-  // Helper: get chapter title from outline
-  const getChapterTitle = useCallback((chapterIndex: number) => {
-    if (!selectedProject?.outline) return null;
-    for (const vol of selectedProject.outline.volumes) {
-      const ch = vol.chapters.find(c => c.index === chapterIndex);
-      if (ch) return ch.title;
-    }
-    return null;
-  }, [selectedProject?.outline]);
-
-  // Helper: copy chapter content
-  const handleCopyChapter = useCallback(async () => {
-    if (!viewingChapter?.content) return;
-    try {
-      await navigator.clipboard.writeText(viewingChapter.content);
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
-    } catch (err) {
-      setError('复制失败：' + (err as Error).message);
-    }
-  }, [viewingChapter?.content]);
-
-  // Helper: download entire book
-  const handleDownloadBook = useCallback(async () => {
-    if (!selectedProject) return;
-    try {
-      const url = `/api/projects/${encodeURIComponent(selectedProject.name)}/download`;
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error('下载失败');
-      }
-      
-      // Get filename from Content-Disposition header
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `${selectedProject.name}.txt`;
-      if (contentDisposition) {
-        // Try plain filename first (already decoded), then filename* (URL-encoded)
-        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
-        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-        if (filenameMatch && !/^%[0-9A-F]{2}/i.test(filenameMatch[1])) {
-          // Plain filename without URL encoding
-          filename = filenameMatch[1];
-        } else if (filenameStarMatch) {
-          // URL-encoded filename
-          filename = decodeURIComponent(filenameStarMatch[1]);
-        } else if (filenameMatch) {
-          // Fallback: try to decode the filename anyway
-          try {
-            filename = decodeURIComponent(filenameMatch[1]);
-          } catch {
-            filename = filenameMatch[1];
-          }
-        }
-      }
-      
-      // Create blob and download
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      setError('下载失败：' + (err as Error).message);
-    }
-  }, [selectedProject]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -164,6 +91,8 @@ function App() {
 
   useEffect(() => {
     loadProjects();
+    // Set dark mode by default
+    document.documentElement.classList.add('dark');
   }, [loadProjects]);
 
   const handleCreateProject = async () => {
@@ -178,6 +107,7 @@ function App() {
       log('✅ 项目创建成功');
       setNewProjectName('');
       setNewProjectBible('');
+      setShowNewProjectDialog(false);
       await loadProjects();
     } catch (err) {
       setError((err as Error).message);
@@ -227,24 +157,19 @@ function App() {
     }
   };
 
-  const handleViewChapter = async (index: number) => {
-    if (!selectedProject) return;
-    try {
-      const content = await fetchChapter(selectedProject.name, index);
-      setViewingChapter({ index, content });
-    } catch (err) {
-      setError((err as Error).message);
-    }
+  const handleViewChapter = async (index: number): Promise<string> => {
+    if (!selectedProject) return '';
+    const content = await fetchChapter(selectedProject.name, index);
+    return content;
   };
 
-  const handleDeleteProject = async (name: string) => {
-    if (!confirm(`确定要删除项目 "${name}" 吗？此操作不可恢复。`)) return;
+  const handleDeleteProject = async () => {
+    if (!selectedProject) return;
+    if (!confirm(`确定要删除项目 "${selectedProject.name}" 吗？此操作不可恢复。`)) return;
     try {
-      await deleteProject(name);
-      log(`🗑️ 已删除项目: ${name}`);
-      if (selectedProject?.name === name) {
-        setSelectedProject(null);
-      }
+      await deleteProject(selectedProject.name);
+      log(`🗑️ 已删除项目: ${selectedProject.name}`);
+      setSelectedProject(null);
       await loadProjects();
     } catch (err) {
       setError((err as Error).message);
@@ -262,417 +187,245 @@ function App() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="container mx-auto py-6 px-4">
-        <h1 className="text-3xl font-bold mb-6">📚 Novel Copilot</h1>
+  const handleDownloadBook = async () => {
+    if (!selectedProject) return;
+    try {
+      const url = `/api/projects/${encodeURIComponent(selectedProject.name)}/download`;
+      const response = await fetch(url);
 
+      if (!response.ok) {
+        throw new Error('下载失败');
+      }
+
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${selectedProject.name}.txt`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (filenameMatch && !/^%[0-9A-F]{2}/i.test(filenameMatch[1])) {
+          filename = filenameMatch[1];
+        } else if (filenameStarMatch) {
+          filename = decodeURIComponent(filenameStarMatch[1]);
+        } else if (filenameMatch) {
+          try {
+            filename = decodeURIComponent(filenameMatch[1]);
+          } catch {
+            filename = filenameMatch[1];
+          }
+        }
+      }
+
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      log(`📥 下载完成: ${filename}`);
+    } catch (err) {
+      setError('下载失败：' + (err as Error).message);
+    }
+  };
+
+  const handleGenerateBible = async () => {
+    setGeneratingBible(true);
+    try {
+      log('🤖 AI 正在想象 Story Bible...');
+      const bible = await generateBible(aiGenre, aiTheme, aiKeywords);
+      setNewProjectBible(bible);
+      log('✅ Story Bible 生成完成');
+    } catch (err) {
+      setError((err as Error).message);
+      log(`❌ 生成失败: ${(err as Error).message}`);
+    } finally {
+      setGeneratingBible(false);
+    }
+  };
+
+  // Render current view based on active tab
+  const renderContent = () => {
+    if (!selectedProject) {
+      return (
+        <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          <div className="text-center">
+            <div className="text-6xl mb-4">📚</div>
+            <p className="text-xl font-medium mb-2">选择一个项目开始</p>
+            <p className="text-sm">从左侧选择项目，或创建新项目</p>
+          </div>
+        </div>
+      );
+    }
+
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <DashboardView 
+            project={selectedProject} 
+            onGenerateOutline={handleGenerateOutline}
+            onGenerateChapters={handleGenerateChapters}
+            loading={loading}
+          />
+        );
+      case 'outline':
+        return <OutlineView project={selectedProject} />;
+      case 'generate':
+        return (
+          <GenerateView
+            project={selectedProject}
+            loading={loading}
+            outlineChapters={outlineChapters}
+            outlineWordCount={outlineWordCount}
+            outlineCustomPrompt={outlineCustomPrompt}
+            onOutlineChaptersChange={setOutlineChapters}
+            onOutlineWordCountChange={setOutlineWordCount}
+            onOutlineCustomPromptChange={setOutlineCustomPrompt}
+            onGenerateOutline={handleGenerateOutline}
+            generateCount={generateCount}
+            onGenerateCountChange={setGenerateCount}
+            onGenerateChapters={handleGenerateChapters}
+            onResetState={handleResetProject}
+          />
+        );
+      case 'chapters':
+        return (
+          <ChapterListView 
+            project={selectedProject} 
+            onViewChapter={handleViewChapter}
+          />
+        );
+      case 'bible':
+        return <BibleView project={selectedProject} />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="h-screen flex bg-background text-foreground overflow-hidden">
+      {/* Left Sidebar */}
+      <Sidebar
+        projects={projects}
+        selectedProject={selectedProject?.name || null}
+        onSelectProject={loadProject}
+        onNewProject={() => setShowNewProjectDialog(true)}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Header */}
+        <Header
+          project={selectedProject}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onRefresh={() => selectedProject && loadProject(selectedProject.name)}
+          onDownload={handleDownloadBook}
+          onDelete={handleDeleteProject}
+        />
+
+        {/* Error banner */}
         {error && (
-          <div className="bg-destructive/10 text-destructive p-4 rounded-lg mb-4">
-            {error}
-            <Button variant="ghost" size="sm" onClick={() => setError(null)} className="ml-4">
+          <div className="bg-destructive/10 text-destructive px-6 py-3 flex items-center justify-between">
+            <span>{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => setError(null)}>
               ✕
             </Button>
           </div>
         )}
 
-        <div className="grid grid-cols-12 gap-6">
-          {/* Sidebar - Project List */}
-          <div className="col-span-3">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">项目列表</CardTitle>
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button size="sm" className="w-full mt-2">
-                      + 新建项目
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>新建项目</DialogTitle>
-                      <DialogDescription>创建一个新的小说项目</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label>项目名称</Label>
-                        <Input
-                          placeholder="my-novel"
-                          value={newProjectName}
-                          onChange={(e) => setNewProjectName(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>计划章数</Label>
-                        <Input
-                          type="number"
-                          value={newProjectChapters}
-                          onChange={(e) => setNewProjectChapters(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <Label>Story Bible</Label>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={async () => {
-                              setGeneratingBible(true);
-                              try {
-                                log('🤖 AI 正在想象 Story Bible...');
-                                const bible = await generateBible(aiGenre, aiTheme, aiKeywords);
-                                setNewProjectBible(bible);
-                                log('✅ Story Bible 生成完成');
-                              } catch (err) {
-                                setError((err as Error).message);
-                                log(`❌ 生成失败: ${(err as Error).message}`);
-                              } finally {
-                                setGeneratingBible(false);
-                              }
-                            }}
-                            disabled={generatingBible}
-                          >
-                            {generatingBible ? '⏳ 生成中...' : '✨ AI 自动想象'}
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2 mb-2">
-                          <Input
-                            placeholder="题材: 玄幻/都市/科幻"
-                            value={aiGenre}
-                            onChange={(e) => setAiGenre(e.target.value)}
-                          />
-                          <Input
-                            placeholder="风格: 热血/悬疑/爽文"
-                            value={aiTheme}
-                            onChange={(e) => setAiTheme(e.target.value)}
-                          />
-                          <Input
-                            placeholder="关键词: 逆袭、复仇"
-                            value={aiKeywords}
-                            onChange={(e) => setAiKeywords(e.target.value)}
-                          />
-                        </div>
-                        <Textarea
-                          placeholder="世界观、人物设定、主线目标..."
-                          className="h-[300px] max-h-[300px] font-mono text-sm resize-none"
-                          value={newProjectBible}
-                          onChange={(e) => setNewProjectBible(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <DialogClose asChild>
-                        <Button variant="outline">取消</Button>
-                      </DialogClose>
-                      <Button onClick={handleCreateProject} disabled={loading}>
-                        创建
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[400px]">
-                  <div className="space-y-2">
-                    {projects.map((p) => (
-                      <div
-                        key={p.name}
-                        className={`p-3 rounded-lg cursor-pointer hover:bg-accent transition-colors ${
-                          selectedProject?.name === p.name ? 'bg-accent' : ''
-                        }`}
-                        onClick={() => loadProject(p.name)}
-                      >
-                        <div className="font-medium">{p.name}</div>
-                        <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                          <span>
-                            {p.state.nextChapterIndex - 1}/{p.state.totalChapters}
-                          </span>
-                          {p.hasOutline && <Badge variant="secondary">有大纲</Badge>}
-                          {p.state.needHuman && <Badge variant="destructive">需人工</Badge>}
-                        </div>
-                      </div>
-                    ))}
-                    {projects.length === 0 && (
-                      <div className="text-muted-foreground text-center py-8">暂无项目</div>
-                    )}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </div>
+        {/* Main content area */}
+        <main className="flex-1 overflow-auto bg-background/50 grid-pattern">
+          {renderContent()}
+        </main>
+      </div>
 
-          {/* Main Content */}
-          <div className="col-span-6">
-            {selectedProject ? (
-              <Tabs defaultValue="outline">
-                <TabsList className="mb-4">
-                  <TabsTrigger value="outline">大纲生成</TabsTrigger>
-                  <TabsTrigger value="generate">章节生成</TabsTrigger>
-                  <TabsTrigger value="chapters">已生成章节</TabsTrigger>
-                  <TabsTrigger value="bible">Story Bible</TabsTrigger>
-                </TabsList>
+      {/* Right Activity Panel */}
+      <ActivityPanel logs={logs} onClear={() => setLogs([])} />
 
-                <TabsContent value="outline">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>生成大纲</CardTitle>
-                      <CardDescription>
-                        为 "{selectedProject.name}" 生成百万字大纲
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>目标章数</Label>
-                          <Input
-                            type="number"
-                            value={outlineChapters}
-                            onChange={(e) => setOutlineChapters(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>目标字数（万字）</Label>
-                          <Input
-                            type="number"
-                            value={outlineWordCount}
-                            onChange={(e) => setOutlineWordCount(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>自定义提示词（可选）</Label>
-                        <Textarea
-                          placeholder="添加额外的写作要求，如：多加感情线、增加反转..."
-                          className="min-h-[120px]"
-                          value={outlineCustomPrompt}
-                          onChange={(e) => setOutlineCustomPrompt(e.target.value)}
-                        />
-                      </div>
-                      <Button onClick={handleGenerateOutline} disabled={loading} className="w-full">
-                        {loading ? '生成中...' : '🚀 生成大纲'}
-                      </Button>
-
-                      {selectedProject.outline && (
-                        <div className="mt-4 p-4 bg-muted rounded-lg">
-                          <div className="font-medium mb-2">当前大纲</div>
-                          <div className="text-sm text-muted-foreground">
-                            主线: {selectedProject.outline.mainGoal}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {selectedProject.outline.volumes.length} 卷 /{' '}
-                            {selectedProject.outline.totalChapters} 章 /{' '}
-                            {selectedProject.outline.targetWordCount} 万字
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="generate">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>生成章节</CardTitle>
-                      <CardDescription>
-                        当前进度: {selectedProject.state.nextChapterIndex - 1}/
-                        {selectedProject.state.totalChapters}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>生成章数</Label>
-                        <Select value={generateCount} onValueChange={setGenerateCount}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1">1 章</SelectItem>
-                            <SelectItem value="5">5 章</SelectItem>
-                            <SelectItem value="10">10 章</SelectItem>
-                            <SelectItem value="20">20 章</SelectItem>
-                            <SelectItem value="50">50 章</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button onClick={handleGenerateChapters} disabled={loading} className="w-full">
-                        {loading ? '生成中...' : '📝 开始生成'}
-                      </Button>
-
-                      {selectedProject.state.needHuman && (
-                        <div className="p-4 bg-destructive/10 rounded-lg">
-                          <div className="font-medium text-destructive mb-2">需要人工介入</div>
-                          <div className="text-sm">{selectedProject.state.needHumanReason}</div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleResetProject}
-                            className="mt-2"
-                          >
-                            重置状态
-                          </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="chapters">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>已生成章节</CardTitle>
-                      <CardDescription>共 {selectedProject.chapters.length} 章</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="h-[400px]">
-                        <div className="space-y-1">
-                          {selectedProject.chapters.map((ch) => {
-                            const index = parseInt(ch.replace('.md', ''), 10);
-                            const title = getChapterTitle(index);
-                            return (
-                              <div
-                                key={ch}
-                                className="p-2 rounded hover:bg-accent cursor-pointer flex justify-between items-center"
-                                onClick={() => handleViewChapter(index)}
-                              >
-                                <span className="flex-1 truncate mr-2">
-                                  第 {index} 章{title ? `：${title}` : ''}
-                                </span>
-                                <Button variant="ghost" size="sm">
-                                  查看
-                                </Button>
-                              </div>
-                            );
-                          })}
-                          {selectedProject.chapters.length === 0 && (
-                            <div className="text-muted-foreground text-center py-8">
-                              暂无生成的章节
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="bible">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Story Bible</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="h-[400px]">
-                        <pre className="whitespace-pre-wrap text-sm font-mono">
-                          {selectedProject.bible}
-                        </pre>
-                      </ScrollArea>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-              </Tabs>
-            ) : (
-              <Card>
-                <CardContent className="py-16 text-center text-muted-foreground">
-                  ← 选择一个项目开始
-                </CardContent>
-              </Card>
-            )}
-          </div>
-
-          {/* Right Sidebar - Logs */}
-          <div className="col-span-3">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-center">
-                  <CardTitle className="text-lg">日志</CardTitle>
-                  <Button variant="ghost" size="sm" onClick={() => setLogs([])}>
-                    清空
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[400px]">
-                  <div className="space-y-1 font-mono text-xs">
-                    {logs.map((log, i) => (
-                      <div key={i} className="text-muted-foreground">
-                        {log}
-                      </div>
-                    ))}
-                    {logs.length === 0 && (
-                      <div className="text-muted-foreground text-center py-4">暂无日志</div>
-                    )}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            {selectedProject && (
-              <Card className="mt-4">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">项目操作</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => loadProject(selectedProject.name)}
-                  >
-                    🔄 刷新
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={handleDownloadBook}
-                    disabled={selectedProject.chapters.length === 0}
-                  >
-                    📥 下载整本书
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => handleDeleteProject(selectedProject.name)}
-                  >
-                    🗑️ 删除项目
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </div>
-
-        {/* Chapter Viewer Dialog */}
-        <Dialog open={!!viewingChapter} onOpenChange={() => setViewingChapter(null)}>
-          <DialogContent className="max-w-4xl max-h-[80vh]">
-            <DialogHeader>
-              <div className="flex items-center justify-between pr-8">
-                <DialogTitle>
-                  第 {viewingChapter?.index} 章
-                  {viewingChapter && getChapterTitle(viewingChapter.index) && (
-                    <span className="ml-2 text-muted-foreground font-normal">
-                      {getChapterTitle(viewingChapter.index)}
-                    </span>
-                  )}
-                </DialogTitle>
+      {/* New Project Dialog */}
+      <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto glass-card">
+          <DialogHeader>
+            <DialogTitle className="gradient-text">✨ 新建项目</DialogTitle>
+            <DialogDescription>创建一个新的小说项目</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>项目名称</Label>
+              <Input
+                placeholder="my-novel"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                className="bg-muted/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>计划章数</Label>
+              <Input
+                type="number"
+                value={newProjectChapters}
+                onChange={(e) => setNewProjectChapters(e.target.value)}
+                className="bg-muted/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label>Story Bible</Label>
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
-                  onClick={handleCopyChapter}
+                  onClick={handleGenerateBible}
+                  disabled={generatingBible}
+                  className="gap-2"
                 >
-                  {copySuccess ? '✅ 已复制' : '📋 复制整章'}
+                  {generatingBible ? '⏳ 生成中...' : '🤖 AI 自动想象'}
                 </Button>
               </div>
-            </DialogHeader>
-            <ScrollArea className="h-[60vh]">
-              <pre className="whitespace-pre-wrap text-sm leading-relaxed">
-                {viewingChapter?.content}
-              </pre>
-            </ScrollArea>
-          </DialogContent>
-        </Dialog>
-      </div>
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                <Input
+                  placeholder="题材: 玄幻/都市/科幻"
+                  value={aiGenre}
+                  onChange={(e) => setAiGenre(e.target.value)}
+                  className="bg-muted/50"
+                />
+                <Input
+                  placeholder="风格: 热血/悬疑/爽文"
+                  value={aiTheme}
+                  onChange={(e) => setAiTheme(e.target.value)}
+                  className="bg-muted/50"
+                />
+                <Input
+                  placeholder="关键词: 逆袭、复仇"
+                  value={aiKeywords}
+                  onChange={(e) => setAiKeywords(e.target.value)}
+                  className="bg-muted/50"
+                />
+              </div>
+              <Textarea
+                placeholder="世界观、人物设定、主线目标..."
+                className="h-[250px] max-h-[300px] font-mono text-sm resize-none bg-muted/50"
+                value={newProjectBible}
+                onChange={(e) => setNewProjectBible(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">取消</Button>
+            </DialogClose>
+            <Button 
+              onClick={handleCreateProject} 
+              disabled={loading}
+              className="gradient-bg hover:opacity-90"
+            >
+              创建项目
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

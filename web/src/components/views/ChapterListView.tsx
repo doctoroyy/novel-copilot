@@ -1,0 +1,181 @@
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import type { ProjectDetail } from '@/lib/api';
+
+interface ChapterListViewProps {
+  project: ProjectDetail;
+  onViewChapter: (index: number) => Promise<string>;
+}
+
+export function ChapterListView({ project, onViewChapter }: ChapterListViewProps) {
+  const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const getChapterTitle = (chapterIndex: number) => {
+    if (!project.outline) return null;
+    for (const vol of project.outline.volumes) {
+      const ch = vol.chapters.find(c => c.index === chapterIndex);
+      if (ch) return ch.title;
+    }
+    return null;
+  };
+
+  const handleView = async (index: number) => {
+    setLoading(true);
+    try {
+      const content = await onViewChapter(index);
+      setViewingChapter({ 
+        index, 
+        content, 
+        title: getChapterTitle(index) || undefined 
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!viewingChapter?.content) return;
+    await navigator.clipboard.writeText(viewingChapter.content);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
+
+  // Group chapters by volume
+  const volumeGroups = project.outline?.volumes.map(vol => ({
+    ...vol,
+    chapters: project.chapters
+      .map(ch => parseInt(ch.replace('.md', ''), 10))
+      .filter(idx => idx >= vol.startChapter && idx <= vol.endChapter)
+  })) || [];
+
+  return (
+    <div className="p-6">
+      <Card className="glass-card">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">已生成章节</CardTitle>
+            <Badge variant="secondary">{project.chapters.length} 章</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[calc(100vh-280px)]">
+            {project.outline ? (
+              // Grouped by volume
+              <div className="space-y-6">
+                {volumeGroups.map((vol, volIndex) => (
+                  vol.chapters.length > 0 && (
+                    <div key={volIndex}>
+                      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
+                        <span className="text-sm font-medium">{vol.title}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {vol.chapters.length} 章
+                        </Badge>
+                      </div>
+                      <div className="grid gap-2">
+                        {vol.chapters.map((chapterIndex) => {
+                          const title = getChapterTitle(chapterIndex);
+                          return (
+                            <button
+                              key={chapterIndex}
+                              onClick={() => handleView(chapterIndex)}
+                              disabled={loading}
+                              className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium">第 {chapterIndex} 章</span>
+                                {title && (
+                                  <span className="ml-2 text-muted-foreground truncate">
+                                    {title}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                                查看 →
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )
+                ))}
+              </div>
+            ) : (
+              // Simple list
+              <div className="grid gap-2">
+                {project.chapters.map((ch) => {
+                  const index = parseInt(ch.replace('.md', ''), 10);
+                  return (
+                    <button
+                      key={ch}
+                      onClick={() => handleView(index)}
+                      disabled={loading}
+                      className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
+                    >
+                      <span className="font-medium">第 {index} 章</span>
+                      <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                        查看 →
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            
+            {project.chapters.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground">
+                <div className="text-4xl mb-3">📖</div>
+                <p>暂无生成的章节</p>
+                <p className="text-sm">前往"生成"标签页开始创作</p>
+              </div>
+            )}
+          </ScrollArea>
+        </CardContent>
+      </Card>
+
+      {/* Chapter Reader Dialog */}
+      <Dialog open={!!viewingChapter} onOpenChange={() => setViewingChapter(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="pb-4 border-b border-border">
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2">
+                <span>第 {viewingChapter?.index} 章</span>
+                {viewingChapter?.title && (
+                  <span className="text-muted-foreground font-normal">
+                    {viewingChapter.title}
+                  </span>
+                )}
+              </DialogTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopy}
+                className="gap-2"
+              >
+                {copySuccess ? '✅ 已复制' : '📋 复制'}
+              </Button>
+            </div>
+          </DialogHeader>
+          <ScrollArea className="flex-1 mt-4">
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                {viewingChapter?.content}
+              </pre>
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
