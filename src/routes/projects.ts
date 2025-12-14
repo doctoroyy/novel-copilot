@@ -204,41 +204,100 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
 });
 
 // Download all chapters as a ZIP file
+// Download all chapters as a ZIP file
 projectsRoutes.get('/:name/download', async (c) => {
   const name = c.req.param('name');
   
   try {
+    // 1. Fetch project details, bible, and outline
     const project = await c.env.DB.prepare(`
-      SELECT id, name FROM projects WHERE name = ?
+      SELECT p.id, p.name, p.bible, o.outline_json
+      FROM projects p
+      LEFT JOIN outlines o ON p.id = o.project_id
+      WHERE p.name = ?
     `).bind(name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
+    const projectId = (project as any).id;
+    const projectName = (project as any).name;
+    const bibleContent = (project as any).bible;
+    const outlineJson = (project as any).outline_json;
+
+    // 2. Fetch all chapters
     const { results: chapters } = await c.env.DB.prepare(`
       SELECT chapter_index, content FROM chapters 
       WHERE project_id = ? 
       ORDER BY chapter_index
-    `).bind((project as any).id).all();
+    `).bind(projectId).all();
 
     if (chapters.length === 0) {
       return c.json({ success: false, error: 'No chapters to download' }, 400);
     }
 
+    // 3. Create ZIP using JSZip
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
-    const folder = zip.folder((project as any).name);
+    
+    // Create root folder matches project name
+    const root = zip.folder(projectName);
+    if (!root) throw new Error('Failed to create root folder in ZIP');
 
-    if (folder) {
-      chapters.forEach((ch: any) => {
-        const filename = `${ch.chapter_index.toString().padStart(3, '0')}.md`;
-        folder.file(filename, ch.content);
-      });
+    // Add bible
+    if (bibleContent) {
+      root.file('bible.md', bibleContent);
     }
 
+    // Add outline
+    if (outlineJson) {
+      // Beautify JSON
+      root.file('outline.json', JSON.stringify(JSON.parse(outlineJson), null, 2));
+    }
+
+    // Add full concatenated text file
+    let fullText = `${projectName}\n\n`;
+    if (bibleContent) fullText += `【Story Bible】\n${bibleContent}\n\n`;
+    
+    const chaptersFolder = root.folder('chapters');
+    
+    chapters.forEach((ch: any) => {
+      // Extract title for filename
+      const content = ch.content as string;
+      const titleMatch = content.match(/^#?\s*第?\d*[章回节]?\s*[：:.]?\s*(.+)$/m) || 
+                         content.match(/^(.+)$/m);
+      
+      let title = `第${ch.chapter_index}章`;
+      if (titleMatch && titleMatch[1]) {
+        // Clean up title
+        const rawTitle = titleMatch[1].trim()
+          .replace(/[\\/:*?"<>|]/g, '_'); // Remove invalid filename chars
+        
+        // If title doesn't start with "第", add prefix
+        if (!rawTitle.startsWith('第')) {
+            title = `第${ch.chapter_index}章 ${rawTitle}`;
+        } else {
+            title = rawTitle;
+        }
+      }
+
+      // Add to chapters folder
+      const filename = `${title}.txt`;
+      if (chaptersFolder) {
+        chaptersFolder.file(filename, content);
+      }
+
+      // Append to full text
+      fullText += `${'='.repeat(50)}\n${title}\n${'='.repeat(50)}\n\n${content}\n\n`;
+    });
+
+    // Add full text file to root
+    root.file(`${projectName}.txt`, fullText);
+
+    // 4. Generate and return ZIP
     const content = await zip.generateAsync({ type: 'uint8array' });
-    const filename = `${(project as any).name}.zip`;
+    const filename = `${projectName}.zip`;
 
     return new Response(content, {
       headers: {
