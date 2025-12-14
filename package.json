@@ -10,6 +10,7 @@
     "build:web": "cd web && pnpm build",
     "db:init": "wrangler d1 execute novel-copilot-db --file=./src/db/schema.sql",
     "db:init:local": "wrangler d1 execute novel-copilot-db --local --file=./src/db/schema.sql",
+    "migrate": "tsx src/migrate.ts",
     "typecheck": "tsc --noEmit",
     "batch": "tsx src/runBatch.ts",
     "server": "tsx src/server.ts"
