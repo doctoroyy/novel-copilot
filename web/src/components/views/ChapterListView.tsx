@@ -167,13 +167,13 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
               </Button>
             </div>
           </DialogHeader>
-          <ScrollArea className="flex-1 mt-4">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
+          <div className="flex-1 overflow-y-auto mt-4 scrollbar-thin">
+            <div className="prose prose-sm dark:prose-invert max-w-none pr-2">
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                 {viewingChapter?.content}
               </pre>
             </div>
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,4 +1,3 @@
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import type { ProgressEvent } from '@/hooks/useServerEvents';
 
@@ -91,7 +90,7 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
       )}
 
       {/* Log List */}
-      <ScrollArea className="flex-1 p-3">
+      <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
         <div className="space-y-2">
           {logs.slice().reverse().map((log, i) => {
             // Detect log level from prefix
@@ -122,7 +121,7 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Stats Footer */}
       <div className="p-4 border-t border-border">
