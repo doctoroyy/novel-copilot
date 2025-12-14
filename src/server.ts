@@ -17,8 +17,7 @@ import {
 import { readOutline, generateFullOutline, type NovelOutline } from './generateOutline.js';
 import { writeOneChapter } from './generateChapter.js';
 import { eventBus } from './eventBus.js';
-import { loadConfig, saveConfig, maskApiKey, PROVIDER_MODELS, clearConfigCache } from './config.js';
-import { testConnection, resetClients } from './aiClient.js';
+import { getAIConfigFromHeaders, testConnectionWithConfig, type AIConfig } from './aiClient.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +35,19 @@ const PROJECTS_DIR = path.join(process.cwd(), 'projects');
 // Helper: ensure projects directory exists
 async function ensureProjectsDir() {
   await fs.mkdir(PROJECTS_DIR, { recursive: true });
+}
+
+// Helper to get AI config from request headers
+function requireAIConfig(req: Request, res: Response): AIConfig | null {
+  const config = getAIConfigFromHeaders(req.headers);
+  if (!config) {
+    res.status(400).json({ 
+      success: false, 
+      error: 'Missing AI configuration. Please configure in Settings.',
+    });
+    return null;
+  }
+  return config;
 }
 
 // ==================== SSE Events Endpoint ====================
@@ -72,76 +84,28 @@ app.get('/api/events', (req: Request, res: Response) => {
 // ==================== Config API ====================
 
 /**
- * GET /api/config - 获取 AI 配置（API Key 脱敏）
- */
-app.get('/api/config', async (req: Request, res: Response) => {
-  try {
-    const config = await loadConfig();
-    res.json({ 
-      success: true, 
-      config: maskApiKey(config),
-      providers: PROVIDER_MODELS,
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
-  }
-});
-
-/**
- * POST /api/config - 更新 AI 配置
- */
-app.post('/api/config', async (req: Request, res: Response) => {
-  try {
-    const { provider, model, apiKey, baseUrl } = req.body;
-    
-    // Load existing config and merge
-    const existing = await loadConfig();
-    const newConfig = {
-      provider: provider || existing.provider,
-      model: model || existing.model,
-      apiKey: apiKey || existing.apiKey,
-      baseUrl: baseUrl !== undefined ? baseUrl : existing.baseUrl,
-    };
-    
-    await saveConfig(newConfig);
-    clearConfigCache();
-    resetClients();
-    
-    res.json({ 
-      success: true, 
-      config: maskApiKey(newConfig),
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
-  }
-});
-
-/**
- * POST /api/config/test - 测试 API 连接（支持传入临时配置）
+ * POST /api/config/test - 测试 API 连接
  */
 app.post('/api/config/test', async (req: Request, res: Response) => {
   try {
     const { provider, model, apiKey, baseUrl } = req.body;
     
-    // If config provided in body, use it (for testing before saving)
-    if (provider && model && apiKey) {
-      const { testConnectionWithConfig } = await import('./aiClient.js');
-      const result = await testConnectionWithConfig({
-        provider,
-        model,
-        apiKey,
-        baseUrl,
-      });
-      return res.json(result);
+    if (!provider || !model || !apiKey) {
+      return res.status(400).json({ success: false, message: 'Missing config parameters' });
     }
     
-    // Otherwise use saved config
-    const result = await testConnection();
+    const result = await testConnectionWithConfig({
+      provider,
+      model,
+      apiKey,
+      baseUrl,
+    });
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 });
+
 
 // ==================== API Routes ====================
 
@@ -272,6 +236,9 @@ app.put('/api/projects/:name/bible', async (req: Request, res: Response) => {
  * POST /api/projects/:name/outline - 生成大纲 (支持自定义提示词)
  */
 app.post('/api/projects/:name/outline', async (req: Request, res: Response) => {
+  const aiConfig = requireAIConfig(req, res);
+  if (!aiConfig) return;
+  
   try {
     const { targetChapters = 400, targetWordCount = 100, customPrompt } = req.body;
     const projectPath = path.join(PROJECTS_DIR, req.params.name);
@@ -286,6 +253,7 @@ app.post('/api/projects/:name/outline', async (req: Request, res: Response) => {
     
     // Generate outline
     const outline = await generateFullOutline({
+      aiConfig,
       projectDir: projectPath,
       targetChapters,
       targetWordCount,
@@ -303,6 +271,9 @@ app.post('/api/projects/:name/outline', async (req: Request, res: Response) => {
 app.post('/api/projects/:name/generate', async (req: Request, res: Response) => {
   const projectName = req.params.name;
   let chaptersToGenerate = 1;
+  
+  const aiConfig = requireAIConfig(req, res);
+  if (!aiConfig) return;
   
   try {
     chaptersToGenerate = req.body.chaptersToGenerate || 1;
@@ -380,6 +351,7 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
       const shouldUpdateSummary = isLastOfBatch || isVolumeEnd || isFifthChapter;
       
       const result = await writeOneChapter({
+        aiConfig,
         bible,
         rollingSummary: state.rollingSummary,
         openLoops: state.openLoops,

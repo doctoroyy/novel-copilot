@@ -1,58 +1,33 @@
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
-import { loadConfig, type AIConfig, PROVIDER_BASE_URLS } from './config.js';
 
-// Cached clients
-let geminiClient: GoogleGenAI | null = null;
-let openaiClient: OpenAI | null = null;
-let currentConfig: AIConfig | null = null;
+export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
+
+export interface AIConfig {
+  provider: AIProvider;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+// Provider base URLs
+const PROVIDER_BASE_URLS: Partial<Record<AIProvider, string>> = {
+  openai: 'https://api.openai.com/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+};
 
 /**
- * Initialize or get AI client based on current config
+ * Generate text using the provided AI config
  */
-async function getConfig(): Promise<AIConfig> {
-  const config = await loadConfig();
-  
-  // Check if config changed
-  if (currentConfig?.apiKey !== config.apiKey || 
-      currentConfig?.provider !== config.provider ||
-      currentConfig?.baseUrl !== config.baseUrl) {
-    // Reset clients if config changed
-    geminiClient = null;
-    openaiClient = null;
-    currentConfig = config;
+export async function generateText(
+  config: AIConfig,
+  args: {
+    system: string;
+    prompt: string;
+    temperature?: number;
   }
-  
-  return config;
-}
-
-function getGeminiClient(apiKey: string): GoogleGenAI {
-  if (!geminiClient) {
-    geminiClient = new GoogleGenAI({ apiKey });
-  }
-  return geminiClient;
-}
-
-function getOpenAIClient(apiKey: string, baseUrl?: string): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({ 
-      apiKey,
-      baseURL: baseUrl,
-    });
-  }
-  return openaiClient;
-}
-
-/**
- * Generate text using the configured AI provider
- */
-export async function generateText(args: {
-  system: string;
-  prompt: string;
-  temperature?: number;
-}): Promise<string> {
+): Promise<string> {
   const { system, prompt, temperature = 0.8 } = args;
-  const config = await getConfig();
   
   if (!config.apiKey) {
     throw new Error('API Key not configured. Please set up in Settings.');
@@ -74,7 +49,7 @@ async function generateWithGemini(
   prompt: string,
   temperature: number
 ): Promise<string> {
-  const client = getGeminiClient(config.apiKey);
+  const client = new GoogleGenAI({ apiKey: config.apiKey });
   
   const response = await client.models.generateContent({
     model: config.model,
@@ -115,7 +90,7 @@ async function generateWithOpenAI(
   temperature: number
 ): Promise<string> {
   const baseUrl = config.baseUrl || PROVIDER_BASE_URLS[config.provider];
-  const client = getOpenAIClient(config.apiKey, baseUrl);
+  const client = new OpenAI({ apiKey: config.apiKey, baseURL: baseUrl });
 
   const response = await client.chat.completions.create({
     model: config.model,
@@ -139,14 +114,15 @@ async function generateWithOpenAI(
  * Generate text with retry logic
  */
 export async function generateTextWithRetry(
-  args: Parameters<typeof generateText>[0],
+  config: AIConfig,
+  args: Parameters<typeof generateText>[1],
   maxRetries = 3
 ): Promise<string> {
   let lastError: Error | undefined;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
-      return await generateText(args);
+      return await generateText(config, args);
     } catch (error) {
       lastError = error as Error;
       console.warn(`Generation attempt ${i + 1} failed:`, lastError.message);
@@ -166,15 +142,7 @@ export async function generateTextWithRetry(
 }
 
 /**
- * Test API connection with current config
- */
-export async function testConnection(): Promise<{ success: boolean; message: string; model?: string }> {
-  const config = await getConfig();
-  return testConnectionWithConfig(config);
-}
-
-/**
- * Test API connection with provided config (for testing before saving)
+ * Test API connection with provided config
  */
 export async function testConnectionWithConfig(config: AIConfig): Promise<{ success: boolean; message: string; model?: string }> {
   try {
@@ -182,33 +150,11 @@ export async function testConnectionWithConfig(config: AIConfig): Promise<{ succ
       return { success: false, message: 'API Key not configured' };
     }
 
-    // Create temp client for testing
-    let response: string;
-    
-    if (config.provider === 'gemini') {
-      const tempClient = new GoogleGenAI({ apiKey: config.apiKey });
-      const result = await tempClient.models.generateContent({
-        model: config.model,
-        config: {
-          systemInstruction: 'You are a helpful assistant.',
-          temperature: 0,
-        },
-        contents: [{ role: 'user', parts: [{ text: 'Say "Hello" in one word.' }] }],
-      });
-      response = result.text || '';
-    } else {
-      const baseUrl = config.baseUrl || PROVIDER_BASE_URLS[config.provider];
-      const tempClient = new OpenAI({ apiKey: config.apiKey, baseURL: baseUrl });
-      const result = await tempClient.chat.completions.create({
-        model: config.model,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'Say "Hello" in one word.' },
-        ],
-        temperature: 0,
-      });
-      response = result.choices[0]?.message?.content || '';
-    }
+    const response = await generateText(config, {
+      system: 'You are a helpful assistant.',
+      prompt: 'Say "Hello" in one word.',
+      temperature: 0,
+    });
 
     return { 
       success: true, 
@@ -224,12 +170,24 @@ export async function testConnectionWithConfig(config: AIConfig): Promise<{ succ
 }
 
 /**
- * Reset cached clients (call after config change)
+ * Extract AI config from request headers
  */
-export function resetClients(): void {
-  geminiClient = null;
-  openaiClient = null;
-  currentConfig = null;
+export function getAIConfigFromHeaders(headers: Record<string, string | string[] | undefined>): AIConfig | null {
+  const provider = headers['x-ai-provider'] as string;
+  const model = headers['x-ai-model'] as string;
+  const apiKey = headers['x-ai-key'] as string;
+  const baseUrl = headers['x-ai-baseurl'] as string | undefined;
+  
+  if (!provider || !model || !apiKey) {
+    return null;
+  }
+  
+  return {
+    provider: provider as AIProvider,
+    model,
+    apiKey,
+    baseUrl,
+  };
 }
 
 function sleep(ms: number): Promise<void> {

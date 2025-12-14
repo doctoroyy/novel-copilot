@@ -17,16 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
-
-interface AIConfig {
-  provider: AIProvider;
-  model: string;
-  apiKey: string;
-  apiKeyMasked: string;
-  baseUrl?: string;
-}
+import { useAIConfig, PROVIDER_MODELS, type AIProvider } from '@/hooks/useAIConfig';
+import { testAIConnection } from '@/lib/api';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -34,12 +26,9 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const [config, setConfig] = useState<AIConfig | null>(null);
-  const [providers, setProviders] = useState<Record<string, string[]>>({});
-  const [loading, setLoading] = useState(false);
+  const { config, saveConfig, maskedApiKey, loaded } = useAIConfig();
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
   
   // Form state
   const [provider, setProvider] = useState<AIProvider>('gemini');
@@ -48,74 +37,36 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [baseUrl, setBaseUrl] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
 
-  // Load config when dialog opens
+  // Load from config when dialog opens (only once when opened)
   useEffect(() => {
-    if (open) {
-      loadConfig();
+    if (open && loaded) {
+      setProvider(config.provider);
+      setModel(config.model);
+      setBaseUrl(config.baseUrl || '');
+      setApiKey(''); // Don't show actual key, user enters new one or leaves empty to keep existing
+      setTestResult(null);
     }
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loaded]); // Removed config dependency - we only want to load on dialog open
 
-  const loadConfig = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/config');
-      const data = await response.json();
-      
-      if (data.success) {
-        setConfig(data.config);
-        setProviders(data.providers || {});
-        setProvider(data.config.provider);
-        setModel(data.config.model);
-        setBaseUrl(data.config.baseUrl || '');
-        setApiKey(''); // Don't show actual key
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
+  const handleSave = () => {
+    // If user didn't enter a new API key, keep the existing one
+    const keyToSave = apiKey.trim() || config.apiKey;
+    
+    if (!keyToSave) {
+      setTestResult({ success: false, message: '请输入 API Key' });
+      return;
     }
-  };
-
-  const handleSave = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const payload: Record<string, string> = {
-        provider,
-        model,
-      };
-      
-      // Only include apiKey if user entered a new one
-      if (apiKey.trim()) {
-        payload.apiKey = apiKey;
-      }
-      
-      // Include baseUrl for custom provider
-      if (provider === 'custom' || provider === 'openai' || provider === 'deepseek') {
-        payload.baseUrl = baseUrl || '';
-      }
-      
-      const response = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setConfig(data.config);
-        setApiKey(''); // Clear input after save
-        setTestResult({ success: true, message: '配置已保存' });
-      } else {
-        setError(data.error);
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    
+    const newConfig = {
+      provider,
+      model,
+      apiKey: keyToSave,
+      baseUrl: baseUrl || undefined,
+    };
+    saveConfig(newConfig);
+    setTestResult({ success: true, message: '配置已保存到本地' });
+    setApiKey(''); // Clear input field (key is saved in config)
   };
 
   const handleTest = async () => {
@@ -123,27 +74,20 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setTesting(true);
       setTestResult(null);
       
-      // Get the current API key - either new input or from saved config
-      const testApiKey = apiKey.trim() || config?.apiKey;
+      const testApiKey = apiKey.trim() || config.apiKey;
       
       if (!testApiKey) {
         setTestResult({ success: false, message: '请先输入 API Key' });
         return;
       }
       
-      const response = await fetch('/api/config/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider,
-          model,
-          apiKey: testApiKey,
-          baseUrl: baseUrl || undefined,
-        }),
+      const result = await testAIConnection({
+        provider,
+        model,
+        apiKey: testApiKey,
+        baseUrl: baseUrl || undefined,
       });
-      
-      const data = await response.json();
-      setTestResult(data);
+      setTestResult(result);
     } catch (err) {
       setTestResult({ success: false, message: (err as Error).message });
     } finally {
@@ -152,7 +96,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   };
 
   // Get available models for current provider
-  const availableModels = providers[provider] || [];
+  const availableModels = PROVIDER_MODELS[provider] || [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -163,7 +107,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <span>AI 设置</span>
           </DialogTitle>
           <DialogDescription>
-            配置 AI Provider 和 API Key
+            配置 AI Provider 和 API Key（保存在本地浏览器）
           </DialogDescription>
         </DialogHeader>
 
@@ -175,8 +119,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               value={provider} 
               onValueChange={(val) => {
                 setProvider(val as AIProvider);
-                // Reset model when provider changes
-                const models = providers[val] || [];
+                const models = PROVIDER_MODELS[val as AIProvider] || [];
                 setModel(models[0] || '');
               }}
             >
@@ -258,9 +201,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>API Key</Label>
-              {config?.apiKeyMasked && (
+              {maskedApiKey && (
                 <span className="text-xs text-muted-foreground">
-                  当前: {config.apiKeyMasked}
+                  当前: {maskedApiKey}
                 </span>
               )}
             </div>
@@ -293,29 +236,21 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               {testResult.success ? '✅' : '❌'} {testResult.message}
             </div>
           )}
-
-          {/* Error */}
-          {error && (
-            <div className="p-3 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 text-sm">
-              ❌ {error}
-            </div>
-          )}
         </div>
 
         <DialogFooter className="gap-2">
           <Button
             variant="outline"
             onClick={handleTest}
-            disabled={testing || loading}
+            disabled={testing}
           >
             {testing ? '⏳ 测试中...' : '🔌 测试连接'}
           </Button>
           <Button
             onClick={handleSave}
-            disabled={loading}
             className="gradient-bg hover:opacity-90"
           >
-            {loading ? '⏳ 保存中...' : '💾 保存配置'}
+            💾 保存配置
           </Button>
         </DialogFooter>
       </DialogContent>
