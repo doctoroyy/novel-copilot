@@ -203,7 +203,7 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
   }
 });
 
-// Download all chapters as a single text file
+// Download all chapters as a ZIP file
 projectsRoutes.get('/:name/download', async (c) => {
   const name = c.req.param('name');
   
@@ -226,16 +226,23 @@ projectsRoutes.get('/:name/download', async (c) => {
       return c.json({ success: false, error: 'No chapters to download' }, 400);
     }
 
-    // Combine all chapters into one text file
-    const content = chapters.map((ch: any) => 
-      `${'='.repeat(50)}\n第${ch.chapter_index}章\n${'='.repeat(50)}\n\n${ch.content}\n\n`
-    ).join('\n');
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const folder = zip.folder((project as any).name);
 
-    const filename = `${(project as any).name}-全本.txt`;
+    if (folder) {
+      chapters.forEach((ch: any) => {
+        const filename = `${ch.chapter_index.toString().padStart(3, '0')}.md`;
+        folder.file(filename, ch.content);
+      });
+    }
+
+    const content = await zip.generateAsync({ type: 'uint8array' });
+    const filename = `${(project as any).name}.zip`;
 
     return new Response(content, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
       },
     });
