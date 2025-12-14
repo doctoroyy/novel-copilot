@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface GenerateViewProps {
   project: ProjectDetail;
@@ -121,7 +121,7 @@ export function GenerateView({
             章节生成
           </CardTitle>
           <CardDescription>
-            当前进度: {project.state.nextChapterIndex - 1} / {project.state.totalChapters}
+            当前进度: {project.state.next_chapter_index - 1} / {project.state.total_chapters}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -155,13 +155,13 @@ export function GenerateView({
             </p>
           )}
 
-          {project.state.needHuman && (
+          {project.state.need_human && (
             <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
               <div className="flex items-center gap-2 text-destructive font-medium mb-2">
                 <span>⚠️</span>
                 <span>需要人工介入</span>
               </div>
-              <p className="text-sm mb-3">{project.state.needHumanReason}</p>
+              <p className="text-sm mb-3">{project.state.need_human_reason}</p>
               <Button
                 variant="outline"
                 size="sm"
@@ -176,12 +176,12 @@ export function GenerateView({
           <div className="pt-4 border-t border-border">
             <div className="flex justify-between text-sm text-muted-foreground mb-2">
               <span>生成进度</span>
-              <span>{Math.round(((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100)}%</span>
+              <span>{Math.round(((project.state.next_chapter_index - 1) / project.state.total_chapters) * 100)}%</span>
             </div>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div 
                 className="h-full progress-gradient transition-all duration-500"
-                style={{ width: `${((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100}%` }}
+                style={{ width: `${((project.state.next_chapter_index - 1) / project.state.total_chapters) * 100}%` }}
               />
             </div>
           </div>

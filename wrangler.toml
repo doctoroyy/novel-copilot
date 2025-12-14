@@ -3,11 +3,11 @@ main = "src/worker.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-# D1 Database
-[[d1_databases]]
-binding = "DB"
-database_name = "novel-copilot-db"
-database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
+# D1 Database (Deprecated - using local indexedDB)
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "novel-copilot-db"
+# database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
 
 # Development settings
 [dev]

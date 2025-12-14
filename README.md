@@ -6,17 +6,79 @@ AI 小说自动化生成工具，支持多种 AI 模型（Gemini、OpenAI、Deep
 
 ## ✨ 功能
 
-- 🤖 **多模型支持**：Gemini、OpenAI、DeepSeek 及自定义 API
-- 📚 **三层记忆**：Story Bible + 滚动摘要 + 近章原文
-- 📋 **大纲生成**：自动规划卷章结构
-- 🔄 **断点续写**：自动保存进度，支持中断恢复
-- 🌐 **Web UI**：现代化界面，实时进度显示
+- 🤖 **Multi-Model Support**: Integrated with Gemini, OpenAI, DeepSeek, and custom API endpoints.
+- 📚 **Three-Layer Memory**: Maintains consistencies via Story Bible, Rolling Summaries, and Full Text of recent chapters.
+- 📋 **Automated Outlining**: AI auto-plans volumes and chapters based on your bible.
+- 🔄 **State Management**: Auto-saves progress, breakpoints, and open loops.
+- 🌐 **Modern Web UI**: Built with React, featuring real-time generation logs and progress tracking.
+- ☁️ **Local-First Architecture**: Data stored locally (IndexedDB), backend is stateless.
 
 ## 🚀 一键部署到 Cloudflare
 
 ### 方式一：点击部署按钮
 
-点击上方 "Deploy to Cloudflare Workers" 按钮，按提示操作即可。
+Click the "Deploy to Cloudflare Workers" button above and follow the instructions.
+
+### Option 2: Manual Deployment
+
+```bash
+# 1. Clone repository
+git clone https://github.com/doctoroyy/novel-copilot.git
+cd novel-copilot
+
+# 2. Install dependencies
+pnpm install
+cd web && pnpm install && cd ..
+
+# 3. Deploy (Frontend + Backend)
+pnpm run deploy
+```
+
+## 🛠️ Local Development
+
+```bash
+# Install dependencies
+pnpm install
+cd web && pnpm install && cd ..
+
+# Start Backend (Workers on port 8787)
+pnpm dev
+
+# Start Frontend (Vite on port 5173 - Optional for HMR)
+cd web && pnpm dev
+```
+
+Visit: http://localhost:5173 (if running frontend separately) or http://localhost:8787 (if checking worker)
+
+## 📝 Usage Guide
+
+1. **Configuration**: Open Settings (gear icon), select your AI provider (e.g., Gemini), and enter your API Key. Keys are stored locally in your browser.
+2. **Create Project**: Enter a book title and your "Story Bible" (world-building, characters, plot points). Data is saved to IndexedDB.
+3. **Generate Outline**: Let AI plan your book structure (volumes and chapters).
+4. **Write**: Generate chapters one by one or in batches.
+5. **Download**: Export your novel as a ZIP archive containing Markdown files and the outline (Client-side generation).
+
+---
+
+<a name="chinese"></a>
+# Novel Copilot (中文介绍)
+
+基于 Cloudflare Workers 和 Hono 构建的 AI 小说写作助手。
+
+## ✨ 核心功能
+
+- 🤖 **多模型支持**：支持 Gemini、OpenAI、DeepSeek 及自定义 API。
+- 📚 **三层记忆系统**：通过 Story Bible + 滚动摘要 + 近章原文，确保剧情连贯。
+- 📋 **智能大纲**：自动规划分卷和章节结构。
+- 🔄 **状态管理**：自动保存进度，支持断点续写和伏笔记录。
+- 🌐 **Local-First**：数据存储在本地浏览器 (IndexedDB)，隐私安全且响应迅速。
+- ☁️ **Serverless 架构**：无状态后端，低成本高可用。
+
+## 🚀 部署指南
+
+### 方式一：一键部署
+
+点击顶部的 "Deploy to Cloudflare Workers" 按钮。
 
 ### 方式二：手动部署
 
@@ -29,18 +91,8 @@ cd novel-copilot
 pnpm install
 cd web && pnpm install && cd ..
 
-# 3. 创建 D1 数据库
-wrangler d1 create novel-copilot-db
-# 复制输出的 database_id 到 wrangler.toml
-
-# 4. 初始化数据库
-pnpm db:init
-
-# 5. 构建前端
-pnpm build:web
-
-# 6. 部署
-wrangler deploy
+# 3. 部署 (含前端构建)
+pnpm run deploy
 ```
 
 ## 🛠️ 本地开发

@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface DashboardViewProps {
   project: ProjectDetail;
@@ -10,9 +10,9 @@ interface DashboardViewProps {
 }
 
 export function DashboardView({ project, onGenerateOutline, onGenerateChapters, loading }: DashboardViewProps) {
-  const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
-  const chaptersGenerated = project.state.nextChapterIndex - 1;
-  const chaptersRemaining = project.state.totalChapters - chaptersGenerated;
+  const progress = ((project.state.next_chapter_index - 1) / project.state.total_chapters) * 100;
+  const chaptersGenerated = project.state.next_chapter_index - 1;
+  const chaptersRemaining = project.state.total_chapters - chaptersGenerated;
 
   return (
     <div className="p-6 space-y-6">
@@ -57,7 +57,7 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
               </div>
             </div>
             <p className="mt-4 text-sm text-muted-foreground">
-              {chaptersGenerated} / {project.state.totalChapters} 章
+              {chaptersGenerated} / {project.state.total_chapters} 章
             </p>
           </CardContent>
         </Card>
@@ -174,14 +174,14 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
       )}
 
       {/* Need Human Intervention Warning */}
-      {project.state.needHuman && (
+      {project.state.need_human && (
         <Card className="border-destructive bg-destructive/10">
           <CardContent className="p-6">
             <div className="flex items-center gap-3">
               <div className="text-2xl">⚠️</div>
               <div>
                 <h3 className="font-medium text-destructive">需要人工介入</h3>
-                <p className="text-sm text-muted-foreground">{project.state.needHumanReason}</p>
+                <p className="text-sm text-muted-foreground">{project.state.need_human_reason}</p>
               </div>
             </div>
           </CardContent>

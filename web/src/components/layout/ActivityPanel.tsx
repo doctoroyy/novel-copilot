@@ -1,5 +1,13 @@
 import { Button } from '@/components/ui/button';
-import type { ProgressEvent } from '@/hooks/useServerEvents';
+
+export interface ProgressEvent {
+  projectName: string;
+  chapterIndex?: number;
+  total: number;
+  current: number;
+  status: 'starting' | 'generating' | 'saving' | 'updating_summary' | 'done' | 'error';
+  message?: string;
+}
 
 interface ActivityPanelProps {
   logs: string[];

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface HeaderProps {
   project: ProjectDetail | null;
@@ -44,7 +44,7 @@ export function Header({
     );
   }
 
-  const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
+  const progress = ((project.state.next_chapter_index - 1) / project.state.total_chapters) * 100;
 
   return (
     <header className="border-b border-border">
@@ -54,7 +54,7 @@ export function Header({
           <div>
             <h2 className="font-bold text-lg">{project.name}</h2>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>{project.state.nextChapterIndex - 1} / {project.state.totalChapters} 章</span>
+              <span>{project.state.next_chapter_index - 1} / {project.state.total_chapters} 章</span>
               <span>•</span>
               <span>{Math.round(progress)}% 完成</span>
               {project.outline && (
