@@ -13,6 +13,10 @@ database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
 [dev]
 port = 8787
 
-# Assets (frontend) - uncomment after building web
-# [assets]
-# directory = "./web/dist"
+# Build frontend before deploy
+[build]
+command = "cd web && pnpm install && pnpm build"
+
+# Assets (frontend)
+[assets]
+directory = "./web/dist"

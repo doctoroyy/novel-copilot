@@ -202,3 +202,51 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+// Download all chapters as a ZIP file
+projectsRoutes.get('/:name/download', async (c) => {
+  const name = c.req.param('name');
+  
+  try {
+    const project = await c.env.DB.prepare(`
+      SELECT id, name FROM projects WHERE name = ?
+    `).bind(name).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const { results: chapters } = await c.env.DB.prepare(`
+      SELECT chapter_index, content FROM chapters 
+      WHERE project_id = ? 
+      ORDER BY chapter_index
+    `).bind((project as any).id).all();
+
+    if (chapters.length === 0) {
+      return c.json({ success: false, error: 'No chapters to download' }, 400);
+    }
+
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const folder = zip.folder((project as any).name);
+
+    if (folder) {
+      chapters.forEach((ch: any) => {
+        const filename = `${ch.chapter_index.toString().padStart(3, '0')}.md`;
+        folder.file(filename, ch.content);
+      });
+    }
+
+    const content = await zip.generateAsync({ type: 'uint8array' });
+    const filename = `${(project as any).name}.zip`;
+
+    return new Response(content, {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
