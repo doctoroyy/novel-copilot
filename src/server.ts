@@ -15,6 +15,7 @@ import {
 } from './memory.js';
 import { readOutline, generateFullOutline, type NovelOutline } from './generateOutline.js';
 import { writeOneChapter } from './generateChapter.js';
+import { eventBus } from './eventBus.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +34,37 @@ const PROJECTS_DIR = path.join(process.cwd(), 'projects');
 async function ensureProjectsDir() {
   await fs.mkdir(PROJECTS_DIR, { recursive: true });
 }
+
+// ==================== SSE Events Endpoint ====================
+
+/**
+ * GET /api/events - Server-Sent Events for real-time logs and progress
+ */
+app.get('/api/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  // Send a ping every 30 seconds to keep connection alive
+  const keepAlive = setInterval(() => {
+    res.write(': ping\n\n');
+  }, 30000);
+
+  // Send events to this client
+  const sendEvent = (data: any) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  eventBus.on('event', sendEvent);
+
+  // Cleanup on close
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    eventBus.off('event', sendEvent);
+  });
+});
 
 // ==================== API Routes ====================
 
@@ -192,21 +224,31 @@ app.post('/api/projects/:name/outline', async (req: Request, res: Response) => {
  * POST /api/projects/:name/generate - 生成章节
  */
 app.post('/api/projects/:name/generate', async (req: Request, res: Response) => {
+  const projectName = req.params.name;
+  let chaptersToGenerate = 1;
+  
   try {
-    const { chaptersToGenerate = 1 } = req.body;
-    const projectPath = path.join(PROJECTS_DIR, req.params.name);
-    const projectName = req.params.name;
-    
-    console.log(`\n📚 [${projectName}] 开始生成 ${chaptersToGenerate} 章...`);
+    chaptersToGenerate = req.body.chaptersToGenerate || 1;
+    const projectPath = path.join(PROJECTS_DIR, projectName);
     
     const bible = await readBible(projectPath);
     let state = await readState(projectPath);
     const outline = await readOutline(projectPath);
     
+    eventBus.info(`[${projectName}] 开始生成 ${chaptersToGenerate} 章...`, projectName);
+    eventBus.progress({
+      projectName,
+      current: 0,
+      total: chaptersToGenerate,
+      chapterIndex: state.nextChapterIndex,
+      status: 'starting',
+      message: '准备生成...',
+    });
+    
     if (outline) {
-      console.log(`   📋 已加载大纲: ${outline.totalChapters} 章, ${outline.volumes.length} 卷`);
+      eventBus.info(`已加载大纲: ${outline.totalChapters} 章, ${outline.volumes.length} 卷`, projectName);
     } else {
-      console.log(`   ⚠️ 未找到大纲文件 outline.json`);
+      eventBus.warning(`未找到大纲文件 outline.json`, projectName);
     }
     
     const results: { chapter: number; title: string }[] = [];
@@ -215,11 +257,19 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
       const chapterIndex = state.nextChapterIndex;
       
       if (chapterIndex > state.totalChapters) {
-        console.log(`   ✅ 书籍已完成!`);
+        eventBus.success(`书籍已完成!`, projectName);
         break; // Book complete
       }
       
-      console.log(`\n   📝 [${i + 1}/${chaptersToGenerate}] 生成第 ${chapterIndex}/${state.totalChapters} 章...`);
+      eventBus.info(`[${i + 1}/${chaptersToGenerate}] 生成第 ${chapterIndex}/${state.totalChapters} 章...`, projectName);
+      eventBus.progress({
+        projectName,
+        current: i,
+        total: chaptersToGenerate,
+        chapterIndex,
+        status: 'generating',
+        message: '正在生成...',
+      });
       
       // Get chapter outline if available
       let chapterGoalHint: string | undefined;
@@ -235,12 +285,12 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
 - 章末钩子: ${ch.hook}
 
 请按照大纲完成本章，但允许适当扩展和细化。`;
-            console.log(`      📋 使用大纲: ${ch.title}`);
+            eventBus.info(`使用大纲: ${ch.title}`, projectName);
             break;
           }
         }
         if (!chapterGoalHint) {
-          console.log(`      ⚠️ 大纲中未找到第 ${chapterIndex} 章`);
+          eventBus.warning(`大纲中未找到第 ${chapterIndex} 章`, projectName);
         }
       }
       
@@ -263,18 +313,34 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
         skipSummaryUpdate: !shouldUpdateSummary,
       });
       
+      eventBus.progress({
+        projectName,
+        current: i,
+        total: chaptersToGenerate,
+        chapterIndex,
+        status: 'saving',
+        message: '保存章节...',
+      });
       await saveChapter(projectPath, chapterIndex, result.chapterText);
       
       // Extract title from first line
       const titleMatch = result.chapterText.match(/^第?\d*[章回节]?\s*[：:.]?\s*(.+)/m);
       const title = titleMatch ? titleMatch[1] : (outlineTitle || `Chapter ${chapterIndex}`);
       
-      console.log(`      ✅ 已生成: ${title}`);
+      eventBus.success(`第${chapterIndex}章完成: ${title}`, projectName);
       if (result.wasRewritten) {
-        console.log(`      ⚠️ 触发了 ${result.rewriteCount} 次重写`);
+        eventBus.warning(`触发了 ${result.rewriteCount} 次重写`, projectName);
       }
       if (!result.skippedSummary) {
-        console.log(`      📝 已更新摘要`);
+        eventBus.info(`已更新摘要`, projectName);
+        eventBus.progress({
+          projectName,
+          current: i,
+          total: chaptersToGenerate,
+          chapterIndex,
+          status: 'updating_summary',
+          message: '更新摘要...',
+        });
       }
       
       results.push({ chapter: chapterIndex, title });
@@ -289,11 +355,27 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
       await writeState(projectPath, state);
     }
     
-    console.log(`\n✅ [${projectName}] 完成! 当前进度: ${state.nextChapterIndex - 1}/${state.totalChapters}`);
+    eventBus.success(`[${projectName}] 完成! 当前进度: ${state.nextChapterIndex - 1}/${state.totalChapters}`, projectName);
+    eventBus.progress({
+      projectName,
+      current: chaptersToGenerate,
+      total: chaptersToGenerate,
+      chapterIndex: state.nextChapterIndex - 1,
+      status: 'done',
+      message: '全部完成',
+    });
     
     res.json({ success: true, generated: results, state });
   } catch (error) {
-    console.error(`\n❌ 生成失败:`, error);
+    eventBus.error(`生成失败: ${(error as Error).message}`, projectName);
+    eventBus.progress({
+      projectName,
+      current: 0,
+      total: chaptersToGenerate,
+      chapterIndex: 0,
+      status: 'error',
+      message: (error as Error).message,
+    });
     res.status(500).json({ success: false, error: (error as Error).message });
   }
 });

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -45,6 +46,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [generationProgress, setGenerationProgress] = useState<ProgressEvent | null>(null);
 
   // New project dialog
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
@@ -88,6 +90,31 @@ function App() {
       setLoading(false);
     }
   }, []);
+
+  // SSE for real-time logs
+  useServerEvents({
+    onLog: useCallback((event: { level: 'info' | 'success' | 'warning' | 'error'; timestamp: string; message: string }) => {
+      const prefixMap: Record<string, string> = {
+        info: '📋',
+        success: '✅',
+        warning: '⚠️',
+        error: '❌',
+      };
+      const prefix = prefixMap[event.level];
+      setLogs((prev) => [...prev, `[${event.timestamp}] ${prefix} ${event.message}`]);
+    }, []),
+    onProgress: useCallback((event: ProgressEvent) => {
+      setGenerationProgress(event);
+      // Clear progress after done
+      if (event.status === 'done' || event.status === 'error') {
+        setTimeout(() => setGenerationProgress(null), 3000);
+        // Refresh project data
+        if (selectedProject?.name === event.projectName) {
+          loadProject(event.projectName);
+        }
+      }
+    }, [selectedProject?.name, loadProject]),
+  });
 
   useEffect(() => {
     loadProjects();
@@ -342,7 +369,11 @@ function App() {
       </div>
 
       {/* Right Activity Panel */}
-      <ActivityPanel logs={logs} onClear={() => setLogs([])} />
+      <ActivityPanel 
+        logs={logs} 
+        onClear={() => setLogs([])} 
+        progress={generationProgress}
+      />
 
       {/* New Project Dialog */}
       <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
