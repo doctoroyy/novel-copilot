@@ -421,9 +421,10 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
     // Set response headers for file download
     const filename = `${bookTitle}.txt`;
     // Use RFC 5987 for UTF-8 filename support
+    // Only use filename* since plain filename cannot contain non-ASCII characters
     const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     
     res.send(fullContent);
   } catch (error) {
