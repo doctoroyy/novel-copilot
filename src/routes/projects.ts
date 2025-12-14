@@ -202,3 +202,44 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+// Download all chapters as a single text file
+projectsRoutes.get('/:name/download', async (c) => {
+  const name = c.req.param('name');
+  
+  try {
+    const project = await c.env.DB.prepare(`
+      SELECT id, name FROM projects WHERE name = ?
+    `).bind(name).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const { results: chapters } = await c.env.DB.prepare(`
+      SELECT chapter_index, content FROM chapters 
+      WHERE project_id = ? 
+      ORDER BY chapter_index
+    `).bind((project as any).id).all();
+
+    if (chapters.length === 0) {
+      return c.json({ success: false, error: 'No chapters to download' }, 400);
+    }
+
+    // Combine all chapters into one text file
+    const content = chapters.map((ch: any) => 
+      `${'='.repeat(50)}\n第${ch.chapter_index}章\n${'='.repeat(50)}\n\n${ch.content}\n\n`
+    ).join('\n');
+
+    const filename = `${(project as any).name}-全本.txt`;
+
+    return new Response(content, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
