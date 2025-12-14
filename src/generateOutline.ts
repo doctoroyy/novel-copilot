@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { generateTextWithRetry } from './gemini.js';
+import { generateTextWithRetry } from './aiClient.js';
 import { readBible, readState, writeState, type BookState } from './memory.js';
 
 /**

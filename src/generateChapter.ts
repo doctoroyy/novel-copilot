@@ -1,4 +1,4 @@
-import { generateTextWithRetry } from './gemini.js';
+import { generateTextWithRetry } from './aiClient.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
 import { z } from 'zod';
 
