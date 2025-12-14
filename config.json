@@ -1,6 +1,0 @@
-{
-  "provider": "deepseek",
-  "model": "nex-agi/deepseek-v3.1-nex-n1:free",
-  "apiKey": "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",
-  "baseUrl": "https://openrouter.ai/api/v1"
-}
