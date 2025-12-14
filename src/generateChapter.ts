@@ -28,6 +28,8 @@ export type WriteChapterParams = {
   totalChapters: number;
   /** 本章写作目标提示 (可选) */
   chapterGoalHint?: string;
+  /** 本章标题 (来自大纲) */
+  chapterTitle?: string;
   /** 最大重写次数 */
   maxRewriteAttempts?: number;
   /** 跳过摘要更新以节省 token */
@@ -55,7 +57,7 @@ export type WriteChapterResult = {
 /**
  * 构建 System Prompt
  */
-function buildSystemPrompt(isFinal: boolean): string {
+function buildSystemPrompt(isFinal: boolean, chapterTitle?: string): string {
   return `
 你是一个"稳定连载"的网文写作引擎。
 
@@ -66,9 +68,10 @@ function buildSystemPrompt(isFinal: boolean): string {
 - 每章字数建议 2500~3500 汉字
 
 输出格式：
-- 第一行是章节标题（例如：第X章 标题内容）
+- 第一行必须是章节标题：第${chapterTitle ? 'X章 ' + chapterTitle : 'X章 标题内容'}（不要改动给定的标题）
 - 其后是正文
-- 不要写任何解释或元说明
+- **严禁**写任何解释、元说明、目标完成提示
+- **严禁**在正文中出现如下内容：【本章写作目标】、【已完成】、（本章结束）等任何形式的编辑备注
 
 当前是否为最终章：${isFinal ? 'true - 可以写结局' : 'false - 禁止收尾'}
 `.trim();
@@ -119,10 +122,10 @@ ${chapterGoalHint ?? '承接上一章结尾，推进主线一步，并制造更�
  * 生成单章内容
  */
 export async function writeOneChapter(params: WriteChapterParams): Promise<WriteChapterResult> {
-  const { chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false } = params;
+  const { chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
   const isFinal = chapterIndex === totalChapters;
 
-  const system = buildSystemPrompt(isFinal);
+  const system = buildSystemPrompt(isFinal, chapterTitle);
   const prompt = buildUserPrompt(params);
 
   // 第一次生成

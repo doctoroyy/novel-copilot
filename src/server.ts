@@ -349,6 +349,89 @@ app.put('/api/projects/:name/reset', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/projects/:name/download - 下载整本书 (TXT 格式)
+ */
+app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
+  try {
+    const projectPath = path.join(PROJECTS_DIR, req.params.name);
+    const projectName = req.params.name;
+    const chaptersDir = path.join(projectPath, 'chapters');
+    
+    // Get all chapter files
+    let files: string[] = [];
+    try {
+      const allFiles = await fs.readdir(chaptersDir);
+      files = allFiles.filter(f => /^\d{3}\.md$/.test(f)).sort();
+    } catch {
+      return res.status(404).json({ success: false, error: 'No chapters found' });
+    }
+    
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, error: 'No chapters found' });
+    }
+    
+    // Read outline for chapter titles
+    const outline = await readOutline(projectPath);
+    const getChapterTitle = (index: number): string | null => {
+      if (!outline) return null;
+      for (const vol of outline.volumes) {
+        const ch = vol.chapters.find(c => c.index === index);
+        if (ch) return ch.title;
+      }
+      return null;
+    };
+    
+    // Combine all chapters
+    const chapters: string[] = [];
+    for (const file of files) {
+      const chapterIndex = parseInt(file.replace('.md', ''), 10);
+      const chapterPath = path.join(chaptersDir, file);
+      const content = await fs.readFile(chapterPath, 'utf-8');
+      
+      // Check if content already has a chapter title line
+      const hasTitle = /^第?\d*[章回节]/.test(content.trim());
+      
+      if (hasTitle) {
+        chapters.push(content.trim());
+      } else {
+        // Add chapter title if not present
+        const title = getChapterTitle(chapterIndex) || '';
+        const chapterHeader = `第${chapterIndex}章 ${title}`.trim();
+        chapters.push(`${chapterHeader}\n\n${content.trim()}`);
+      }
+    }
+    
+    const fullContent = chapters.join('\n\n' + '='.repeat(40) + '\n\n');
+    
+    // Read state and bible for book title
+    const state = await readState(projectPath);
+    const bible = await readBible(projectPath);
+    
+    // Try to extract book title from bible (format: # 书名：《...》 or # XXX)
+    let bookTitle = projectName;
+    const titleMatch = bible.match(/^#\s*书名[：:]\s*[《「]?(.+?)[》」]?\s*$/m) 
+                    || bible.match(/^#\s*[《「](.+?)[》」]\s*$/m)
+                    || bible.match(/^#\s*(.+?)\s*$/m);
+    if (titleMatch) {
+      bookTitle = titleMatch[1].trim();
+    } else if (state.bookTitle && state.bookTitle !== projectName) {
+      bookTitle = state.bookTitle;
+    }
+    
+    // Set response headers for file download
+    const filename = `${bookTitle}.txt`;
+    // Use RFC 5987 for UTF-8 filename support
+    const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodedFilename}`);
+    
+    res.send(fullContent);
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+
+/**
  * POST /api/generate-bible - AI 自动生成 Story Bible
  */
 app.post('/api/generate-bible', async (req: Request, res: Response) => {

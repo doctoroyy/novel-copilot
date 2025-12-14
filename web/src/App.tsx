@@ -64,10 +64,82 @@ function App() {
 
   // Chapter viewer
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string } | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const log = useCallback((msg: string) => {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
+
+  // Helper: get chapter title from outline
+  const getChapterTitle = useCallback((chapterIndex: number) => {
+    if (!selectedProject?.outline) return null;
+    for (const vol of selectedProject.outline.volumes) {
+      const ch = vol.chapters.find(c => c.index === chapterIndex);
+      if (ch) return ch.title;
+    }
+    return null;
+  }, [selectedProject?.outline]);
+
+  // Helper: copy chapter content
+  const handleCopyChapter = useCallback(async () => {
+    if (!viewingChapter?.content) return;
+    try {
+      await navigator.clipboard.writeText(viewingChapter.content);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      setError('复制失败：' + (err as Error).message);
+    }
+  }, [viewingChapter?.content]);
+
+  // Helper: download entire book
+  const handleDownloadBook = useCallback(async () => {
+    if (!selectedProject) return;
+    try {
+      const url = `/api/projects/${encodeURIComponent(selectedProject.name)}/download`;
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error('下载失败');
+      }
+      
+      // Get filename from Content-Disposition header
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${selectedProject.name}.txt`;
+      if (contentDisposition) {
+        // Try plain filename first (already decoded), then filename* (URL-encoded)
+        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (filenameMatch && !/^%[0-9A-F]{2}/i.test(filenameMatch[1])) {
+          // Plain filename without URL encoding
+          filename = filenameMatch[1];
+        } else if (filenameStarMatch) {
+          // URL-encoded filename
+          filename = decodeURIComponent(filenameStarMatch[1]);
+        } else if (filenameMatch) {
+          // Fallback: try to decode the filename anyway
+          try {
+            filename = decodeURIComponent(filenameMatch[1]);
+          } catch {
+            filename = filenameMatch[1];
+          }
+        }
+      }
+      
+      // Create blob and download
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setError('下载失败：' + (err as Error).message);
+    }
+  }, [selectedProject]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -193,7 +265,7 @@ function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="container mx-auto py-6 px-4">
-        <h1 className="text-3xl font-bold mb-6">📚 Novel Automation</h1>
+        <h1 className="text-3xl font-bold mb-6">📚 Novel Copilot</h1>
 
         {error && (
           <div className="bg-destructive/10 text-destructive p-4 rounded-lg mb-4">
@@ -456,13 +528,16 @@ function App() {
                         <div className="space-y-1">
                           {selectedProject.chapters.map((ch) => {
                             const index = parseInt(ch.replace('.md', ''), 10);
+                            const title = getChapterTitle(index);
                             return (
                               <div
                                 key={ch}
                                 className="p-2 rounded hover:bg-accent cursor-pointer flex justify-between items-center"
                                 onClick={() => handleViewChapter(index)}
                               >
-                                <span>第 {index} 章</span>
+                                <span className="flex-1 truncate mr-2">
+                                  第 {index} 章{title ? `：${title}` : ''}
+                                </span>
                                 <Button variant="ghost" size="sm">
                                   查看
                                 </Button>
@@ -546,6 +621,15 @@ function App() {
                     🔄 刷新
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={handleDownloadBook}
+                    disabled={selectedProject.chapters.length === 0}
+                  >
+                    📥 下载整本书
+                  </Button>
+                  <Button
                     variant="destructive"
                     size="sm"
                     className="w-full"
@@ -563,7 +647,23 @@ function App() {
         <Dialog open={!!viewingChapter} onOpenChange={() => setViewingChapter(null)}>
           <DialogContent className="max-w-4xl max-h-[80vh]">
             <DialogHeader>
-              <DialogTitle>第 {viewingChapter?.index} 章</DialogTitle>
+              <div className="flex items-center justify-between pr-8">
+                <DialogTitle>
+                  第 {viewingChapter?.index} 章
+                  {viewingChapter && getChapterTitle(viewingChapter.index) && (
+                    <span className="ml-2 text-muted-foreground font-normal">
+                      {getChapterTitle(viewingChapter.index)}
+                    </span>
+                  )}
+                </DialogTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyChapter}
+                >
+                  {copySuccess ? '✅ 已复制' : '📋 复制整章'}
+                </Button>
+              </div>
             </DialogHeader>
             <ScrollArea className="h-[60vh]">
               <pre className="whitespace-pre-wrap text-sm leading-relaxed">
