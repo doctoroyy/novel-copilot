@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "novel-copilot-db"
-database_id = "placeholder-will-be-set-after-creation"
+database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
 
 # Development settings
 [dev]
