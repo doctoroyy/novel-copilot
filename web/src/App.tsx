@@ -39,6 +39,7 @@ import {
   BibleView 
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
+import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
 function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -48,6 +49,9 @@ function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [generationProgress, setGenerationProgress] = useState<ProgressEvent | null>(null);
+
+  // AI Config from localStorage
+  const { config: aiConfig, isConfigured } = useAIConfig();
 
   // New project dialog
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
@@ -148,6 +152,11 @@ function App() {
 
   const handleGenerateOutline = async () => {
     if (!selectedProject) return;
+    if (!isConfigured) {
+      setError('请先在设置中配置 AI API Key');
+      setShowSettingsDialog(true);
+      return;
+    }
     try {
       setLoading(true);
       log(`生成大纲: ${selectedProject.name}`);
@@ -155,7 +164,8 @@ function App() {
         selectedProject.name,
         parseInt(outlineChapters, 10),
         parseInt(outlineWordCount, 10),
-        outlineCustomPrompt || undefined
+        outlineCustomPrompt || undefined,
+        getAIConfigHeaders(aiConfig)
       );
       log(`✅ 大纲生成完成: ${outline.volumes.length} 卷, ${outline.totalChapters} 章`);
       await loadProject(selectedProject.name);
@@ -169,11 +179,16 @@ function App() {
 
   const handleGenerateChapters = async () => {
     if (!selectedProject) return;
+    if (!isConfigured) {
+      setError('请先在设置中配置 AI API Key');
+      setShowSettingsDialog(true);
+      return;
+    }
     try {
       setLoading(true);
       const count = parseInt(generateCount, 10);
       log(`生成章节: ${selectedProject.name}, ${count} 章`);
-      const results = await generateChapters(selectedProject.name, count);
+      const results = await generateChapters(selectedProject.name, count, getAIConfigHeaders(aiConfig));
       for (const r of results) {
         log(`✅ 第${r.chapter}章: ${r.title}`);
       }

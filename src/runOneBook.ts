@@ -1,4 +1,5 @@
 import path from 'node:path';
+import 'dotenv/config';
 import {
   ensureBook,
   readBible,
@@ -9,11 +10,14 @@ import {
 } from './memory.js';
 import { writeOneChapter } from './generateChapter.js';
 import { readOutline, getChapterOutline } from './generateOutline.js';
+import type { AIConfig } from './aiClient.js';
 
 /**
  * 运行参数
  */
 type RunOptions = {
+  /** AI 配置 */
+  aiConfig: AIConfig;
   /** 项目目录 */
   projectDir: string;
   /** 生成章节数 (默认 1) */
@@ -27,6 +31,7 @@ type RunOptions = {
  */
 export async function runOneBook(options: RunOptions): Promise<void> {
   const {
+    aiConfig,
     projectDir,
     chaptersToGenerate = 1,
     delayBetweenChapters = 2000,
@@ -94,6 +99,7 @@ export async function runOneBook(options: RunOptions): Promise<void> {
     try {
       // 生成章节
       const result = await writeOneChapter({
+        aiConfig,
         bible,
         rollingSummary: state.rollingSummary,
         openLoops: state.openLoops,
@@ -149,14 +155,30 @@ function sleep(ms: number): Promise<void> {
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 
 if (isMain) {
+  // Read AI config from environment variables
+  const aiConfig: AIConfig = {
+    provider: (process.env.AI_PROVIDER || 'gemini') as AIConfig['provider'],
+    model: process.env.AI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    apiKey: process.env.AI_API_KEY || process.env.GEMINI_API_KEY || '',
+    baseUrl: process.env.AI_BASE_URL,
+  };
+
+  if (!aiConfig.apiKey) {
+    console.error('❌ Missing AI_API_KEY or GEMINI_API_KEY environment variable');
+    process.exit(1);
+  }
+
   const projectDir = process.argv[2] || path.join(process.cwd(), 'projects', 'demo-book');
   const chaptersToGenerate = parseInt(process.argv[3] || '1', 10);
 
   console.log('='.repeat(50));
   console.log('📖 Novel Automation Agent');
+  console.log(`   Provider: ${aiConfig.provider}`);
+  console.log(`   Model: ${aiConfig.model}`);
   console.log('='.repeat(50));
 
   runOneBook({
+    aiConfig,
     projectDir,
     chaptersToGenerate,
   }).catch((err) => {

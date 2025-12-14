@@ -1,4 +1,4 @@
-import { generateTextWithRetry } from './aiClient.js';
+import { generateTextWithRetry, type AIConfig } from './aiClient.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
 import { z } from 'zod';
 
@@ -14,6 +14,8 @@ const UpdateSchema = z.object({
  * 章节生成参数
  */
 export type WriteChapterParams = {
+  /** AI 配置 */
+  aiConfig: AIConfig;
   /** Story Bible 内容 */
   bible: string;
   /** 滚动剧情摘要 */
@@ -80,7 +82,7 @@ function buildSystemPrompt(isFinal: boolean, chapterTitle?: string): string {
 /**
  * 构建 User Prompt
  */
-function buildUserPrompt(params: WriteChapterParams): string {
+function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
   const {
     bible,
     rollingSummary,
@@ -122,14 +124,14 @@ ${chapterGoalHint ?? '承接上一章结尾，推进主线一步，并制造更�
  * 生成单章内容
  */
 export async function writeOneChapter(params: WriteChapterParams): Promise<WriteChapterResult> {
-  const { chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
+  const { aiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
   const isFinal = chapterIndex === totalChapters;
 
   const system = buildSystemPrompt(isFinal, chapterTitle);
   const prompt = buildUserPrompt(params);
 
   // 第一次生成
-  let chapterText = await generateTextWithRetry({ system, prompt, temperature: 0.85 });
+  let chapterText = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.85 });
   let wasRewritten = false;
   let rewriteCount = 0;
 
@@ -153,7 +155,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
       });
 
       const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
-      chapterText = await generateTextWithRetry({ system, prompt: rewritePrompt, temperature: 0.8 });
+      chapterText = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
       wasRewritten = true;
       rewriteCount++;
     }
@@ -173,6 +175,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   if (!skipSummaryUpdate) {
     // 生成更新后的摘要和伏笔
     const summaryResult = await generateSummaryUpdate(
+      aiConfig,
       params.bible,
       params.rollingSummary,
       chapterText
@@ -196,6 +199,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
  * 生成更新后的滚动摘要和未解伏笔
  */
 async function generateSummaryUpdate(
+  aiConfig: AIConfig,
   bible: string,
   previousSummary: string,
   chapterText: string
@@ -224,7 +228,7 @@ ${chapterText}
 请输出更新后的 JSON：
 `.trim();
 
-  const raw = await generateTextWithRetry({ system, prompt, temperature: 0.2 });
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2 });
 
   // 容错：去掉可能的代码块标记
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();

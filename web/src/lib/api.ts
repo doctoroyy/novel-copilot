@@ -58,6 +58,11 @@ export type ProjectDetail = {
   chapters: string[];
 };
 
+// Helper to merge headers
+function mergeHeaders(base: Record<string, string>, aiHeaders?: Record<string, string>): Record<string, string> {
+  return { ...base, ...aiHeaders };
+}
+
 // API functions
 export async function fetchProjects(): Promise<ProjectSummary[]> {
   const res = await fetch(`${API_BASE}/projects`);
@@ -97,11 +102,12 @@ export async function generateOutline(
   name: string,
   targetChapters: number,
   targetWordCount: number,
-  customPrompt?: string
+  customPrompt?: string,
+  aiHeaders?: Record<string, string>
 ): Promise<NovelOutline> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
   });
   const data = await res.json();
@@ -111,11 +117,12 @@ export async function generateOutline(
 
 export async function generateChapters(
   name: string,
-  chaptersToGenerate: number
+  chaptersToGenerate: number,
+  aiHeaders?: Record<string, string>
 ): Promise<{ chapter: number; title: string }[]> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ chaptersToGenerate }),
   });
   const data = await res.json();
@@ -146,13 +153,33 @@ export async function resetProject(name: string): Promise<void> {
   if (!data.success) throw new Error(data.error);
 }
 
-export async function generateBible(genre?: string, theme?: string, keywords?: string): Promise<string> {
+export async function generateBible(
+  genre?: string,
+  theme?: string,
+  keywords?: string,
+  aiHeaders?: Record<string, string>
+): Promise<string> {
   const res = await fetch(`${API_BASE}/generate-bible`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ genre, theme, keywords }),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.bible;
+}
+
+export async function testAIConnection(config: {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/config/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  const data = await res.json();
+  return data;
 }

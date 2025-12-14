@@ -1,11 +1,15 @@
 import path from 'node:path';
+import 'dotenv/config';
 import { listProjects, readState } from './memory.js';
 import { runOneBook } from './runOneBook.js';
+import type { AIConfig } from './aiClient.js';
 
 /**
  * 批量运行参数
  */
 type BatchOptions = {
+  /** AI 配置 */
+  aiConfig: AIConfig;
   /** 项目根目录 */
   projectsDir: string;
   /** 每本书生成的章节数 */
@@ -20,6 +24,7 @@ type BatchOptions = {
  */
 export async function runBatch(options: BatchOptions): Promise<void> {
   const {
+    aiConfig,
     projectsDir,
     chaptersPerBook = 1,
     delayBetweenBooks = 5000,
@@ -27,6 +32,8 @@ export async function runBatch(options: BatchOptions): Promise<void> {
 
   console.log('='.repeat(50));
   console.log('📖 Novel Automation Agent - Batch Mode');
+  console.log(`   Provider: ${aiConfig.provider}`);
+  console.log(`   Model: ${aiConfig.model}`);
   console.log('='.repeat(50));
 
   // 获取所有项目
@@ -75,6 +82,7 @@ export async function runBatch(options: BatchOptions): Promise<void> {
 
       try {
         await runOneBook({
+          aiConfig,
           projectDir,
           chaptersToGenerate: 1,
         });
@@ -101,10 +109,24 @@ function sleep(ms: number): Promise<void> {
 
 // CLI 入口
 async function main() {
+  // Read AI config from environment variables
+  const aiConfig: AIConfig = {
+    provider: (process.env.AI_PROVIDER || 'gemini') as AIConfig['provider'],
+    model: process.env.AI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    apiKey: process.env.AI_API_KEY || process.env.GEMINI_API_KEY || '',
+    baseUrl: process.env.AI_BASE_URL,
+  };
+
+  if (!aiConfig.apiKey) {
+    console.error('❌ Missing AI_API_KEY or GEMINI_API_KEY environment variable');
+    process.exit(1);
+  }
+
   const projectsDir = process.argv[2] || path.join(process.cwd(), 'projects');
   const chaptersPerBook = parseInt(process.argv[3] || '1', 10);
 
   await runBatch({
+    aiConfig,
     projectsDir,
     chaptersPerBook,
   });

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { generateTextWithRetry } from './aiClient.js';
+import { generateTextWithRetry, type AIConfig } from './aiClient.js';
 import { readBible, readState, writeState, type BookState } from './memory.js';
 
 /**
@@ -50,11 +50,14 @@ export type ChapterOutline = {
 /**
  * 生成总大纲
  */
-export async function generateMasterOutline(args: {
-  bible: string;
-  targetChapters: number;
-  targetWordCount: number;
-}): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] }> {
+async function generateMasterOutline(
+  aiConfig: AIConfig,
+  args: {
+    bible: string;
+    targetChapters: number;
+    targetWordCount: number;
+  }
+): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] }> {
   const { bible, targetChapters, targetWordCount } = args;
 
   // 估算分卷数 (通常每 50-100 章一卷)
@@ -94,7 +97,7 @@ ${bible}
 请生成总大纲：
 `.trim();
 
-  const raw = await generateTextWithRetry({ system, prompt, temperature: 0.7 });
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
@@ -107,12 +110,15 @@ ${bible}
 /**
  * 生成单卷的章节大纲
  */
-export async function generateVolumeChapters(args: {
-  bible: string;
-  masterOutline: { mainGoal: string; milestones: string[] };
-  volume: Omit<VolumeOutline, 'chapters'>;
-  previousVolumeSummary?: string;
-}): Promise<ChapterOutline[]> {
+async function generateVolumeChapters(
+  aiConfig: AIConfig,
+  args: {
+    bible: string;
+    masterOutline: { mainGoal: string; milestones: string[] };
+    volume: Omit<VolumeOutline, 'chapters'>;
+    previousVolumeSummary?: string;
+  }
+): Promise<ChapterOutline[]> {
   const { bible, masterOutline, volume, previousVolumeSummary } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
@@ -148,7 +154,7 @@ ${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` :
 请生成本卷所有 ${chapterCount} 章的大纲（JSON数组）：
 `.trim();
 
-  const raw = await generateTextWithRetry({ system, prompt, temperature: 0.7 });
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
@@ -162,11 +168,12 @@ ${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` :
  * 一键生成完整大纲
  */
 export async function generateFullOutline(args: {
+  aiConfig: AIConfig;
   projectDir: string;
   targetChapters?: number;
   targetWordCount?: number;
 }): Promise<NovelOutline> {
-  const { projectDir, targetChapters = 400, targetWordCount = 100 } = args;
+  const { aiConfig, projectDir, targetChapters = 400, targetWordCount = 100 } = args;
 
   console.log('\n📋 开始生成大纲...');
   console.log(`   目标: ${targetChapters} 章 / ${targetWordCount} 万字\n`);
@@ -175,7 +182,7 @@ export async function generateFullOutline(args: {
 
   // 1. 生成总大纲
   console.log('1️⃣ 生成总大纲...');
-  const master = await generateMasterOutline({ bible, targetChapters, targetWordCount });
+  const master = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
   console.log(`   ✅ 主线: ${master.mainGoal}`);
   console.log(`   ✅ 分卷数: ${master.volumes.length}`);
 
@@ -187,7 +194,7 @@ export async function generateFullOutline(args: {
     const vol = master.volumes[i];
     console.log(`\n2️⃣ 生成 ${vol.title} 的章节大纲 (第${vol.startChapter}-${vol.endChapter}章)...`);
 
-    const chapters = await generateVolumeChapters({
+    const chapters = await generateVolumeChapters(aiConfig, {
       bible,
       masterOutline: master,
       volume: vol,
@@ -259,16 +266,5 @@ function sleep(ms: number): Promise<void> {
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 
 if (isMain) {
-  const projectDir = process.argv[2] || path.join(process.cwd(), 'projects', 'demo-book');
-  const targetChapters = parseInt(process.argv[3] || '400', 10);
-  const targetWordCount = parseInt(process.argv[4] || '100', 10);
-
-  console.log('='.repeat(50));
-  console.log('📋 Novel Outline Generator');
-  console.log('='.repeat(50));
-
-  generateFullOutline({ projectDir, targetChapters, targetWordCount }).catch((err) => {
-    console.error('\n❌ 生成大纲失败:', err);
-    process.exit(1);
-  });
+  console.log('CLI mode not supported without AI config. Use the web interface.');
 }
