@@ -275,10 +275,15 @@ function App() {
   };
 
   const handleGenerateBible = async () => {
+    if (!isConfigured) {
+      setError('请先在设置中配置 AI API Key');
+      setShowSettingsDialog(true);
+      return;
+    }
     setGeneratingBible(true);
     try {
       log('🤖 AI 正在想象 Story Bible...');
-      const bible = await generateBible(aiGenre, aiTheme, aiKeywords);
+      const bible = await generateBible(aiGenre, aiTheme, aiKeywords, getAIConfigHeaders(aiConfig));
       setNewProjectBible(bible);
       log('✅ Story Bible 生成完成');
     } catch (err) {

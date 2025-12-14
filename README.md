@@ -1,104 +1,106 @@
-# Novel Automation Agent
+# Novel Copilot
 
-基于 Gemini API 的小说自动化生成 Agent，支持三层记忆系统保持章节关联性，自动检测"提前完结"并重写。
+AI 小说自动化生成工具，支持多种 AI 模型（Gemini、OpenAI、DeepSeek）。
 
-## 功能特性
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doctoroyy/novel-copilot)
 
-- ✅ **三层记忆系统**：Story Bible + 滚动摘要 + 近章原文，保持剧情强关联
-- ✅ **提前完结检测**：自动检测并重写"提前收尾"的章节
-- ✅ **状态机管理**：每章生成后自动更新摘要和伏笔列表
-- ✅ **批量处理**：支持多本书队列生成
+## ✨ 功能
 
-## 快速开始
+- 🤖 **多模型支持**：Gemini、OpenAI、DeepSeek 及自定义 API
+- 📚 **三层记忆**：Story Bible + 滚动摘要 + 近章原文
+- 📋 **大纲生成**：自动规划卷章结构
+- 🔄 **断点续写**：自动保存进度，支持中断恢复
+- 🌐 **Web UI**：现代化界面，实时进度显示
 
-### 1. 安装依赖
+## 🚀 一键部署到 Cloudflare
 
-```bash
-npm install
-```
+### 方式一：点击部署按钮
 
-### 2. 配置 API Key
+点击上方 "Deploy to Cloudflare Workers" 按钮，按提示操作即可。
 
-复制 `.env.example` 到 `.env`，填入你的 Gemini API Key：
-
-```bash
-cp .env.example .env
-# 编辑 .env，填入 GEMINI_API_KEY
-```
-
-API Key 从 [AI Studio](https://aistudio.google.com/) 获取。
-
-### 3. 创建书籍项目
-
-在 `projects/` 目录下创建书籍文件夹，包含：
-
-- `bible.md`：Story Bible（世界观、人物、禁写规则等）
-- `state.json`：书籍状态（会自动创建）
-
-参考 `projects/demo-book/` 示例。
-
-### 4. 生成章节
+### 方式二：手动部署
 
 ```bash
-# 生成单本书的 1 章
-npm run dev
+# 1. 克隆项目
+git clone https://github.com/doctoroyy/novel-copilot.git
+cd novel-copilot
 
-# 生成指定本书的 N 章
-npm run dev -- ./projects/my-book 5
+# 2. 安装依赖
+pnpm install
+cd web && pnpm install && cd ..
 
-# 批量生成所有书籍，每本 1 章
-npm run batch
+# 3. 创建 D1 数据库
+wrangler d1 create novel-copilot-db
+# 复制输出的 database_id 到 wrangler.toml
 
-# 批量生成，每本 3 章
-npm run batch -- ./projects 3
+# 4. 初始化数据库
+pnpm db:init
+
+# 5. 构建前端
+pnpm build:web
+
+# 6. 部署
+wrangler deploy
 ```
 
-## 项目结构
+## 🛠️ 本地开发
+
+```bash
+# 安装依赖
+pnpm install
+cd web && pnpm install && cd ..
+
+# 初始化本地 D1
+pnpm db:init:local
+
+# 启动后端 (Workers, 端口 8787)
+pnpm dev
+
+# 启动前端 (Vite, 端口 5173)
+cd web && pnpm dev
+```
+
+访问 http://localhost:5173
+
+## 📁 项目结构
 
 ```
-novel-automation/
+novel-copilot/
 ├── src/
-│   ├── gemini.ts          # Gemini API 封装
-│   ├── memory.ts          # 状态管理
-│   ├── qc.ts              # 质量控制（提前完结检测）
-│   ├── generateChapter.ts # 章节生成核心
-│   ├── runOneBook.ts      # 单本书运行器
-│   └── runBatch.ts        # 批量运行器
-├── projects/
-│   └── demo-book/         # 示例项目
-│       ├── bible.md       # Story Bible
-│       ├── state.json     # 书籍状态
-│       └── chapters/      # 生成的章节
-└── .env                   # 环境变量 (API Key)
+│   ├── worker.ts           # Cloudflare Workers 入口
+│   ├── routes/             # Hono API 路由
+│   ├── services/           # AI 客户端
+│   └── db/                 # D1 数据库 Schema
+├── web/                    # React 前端
+├── wrangler.toml           # Cloudflare 配置
+└── package.json
 ```
 
-## Story Bible 格式
+## 🔧 配置 AI
 
-参考 `projects/demo-book/bible.md`，建议包含：
+部署后访问应用，点击设置按钮：
 
-- **核心卖点**：题材、风格、爽点
-- **主角/配角**：人设、动机、关系
-- **世界观规则**：设定、禁忌
-- **主线**：核心目标、阶段
-- **禁写规则**：哪些内容在非最终章禁止出现
+1. 选择 AI 提供商（Gemini/OpenAI/DeepSeek）
+2. 输入对应的 API Key
+3. 选择模型
+4. 点击"测试连接"验证
+5. 保存
 
-## 工作原理
+API Key 存储在浏览器 localStorage，不会上传到服务器。
 
-1. 每章生成时，带入三层记忆：
-   - Story Bible（长期设定）
-   - Rolling Summary（滚动剧情摘要）
-   - Last Chapters（近 1-2 章原文）
+## 📝 使用流程
 
-2. 生成后自动 QC 检测"提前完结"信号（关键词匹配）
+1. **创建项目**：输入书名和 Story Bible
+2. **生成大纲**：AI 自动规划章节结构
+3. **生成章节**：按需生成，支持批量
+4. **导出下载**：打包所有章节为 ZIP
 
-3. 如果通不过 QC，自动重写（最多 2 次）
+## 🔗 相关链接
 
-4. 生成完成后，自动更新 `rollingSummary` 和 `openLoops`
+- [Gemini API Key](https://aistudio.google.com/)
+- [OpenAI API Key](https://platform.openai.com/api-keys)
+- [DeepSeek API Key](https://platform.deepseek.com/)
 
-5. 状态落盘到 `state.json`，支持断点续写
+## 📄 许可
 
-## 后续计划
-
-- [ ] 番茄小说作者后台自动上传 (Playwright RPA)
-- [ ] Context Caching 优化 (降低成本)
-- [ ] 模型裁判复核 (更稳的 QC)
+MIT License
