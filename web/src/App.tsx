@@ -225,7 +225,7 @@ function App() {
       }
 
       const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `${selectedProject.name}.txt`;
+      let filename = `${selectedProject.name}.zip`;
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
         const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);

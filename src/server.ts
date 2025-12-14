@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import archiver from 'archiver';
 import { fileURLToPath } from 'node:url';
 import {
   listProjects,
@@ -431,7 +432,8 @@ app.put('/api/projects/:name/reset', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/projects/:name/download - 下载整本书 (TXT 格式)
+ * GET /api/projects/:name/download - 下载整本书 (ZIP 格式)
+ * 包含: 1) chapters/ 文件夹 (每章一个文件) 2) 完整小说文件
  */
 app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
   try {
@@ -463,33 +465,11 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
       return null;
     };
     
-    // Combine all chapters
-    const chapters: string[] = [];
-    for (const file of files) {
-      const chapterIndex = parseInt(file.replace('.md', ''), 10);
-      const chapterPath = path.join(chaptersDir, file);
-      const content = await fs.readFile(chapterPath, 'utf-8');
-      
-      // Check if content already has a chapter title line
-      const hasTitle = /^第?\d*[章回节]/.test(content.trim());
-      
-      if (hasTitle) {
-        chapters.push(content.trim());
-      } else {
-        // Add chapter title if not present
-        const title = getChapterTitle(chapterIndex) || '';
-        const chapterHeader = `第${chapterIndex}章 ${title}`.trim();
-        chapters.push(`${chapterHeader}\n\n${content.trim()}`);
-      }
-    }
-    
-    const fullContent = chapters.join('\n\n' + '='.repeat(40) + '\n\n');
-    
     // Read state and bible for book title
     const state = await readState(projectPath);
     const bible = await readBible(projectPath);
     
-    // Try to extract book title from bible (format: # 书名：《...》 or # XXX)
+    // Extract book title from bible
     let bookTitle = projectName;
     const titleMatch = bible.match(/^#\s*书名[：:]\s*[《「]?(.+?)[》」]?\s*$/m) 
                     || bible.match(/^#\s*[《「](.+?)[》」]\s*$/m)
@@ -500,15 +480,61 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
       bookTitle = state.bookTitle;
     }
     
-    // Set response headers for file download
-    const filename = `${bookTitle}.txt`;
-    // Use RFC 5987 for UTF-8 filename support
-    // Only use filename* since plain filename cannot contain non-ASCII characters
-    const encodedFilename = encodeURIComponent(filename).replace(/'/g, '%27');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    // Prepare chapter contents
+    const chapterContents: { index: number; title: string; content: string }[] = [];
+    
+    for (const file of files) {
+      const chapterIndex = parseInt(file.replace('.md', ''), 10);
+      const chapterPath = path.join(chaptersDir, file);
+      const content = await fs.readFile(chapterPath, 'utf-8');
+      
+      // Check if content already has a chapter title line
+      const hasTitle = /^第?\d*[章回节]/.test(content.trim());
+      const title = getChapterTitle(chapterIndex) || '';
+      
+      let finalContent: string;
+      if (hasTitle) {
+        finalContent = content.trim();
+      } else {
+        const chapterHeader = `第${chapterIndex}章 ${title}`.trim();
+        finalContent = `${chapterHeader}\n\n${content.trim()}`;
+      }
+      
+      chapterContents.push({ index: chapterIndex, title, content: finalContent });
+    }
+    
+    // Create full novel content
+    const fullNovelContent = chapterContents.map(c => c.content).join('\n\n' + '='.repeat(40) + '\n\n');
+    
+    // Set response headers for ZIP download
+    const zipFilename = `${bookTitle}.zip`;
+    const encodedFilename = encodeURIComponent(zipFilename).replace(/'/g, '%27');
+    res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     
-    res.send(fullContent);
+    // Create ZIP archive
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    archive.on('error', (err) => {
+      throw err;
+    });
+    
+    // Pipe archive to response
+    archive.pipe(res);
+    
+    // Add complete novel file
+    archive.append(fullNovelContent, { name: `${bookTitle}.txt` });
+    
+    // Add chapters folder with individual files
+    for (const chapter of chapterContents) {
+      const chapterFilename = chapter.title 
+        ? `第${chapter.index}章 ${chapter.title}.txt`
+        : `第${chapter.index}章.txt`;
+      archive.append(chapter.content, { name: `chapters/${chapterFilename}` });
+    }
+    
+    // Finalize archive
+    await archive.finalize();
   } catch (error) {
     res.status(500).json({ success: false, error: (error as Error).message });
   }
