@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface BibleViewProps {
   project: ProjectDetail;

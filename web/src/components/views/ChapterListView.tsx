@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface ChapterListViewProps {
   project: ProjectDetail;
@@ -55,7 +55,6 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
   const volumeGroups = project.outline?.volumes.map(vol => ({
     ...vol,
     chapters: project.chapters
-      .map(ch => parseInt(ch.replace('.md', ''), 10))
       .filter(idx => idx >= vol.startChapter && idx <= vol.endChapter)
   })) || [];
 
@@ -114,11 +113,10 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
             ) : (
               // Simple list
               <div className="grid gap-2">
-                {project.chapters.map((ch) => {
-                  const index = parseInt(ch.replace('.md', ''), 10);
+                {project.chapters.map((index) => {
                   return (
                     <button
-                      key={ch}
+                      key={index}
                       onClick={() => handleView(index)}
                       disabled={loading}
                       className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"

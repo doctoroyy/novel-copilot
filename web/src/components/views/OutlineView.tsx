@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import type { ProjectDetail } from '@/lib/api';
+import type { ProjectDetail } from '@/lib/types';
 
 interface OutlineViewProps {
   project: ProjectDetail;

@@ -1,16 +1,16 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { ProjectSummary } from '@/lib/api';
+import type { ProjectSummary } from '@/lib/types';
 
 interface SidebarProps {
   projects: ProjectSummary[];
-  selectedProject: string | null;
-  onSelectProject: (name: string) => void;
+  selectedProjectId: string | null;
+  onSelectProject: (id: string) => void;
   onNewProject: () => void;
 }
 
-export function Sidebar({ projects, selectedProject, onSelectProject, onNewProject }: SidebarProps) {
+export function Sidebar({ projects, selectedProjectId, onSelectProject, onNewProject }: SidebarProps) {
   return (
     <aside className="w-72 h-screen flex flex-col border-r border-border bg-sidebar">
       {/* Logo */}
@@ -41,13 +41,13 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
       <ScrollArea className="flex-1 px-3">
         <div className="space-y-2 py-2">
           {projects.map((project) => {
-            const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
-            const isSelected = selectedProject === project.name;
+            const progress = ((project.state.next_chapter_index - 1) / project.state.total_chapters) * 100;
+            const isSelected = selectedProjectId === project.id;
             
             return (
               <button
-                key={project.name}
-                onClick={() => onSelectProject(project.name)}
+                key={project.id}
+                onClick={() => onSelectProject(project.id)}
                 className={`
                   w-full p-3 rounded-xl text-left transition-all duration-200
                   hover-lift group
@@ -77,11 +77,11 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
                 </div>
                 
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{project.state.nextChapterIndex - 1} / {project.state.totalChapters} 章</span>
+                  <span>{project.state.next_chapter_index - 1} / {project.state.total_chapters} 章</span>
                   <span>{Math.round(progress)}%</span>
                 </div>
 
-                {project.state.needHuman && (
+                {project.state.need_human && (
                   <Badge variant="destructive" className="mt-2 text-[10px]">
                     需要人工介入
                   </Badge>
