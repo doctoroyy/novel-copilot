@@ -1,0 +1,33 @@
+{
+  "name": "novel-automation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/runOneBook.ts",
+    "dev:5": "tsx src/runOneBook.ts ./projects/demo-book 5",
+    "dev:10": "tsx src/runOneBook.ts ./projects/demo-book 10",
+    "batch": "tsx src/runBatch.ts",
+    "batch:5": "tsx src/runBatch.ts ./projects 5",
+    "batch:10": "tsx src/runBatch.ts ./projects 10",
+    "batch:100": "tsx src/runBatch.ts ./projects 100",
+    "outline": "tsx src/generateOutline.ts",
+    "outline:100": "tsx src/generateOutline.ts ./projects/demo-book 400 100",
+    "server": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^0.14.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

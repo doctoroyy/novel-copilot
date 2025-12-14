@@ -1,0 +1,158 @@
+// API client for novel automation backend
+const API_BASE = '/api';
+
+export type ProjectSummary = {
+  name: string;
+  path: string;
+  state: BookState;
+  hasOutline: boolean;
+  outlineSummary: {
+    totalChapters: number;
+    targetWordCount: number;
+    volumeCount: number;
+    mainGoal: string;
+  } | null;
+};
+
+export type BookState = {
+  bookTitle: string;
+  totalChapters: number;
+  nextChapterIndex: number;
+  rollingSummary: string;
+  openLoops: string[];
+  needHuman?: boolean;
+  needHumanReason?: string;
+};
+
+export type NovelOutline = {
+  totalChapters: number;
+  targetWordCount: number;
+  volumes: VolumeOutline[];
+  mainGoal: string;
+  milestones: string[];
+};
+
+export type VolumeOutline = {
+  title: string;
+  startChapter: number;
+  endChapter: number;
+  goal: string;
+  conflict: string;
+  climax: string;
+  chapters: ChapterOutline[];
+};
+
+export type ChapterOutline = {
+  index: number;
+  title: string;
+  goal: string;
+  hook: string;
+};
+
+export type ProjectDetail = {
+  name: string;
+  path: string;
+  state: BookState;
+  bible: string;
+  outline: NovelOutline | null;
+  chapters: string[];
+};
+
+// API functions
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const res = await fetch(`${API_BASE}/projects`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.projects;
+}
+
+export async function fetchProject(name: string): Promise<ProjectDetail> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.project;
+}
+
+export async function createProject(name: string, bible: string, totalChapters: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, bible, totalChapters }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function updateBible(name: string, bible: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/bible`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bible }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function generateOutline(
+  name: string,
+  targetChapters: number,
+  targetWordCount: number,
+  customPrompt?: string
+): Promise<NovelOutline> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.outline;
+}
+
+export async function generateChapters(
+  name: string,
+  chaptersToGenerate: number
+): Promise<{ chapter: number; title: string }[]> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chaptersToGenerate }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.generated;
+}
+
+export async function fetchChapter(name: string, index: number): Promise<string> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.content;
+}
+
+export async function deleteProject(name: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function resetProject(name: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/reset`, {
+    method: 'PUT',
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function generateBible(genre?: string, theme?: string, keywords?: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/generate-bible`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ genre, theme, keywords }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.bible;
+}
