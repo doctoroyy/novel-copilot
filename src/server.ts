@@ -17,6 +17,8 @@ import {
 import { readOutline, generateFullOutline, type NovelOutline } from './generateOutline.js';
 import { writeOneChapter } from './generateChapter.js';
 import { eventBus } from './eventBus.js';
+import { loadConfig, saveConfig, maskApiKey, PROVIDER_MODELS, clearConfigCache } from './config.js';
+import { testConnection, resetClients } from './aiClient.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,6 +67,80 @@ app.get('/api/events', (req: Request, res: Response) => {
     clearInterval(keepAlive);
     eventBus.off('event', sendEvent);
   });
+});
+
+// ==================== Config API ====================
+
+/**
+ * GET /api/config - 获取 AI 配置（API Key 脱敏）
+ */
+app.get('/api/config', async (req: Request, res: Response) => {
+  try {
+    const config = await loadConfig();
+    res.json({ 
+      success: true, 
+      config: maskApiKey(config),
+      providers: PROVIDER_MODELS,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+
+/**
+ * POST /api/config - 更新 AI 配置
+ */
+app.post('/api/config', async (req: Request, res: Response) => {
+  try {
+    const { provider, model, apiKey, baseUrl } = req.body;
+    
+    // Load existing config and merge
+    const existing = await loadConfig();
+    const newConfig = {
+      provider: provider || existing.provider,
+      model: model || existing.model,
+      apiKey: apiKey || existing.apiKey,
+      baseUrl: baseUrl !== undefined ? baseUrl : existing.baseUrl,
+    };
+    
+    await saveConfig(newConfig);
+    clearConfigCache();
+    resetClients();
+    
+    res.json({ 
+      success: true, 
+      config: maskApiKey(newConfig),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+
+/**
+ * POST /api/config/test - 测试 API 连接（支持传入临时配置）
+ */
+app.post('/api/config/test', async (req: Request, res: Response) => {
+  try {
+    const { provider, model, apiKey, baseUrl } = req.body;
+    
+    // If config provided in body, use it (for testing before saving)
+    if (provider && model && apiKey) {
+      const { testConnectionWithConfig } = await import('./aiClient.js');
+      const result = await testConnectionWithConfig({
+        provider,
+        model,
+        apiKey,
+        baseUrl,
+      });
+      return res.json(result);
+    }
+    
+    // Otherwise use saved config
+    const result = await testConnection();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, message: (error as Error).message });
+  }
 });
 
 // ==================== API Routes ====================

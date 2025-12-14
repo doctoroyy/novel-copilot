@@ -38,6 +38,7 @@ import {
   OutlineView, 
   BibleView 
 } from '@/components/views';
+import { SettingsDialog } from '@/components/SettingsDialog';
 
 function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -50,6 +51,7 @@ function App() {
 
   // New project dialog
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectBible, setNewProjectBible] = useState('');
   const [newProjectChapters, setNewProjectChapters] = useState('400');
@@ -350,6 +352,7 @@ function App() {
           onRefresh={() => selectedProject && loadProject(selectedProject.name)}
           onDownload={handleDownloadBook}
           onDelete={handleDeleteProject}
+          onSettings={() => setShowSettingsDialog(true)}
         />
 
         {/* Error banner */}
@@ -457,6 +460,12 @@ function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Settings Dialog */}
+      <SettingsDialog 
+        open={showSettingsDialog} 
+        onOpenChange={setShowSettingsDialog} 
+      />
     </div>
   );
 }

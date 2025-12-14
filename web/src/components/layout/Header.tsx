@@ -10,6 +10,7 @@ interface HeaderProps {
   onRefresh: () => void;
   onDownload: () => void;
   onDelete: () => void;
+  onSettings: () => void;
 }
 
 const tabs = [
@@ -26,13 +27,19 @@ export function Header({
   onTabChange, 
   onRefresh,
   onDownload,
-  onDelete 
+  onDelete,
+  onSettings,
 }: HeaderProps) {
   if (!project) {
     return (
       <header className="h-16 border-b border-border flex items-center justify-between px-6">
         <div className="text-muted-foreground">选择一个项目开始</div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={onSettings}>
+            ⚙️ 设置
+          </Button>
+          <ThemeToggle />
+        </div>
       </header>
     );
   }
@@ -78,6 +85,9 @@ export function Header({
             🗑️ 删除
           </Button>
           <div className="w-px h-6 bg-border mx-2" />
+          <Button variant="ghost" size="sm" onClick={onSettings}>
+            ⚙️ 设置
+          </Button>
           <ThemeToggle />
         </div>
       </div>
