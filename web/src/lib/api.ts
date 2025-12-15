@@ -115,6 +115,19 @@ export async function generateOutline(
   return data.outline;
 }
 
+export async function refineOutline(
+  name: string,
+  aiHeaders?: Record<string, string>
+): Promise<NovelOutline> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline/refine`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.outline;
+}
+
 export async function generateChapters(
   name: string,
   chaptersToGenerate: number,
