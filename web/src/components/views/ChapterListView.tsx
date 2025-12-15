@@ -20,6 +20,8 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
+  const [copiedChapter, setCopiedChapter] = useState<number | null>(null);
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -49,6 +51,19 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
     await navigator.clipboard.writeText(viewingChapter.content);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
+  };
+
+  const handleQuickCopy = async (index: number, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the dialog
+    setCopyingChapter(index);
+    try {
+      const content = await onViewChapter(index);
+      await navigator.clipboard.writeText(content);
+      setCopiedChapter(index);
+      setTimeout(() => setCopiedChapter(null), 2000);
+    } finally {
+      setCopyingChapter(null);
+    }
   };
 
   // Group chapters by volume
@@ -100,9 +115,19 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                                   </span>
                                 )}
                               </div>
-                              <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors shrink-0">
-                                查看 →
-                              </span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  onClick={(e) => handleQuickCopy(chapterIndex, e)}
+                                  disabled={copyingChapter === chapterIndex}
+                                  className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                                  title="复制章节内容"
+                                >
+                                  {copyingChapter === chapterIndex ? '复制中...' : copiedChapter === chapterIndex ? '✅ 已复制' : '📋 复制'}
+                                </button>
+                                <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                                  查看 →
+                                </span>
+                              </div>
                             </button>
                           );
                         })}
@@ -124,9 +149,19 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                       className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
                     >
                       <span className="font-medium">第 {index} 章</span>
-                      <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                        查看 →
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={(e) => handleQuickCopy(index, e)}
+                          disabled={copyingChapter === index}
+                          className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                          title="复制章节内容"
+                        >
+                          {copyingChapter === index ? '复制中...' : copiedChapter === index ? '✅ 已复制' : '📋 复制'}
+                        </button>
+                        <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                          查看 →
+                        </span>
+                      </div>
                     </button>
                   );
                 })}
