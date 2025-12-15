@@ -100,13 +100,13 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg glass-card">
+      <DialogContent className="max-w-lg glass-card w-[95vw] sm:w-full">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 text-lg">
             <span>⚙️</span>
             <span>AI 设置</span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-sm">
             配置 AI Provider 和 API Key（保存在本地浏览器）
           </DialogDescription>
         </DialogHeader>
@@ -114,7 +114,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="space-y-4 py-4">
           {/* Provider Selection */}
           <div className="space-y-2">
-            <Label>Provider</Label>
+            <Label className="text-sm">Provider</Label>
             <Select 
               value={provider} 
               onValueChange={(val) => {
@@ -123,7 +123,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 setModel(models[0] || '');
               }}
             >
-              <SelectTrigger className="bg-muted/50">
+              <SelectTrigger className="bg-muted/50 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -138,7 +138,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           {/* Model Selection */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>Model</Label>
+              <Label className="text-sm">Model</Label>
               <span className="text-xs text-muted-foreground">可选择或自定义输入</span>
             </div>
             <div className="flex gap-2">
@@ -146,7 +146,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 placeholder="输入或选择模型名称"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="flex-1 bg-muted/50"
+                className="flex-1 bg-muted/50 text-sm"
                 list="model-options"
               />
               {availableModels.length > 0 && (
@@ -183,7 +183,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           {/* Base URL (for custom/openai-compatible) */}
           {(provider === 'custom' || provider === 'openai' || provider === 'deepseek') && (
             <div className="space-y-2">
-              <Label>Base URL（可选）</Label>
+              <Label className="text-sm">Base URL（可选）</Label>
               <Input
                 placeholder={
                   provider === 'openai' ? 'https://api.openai.com/v1' :
@@ -192,7 +192,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 }
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                className="bg-muted/50"
+                className="bg-muted/50 text-sm"
               />
             </div>
           )}
@@ -200,7 +200,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           {/* API Key */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>API Key</Label>
+              <Label className="text-sm">API Key</Label>
               {maskedApiKey && (
                 <span className="text-xs text-muted-foreground">
                   当前: {maskedApiKey}
@@ -213,7 +213,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 placeholder="输入新的 API Key（留空保持不变）"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="flex-1 bg-muted/50"
+                className="flex-1 bg-muted/50 text-sm"
               />
               <Button
                 variant="outline"
@@ -228,7 +228,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {/* Test Result */}
           {testResult && (
-            <div className={`p-3 rounded-lg text-sm ${
+            <div className={`p-3 rounded-lg text-xs sm:text-sm ${
               testResult.success 
                 ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
                 : 'bg-red-500/10 text-red-400 border border-red-500/20'
@@ -238,17 +238,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           )}
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-col sm:flex-row gap-2">
           <Button
             variant="outline"
             onClick={handleTest}
             disabled={testing}
+            className="w-full sm:w-auto text-sm"
           >
             {testing ? '⏳ 测试中...' : '🔌 测试连接'}
           </Button>
           <Button
             onClick={handleSave}
-            className="gradient-bg hover:opacity-90"
+            className="gradient-bg hover:opacity-90 w-full sm:w-auto text-sm"
           >
             💾 保存配置
           </Button>

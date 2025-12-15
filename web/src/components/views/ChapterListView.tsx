@@ -60,25 +60,25 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
   })) || [];
 
   return (
-    <div className="p-6">
+    <div className="p-4 lg:p-6">
       <Card className="glass-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">已生成章节</CardTitle>
-            <Badge variant="secondary">{project.chapters.length} 章</Badge>
+            <CardTitle className="text-base lg:text-lg">已生成章节</CardTitle>
+            <Badge variant="secondary" className="text-xs">{project.chapters.length} 章</Badge>
           </div>
         </CardHeader>
         <CardContent>
-          <ScrollArea className="h-[calc(100vh-280px)]">
+          <ScrollArea className="h-[calc(100vh-240px)] lg:h-[calc(100vh-280px)]">
             {project.outline ? (
               // Grouped by volume
-              <div className="space-y-6">
+              <div className="space-y-4 lg:space-y-6">
                 {volumeGroups.map((vol, volIndex) => (
                   vol.chapters.length > 0 && (
                     <div key={volIndex}>
                       <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
-                        <span className="text-sm font-medium">{vol.title}</span>
-                        <Badge variant="outline" className="text-xs">
+                        <span className="text-xs lg:text-sm font-medium truncate">{vol.title}</span>
+                        <Badge variant="outline" className="text-xs shrink-0">
                           {vol.chapters.length} 章
                         </Badge>
                       </div>
@@ -90,17 +90,17 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                               key={chapterIndex}
                               onClick={() => handleView(chapterIndex)}
                               disabled={loading}
-                              className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
+                              className="w-full p-2.5 lg:p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
                             >
                               <div className="flex-1 min-w-0">
-                                <span className="font-medium">第 {chapterIndex} 章</span>
+                                <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
                                 {title && (
-                                  <span className="ml-2 text-muted-foreground truncate">
+                                  <span className="ml-2 text-xs lg:text-sm text-muted-foreground truncate">
                                     {title}
                                   </span>
                                 )}
                               </div>
-                              <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                              <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors shrink-0">
                                 查看 →
                               </span>
                             </button>
@@ -146,13 +146,13 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
 
       {/* Chapter Reader Dialog */}
       <Dialog open={!!viewingChapter} onOpenChange={() => setViewingChapter(null)}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
-          <DialogHeader className="pb-4 border-b border-border">
-            <div className="flex items-center justify-between">
-              <DialogTitle className="flex items-center gap-2">
-                <span>第 {viewingChapter?.index} 章</span>
+        <DialogContent className="max-w-4xl w-[95vw] sm:w-full max-h-[85vh] flex flex-col">
+          <DialogHeader className="pb-3 lg:pb-4 border-b border-border">
+            <div className="flex items-center justify-between gap-2">
+              <DialogTitle className="flex items-center gap-2 text-sm lg:text-base min-w-0">
+                <span className="shrink-0">第 {viewingChapter?.index} 章</span>
                 {viewingChapter?.title && (
-                  <span className="text-muted-foreground font-normal">
+                  <span className="text-muted-foreground font-normal truncate text-xs lg:text-sm">
                     {viewingChapter.title}
                   </span>
                 )}
@@ -161,15 +161,17 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                 variant="outline"
                 size="sm"
                 onClick={handleCopy}
-                className="gap-2"
+                className="gap-1 lg:gap-2 text-xs lg:text-sm shrink-0"
+                aria-label={copySuccess ? '已复制' : '复制章节内容'}
               >
-                {copySuccess ? '✅ 已复制' : '📋 复制'}
+                {copySuccess ? '✅' : '📋'}
+                <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
               </Button>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto mt-4 scrollbar-thin">
+          <div className="flex-1 overflow-y-auto mt-3 lg:mt-4 scrollbar-thin">
             <div className="prose prose-sm dark:prose-invert max-w-none pr-2">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+              <pre className="whitespace-pre-wrap font-sans text-xs lg:text-sm leading-relaxed">
                 {viewingChapter?.content}
               </pre>
             </div>
