@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Loader2, Sparkles, RotateCw } from 'lucide-react';
 import { type ProjectDetail, refineOutline } from '@/lib/api';
+import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
 interface OutlineViewProps {
   project: ProjectDetail;
@@ -13,11 +14,18 @@ interface OutlineViewProps {
 export function OutlineView({ project }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
+  const { config, isConfigured } = useAIConfig();
 
   const handleRefine = async () => {
+    if (!isConfigured) {
+      alert('请先在设置中配置 AI API Key');
+      return;
+    }
+
     try {
       setIsRefining(true);
-      await refineOutline(project.name);
+      const headers = getAIConfigHeaders(config);
+      await refineOutline(project.name, undefined, headers);
       
       setTimeout(() => {
         window.location.reload();
@@ -31,10 +39,16 @@ export function OutlineView({ project }: OutlineViewProps) {
   };
 
   const handleRefineVolume = async (volIndex: number) => {
+    if (!isConfigured) {
+      alert('请先在设置中配置 AI API Key');
+      return;
+    }
+
     try {
       setRefiningVolIdx(volIndex);
+      const headers = getAIConfigHeaders(config);
       // Explicitly pass volumeIndex to force regeneration of this volume
-      await refineOutline(project.name, volIndex);
+      await refineOutline(project.name, volIndex, headers);
       
       setTimeout(() => {
         window.location.reload();
