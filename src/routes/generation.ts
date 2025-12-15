@@ -343,6 +343,89 @@ ${chapterGoalHint || '承接上一章结尾，推进主线一步。'}
   return generateText(aiConfig, { system, prompt, temperature: 0.85 });
 }
 
+
+// Refine outline (regenerate missing/incomplete volumes)
+generationRoutes.post('/projects/:name/outline/refine', async (c) => {
+  const name = c.req.param('name');
+  const aiConfig = getAIConfigFromHeaders(c);
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  try {
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT id, bible FROM projects WHERE name = ?
+    `).bind(name).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    // Get current outline
+    const outlineRecord = await c.env.DB.prepare(`
+      SELECT outline_json FROM outlines WHERE project_id = ?
+    `).bind((project as any).id).first();
+
+    if (!outlineRecord) {
+      return c.json({ success: false, error: 'Outline not found' }, 404);
+    }
+
+    let outline = JSON.parse((outlineRecord as any).outline_json);
+    const bible = (project as any).bible;
+
+    let updated = false;
+    const volumes = outline.volumes || [];
+
+    // Iterate through volumes and check for incompleteness
+    for (let i = 0; i < volumes.length; i++) {
+      const vol = volumes[i];
+      const chapters = vol.chapters || [];
+      const expectedCount = (vol.endChapter - vol.startChapter) + 1;
+      
+      // Heuristic for "incomplete":
+      // 1. No chapters
+      // 2. Significantly fewer chapters than expected (e.g., < 20% of expected, or just placeholder 1 chapter)
+      // 3. Most chapters are empty (no goal)
+      
+      const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
+      const isPlaceholder = chapters.length <= 1;
+      const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1)); // Less than 10% content populated
+
+      if (isPlaceholder || isEmpty) {
+        console.log(`Refining Volume ${i + 1}: ${vol.title}`);
+        
+        // Regenerate chapters for this volume
+        // We need to construct a temporary master outline context for the AI
+        // Since generateVolumeChapters expects the master outline structure
+        const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
+        
+        // Normalize and replace
+        volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      outline.volumes = volumes;
+      
+      // Save updated outline
+      await c.env.DB.prepare(`
+        UPDATE outlines SET outline_json = ? WHERE project_id = ?
+      `).bind(JSON.stringify(outline), (project as any).id).run();
+      
+      return c.json({ success: true, message: 'Outline refined successfully', outline });
+    } else {
+      return c.json({ success: true, message: 'Outline is already complete', outline });
+    }
+
+  } catch (error) {
+    console.error('Refine outline error:', error);
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Migration endpoint to normalize existing outline data
 generationRoutes.post('/migrate-outlines', async (c) => {
   try {

@@ -1,13 +1,35 @@
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import type { ProjectDetail } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Loader2, Sparkles } from 'lucide-react';
+import { type ProjectDetail, refineOutline } from '@/lib/api';
 
 interface OutlineViewProps {
   project: ProjectDetail;
 }
 
 export function OutlineView({ project }: OutlineViewProps) {
+  const [isRefining, setIsRefining] = useState(false);
+
+  const handleRefine = async () => {
+    try {
+      setIsRefining(true);
+      await refineOutline(project.name);
+      
+      // Give user a moment to see the success state basically
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+
+    } catch (error) {
+      alert(`操作失败: ${(error as Error).message}`);
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
   if (!project.outline) {
     return (
       <div className="p-4 lg:p-6">
@@ -74,10 +96,26 @@ export function OutlineView({ project }: OutlineViewProps) {
 
       {/* Volumes */}
       <div className="space-y-4">
-        <h3 className="font-medium flex items-center gap-2 text-sm lg:text-base">
-          <span>📚</span>
-          <span>卷目结构</span>
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium flex items-center gap-2 text-sm lg:text-base">
+            <span>📚</span>
+            <span>卷目结构</span>
+          </h3>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleRefine}
+            disabled={isRefining}
+            className="h-8 text-xs lg:text-sm"
+          >
+            {isRefining ? (
+              <Loader2 className="mr-2 h-3 w-3 lg:h-4 lg:w-4 animate-spin" />
+            ) : (
+              <Sparkles className="mr-2 h-3 w-3 lg:h-4 lg:w-4 text-yellow-500" />
+            )}
+            完善缺失章节
+          </Button>
+        </div>
         
         <ScrollArea className="h-[calc(100vh-400px)] lg:h-[calc(100vh-450px)]">
           <div className="space-y-4 pr-2 lg:pr-4">
