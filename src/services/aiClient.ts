@@ -1,7 +1,5 @@
 // AI Client for Cloudflare Workers (using native fetch)
-
-// Timeout configuration (in milliseconds)
-const AI_REQUEST_TIMEOUT = 300000; // 5 minutes for AI generation requests
+import { TIMEOUTS } from '../config/timeouts.js';
 
 export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
@@ -46,7 +44,7 @@ async function generateWithGemini(
   temperature: number
 ): Promise<string> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT);
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.AI_REQUEST);
 
   try {
     const response = await fetch(
@@ -101,7 +99,7 @@ async function generateWithOpenAI(
      config.baseUrl);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT);
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.AI_REQUEST);
 
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {

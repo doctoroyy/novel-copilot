@@ -1,12 +1,10 @@
 // API client for novel automation backend
+import { TIMEOUTS } from '@/config/timeouts';
+
 const API_BASE = '/api';
 
-// Timeout configuration (in milliseconds)
-const DEFAULT_TIMEOUT = 60000; // 1 minute for normal operations
-const GENERATION_TIMEOUT = 600000; // 10 minutes for AI generation operations
-
 // Helper to create fetch with timeout
-function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number = DEFAULT_TIMEOUT): Promise<Response> {
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number = TIMEOUTS.DEFAULT): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   
@@ -155,7 +153,7 @@ export async function generateOutline(
       method: 'POST',
       headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
       body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
-    }, GENERATION_TIMEOUT);
+    }, TIMEOUTS.GENERATION);
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
     return data.outline;
@@ -177,7 +175,7 @@ export async function generateChapters(
       method: 'POST',
       headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
       body: JSON.stringify({ chaptersToGenerate }),
-    }, GENERATION_TIMEOUT);
+    }, TIMEOUTS.GENERATION);
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
     return data.generated;
@@ -244,7 +242,7 @@ export async function generateBible(
       method: 'POST',
       headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
       body: JSON.stringify({ genre, theme, keywords }),
-    }, GENERATION_TIMEOUT);
+    }, TIMEOUTS.GENERATION);
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
     return data.bible;
@@ -267,7 +265,7 @@ export async function testAIConnection(config: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
-    }, 30000); // 30 seconds timeout for test connection
+    }, TIMEOUTS.TEST_CONNECTION);
     const data = await res.json();
     return data;
   } catch (error: any) {

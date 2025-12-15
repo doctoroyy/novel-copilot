@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
+import { TIMEOUTS } from '../config/timeouts.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();
 
@@ -27,13 +28,11 @@ async function testAIConnection(config: {
   apiKey: string;
   baseUrl?: string;
 }): Promise<{ success: boolean; message: string }> {
-  const TEST_TIMEOUT = 30000; // 30 seconds for test connection
-  
   try {
     if (config.provider === 'gemini') {
       // Test Gemini API
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TEST_TIMEOUT);
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.TEST_CONNECTION);
 
       try {
         const response = await fetch(
@@ -73,7 +72,7 @@ async function testAIConnection(config: {
          config.baseUrl);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), TEST_TIMEOUT);
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.TEST_CONNECTION);
 
       try {
         const response = await fetch(`${baseUrl}/chat/completions`, {
