@@ -1,6 +1,23 @@
 // API client for novel automation backend
 const API_BASE = '/api';
 
+// Timeout configuration (in milliseconds)
+const DEFAULT_TIMEOUT = 60000; // 1 minute for normal operations
+const GENERATION_TIMEOUT = 600000; // 10 minutes for AI generation operations
+
+// Helper to create fetch with timeout
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number = DEFAULT_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  return fetch(url, {
+    ...options,
+    signal: controller.signal,
+  }).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 export type ProjectSummary = {
   name: string;
   path: string;
@@ -65,37 +82,65 @@ function mergeHeaders(base: Record<string, string>, aiHeaders?: Record<string, s
 
 // API functions
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(`${API_BASE}/projects`);
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.projects;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.projects;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function fetchProject(name: string): Promise<ProjectDetail> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`);
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.project;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.project;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function createProject(name: string, bible: string, totalChapters: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, bible, totalChapters }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, bible, totalChapters }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function updateBible(name: string, bible: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/bible`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bible }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}/bible`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bible }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function generateOutline(
@@ -105,14 +150,21 @@ export async function generateOutline(
   customPrompt?: string,
   aiHeaders?: Record<string, string>
 ): Promise<NovelOutline> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
-    method: 'POST',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.outline;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
+      method: 'POST',
+      headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+      body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
+    }, GENERATION_TIMEOUT);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.outline;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('生成超时（超过10分钟），请检查网络或重试');
+    }
+    throw error;
+  }
 }
 
 export async function generateChapters(
@@ -120,37 +172,65 @@ export async function generateChapters(
   chaptersToGenerate: number,
   aiHeaders?: Record<string, string>
 ): Promise<{ chapter: number; title: string }[]> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
-    method: 'POST',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ chaptersToGenerate }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.generated;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
+      method: 'POST',
+      headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+      body: JSON.stringify({ chaptersToGenerate }),
+    }, GENERATION_TIMEOUT);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.generated;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('生成超时（超过10分钟），请检查网络或重试');
+    }
+    throw error;
+  }
 }
 
 export async function fetchChapter(name: string, index: number): Promise<string> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`);
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.content;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.content;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function deleteProject(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function resetProject(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/reset`, {
-    method: 'PUT',
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${encodeURIComponent(name)}/reset`, {
+      method: 'PUT',
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请重试');
+    }
+    throw error;
+  }
 }
 
 export async function generateBible(
@@ -159,14 +239,21 @@ export async function generateBible(
   keywords?: string,
   aiHeaders?: Record<string, string>
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/generate-bible`, {
-    method: 'POST',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ genre, theme, keywords }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.bible;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/generate-bible`, {
+      method: 'POST',
+      headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+      body: JSON.stringify({ genre, theme, keywords }),
+    }, GENERATION_TIMEOUT);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.bible;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('生成超时（超过10分钟），请检查网络或重试');
+    }
+    throw error;
+  }
 }
 
 export async function testAIConnection(config: {
@@ -175,11 +262,18 @@ export async function testAIConnection(config: {
   apiKey: string;
   baseUrl?: string;
 }): Promise<{ success: boolean; message: string }> {
-  const res = await fetch(`${API_BASE}/config/test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
-  const data = await res.json();
-  return data;
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/config/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }, 30000); // 30 seconds timeout for test connection
+    const data = await res.json();
+    return data;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      return { success: false, message: '连接超时（超过30秒），请检查网络或API配置' };
+    }
+    throw error;
+  }
 }
