@@ -1,5 +1,8 @@
 // AI Client for Cloudflare Workers (using native fetch)
 
+// Timeout configuration (in milliseconds)
+const AI_REQUEST_TIMEOUT = 300000; // 5 minutes for AI generation requests
+
 export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
 export interface AIConfig {
@@ -42,32 +45,45 @@ async function generateWithGemini(
   prompt: string,
   temperature: number
 ): Promise<string> {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature },
-      }),
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json() as any;
+      throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
     }
-  );
 
-  if (!response.ok) {
-    const error = await response.json() as any;
-    throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
+    const data = await response.json() as any;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text?.trim()) {
+      throw new Error('Empty model response');
+    }
+
+    return text.trim();
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('AI request timeout (exceeded 5 minutes). Please try again or check your network connection.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json() as any;
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!text?.trim()) {
-    throw new Error('Empty model response');
-  }
-
-  return text.trim();
 }
 
 /**
@@ -84,35 +100,48 @@ async function generateWithOpenAI(
      config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 
      config.baseUrl);
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: prompt },
-      ],
-      temperature,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT);
 
-  if (!response.ok) {
-    const error = await response.json() as any;
-    throw new Error(error.error?.message || `API error: ${response.status}`);
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt },
+        ],
+        temperature,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as any;
+      throw new Error(error.error?.message || `API error: ${response.status}`);
+    }
+
+    const data = await response.json() as any;
+    const text = data.choices?.[0]?.message?.content;
+
+    if (!text?.trim()) {
+      throw new Error('Empty model response');
+    }
+
+    return text.trim();
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error('AI request timeout (exceeded 5 minutes). Please try again or check your network connection.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json() as any;
-  const text = data.choices?.[0]?.message?.content;
-
-  if (!text?.trim()) {
-    throw new Error('Empty model response');
-  }
-
-  return text.trim();
 }
 
 /**
