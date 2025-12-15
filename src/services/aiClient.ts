@@ -78,7 +78,7 @@ async function generateWithGemini(
     return text.trim();
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      throw new Error('AI request timeout (exceeded 5 minutes). Please try again or check your network connection.');
+      throw new Error('AI 请求超时（超过5分钟），请重试或检查网络连接');
     }
     throw error;
   } finally {
@@ -136,7 +136,7 @@ async function generateWithOpenAI(
     return text.trim();
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      throw new Error('AI request timeout (exceeded 5 minutes). Please try again or check your network connection.');
+      throw new Error('AI 请求超时（超过5分钟），请重试或检查网络连接');
     }
     throw error;
   } finally {
