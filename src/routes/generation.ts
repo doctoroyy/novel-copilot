@@ -375,35 +375,47 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
     let outline = JSON.parse((outlineRecord as any).outline_json);
     const bible = (project as any).bible;
 
+    let volumeIndex: number | undefined;
+    try {
+      const body = await c.req.json();
+      volumeIndex = body.volumeIndex;
+    } catch (e) {
+      // Start with undefined
+    }
+
     let updated = false;
     const volumes = outline.volumes || [];
 
-    // Iterate through volumes and check for incompleteness
-    for (let i = 0; i < volumes.length; i++) {
-      const vol = volumes[i];
-      const chapters = vol.chapters || [];
-      const expectedCount = (vol.endChapter - vol.startChapter) + 1;
-      
-      // Heuristic for "incomplete":
-      // 1. No chapters
-      // 2. Significantly fewer chapters than expected (e.g., < 20% of expected, or just placeholder 1 chapter)
-      // 3. Most chapters are empty (no goal)
-      
-      const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
-      const isPlaceholder = chapters.length <= 1;
-      const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1)); // Less than 10% content populated
+    if (typeof volumeIndex === 'number' && volumeIndex >= 0 && volumeIndex < volumes.length) {
+      // Force refine specific volume
+      console.log(`Force refining Volume ${volumeIndex + 1}`);
+      const vol = volumes[volumeIndex];
+      const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
+      volumes[volumeIndex] = normalizeVolume({ ...vol, chapters: chaptersData }, volumeIndex, chaptersData);
+      updated = true;
+    } else {
+      // Auto-detect incomplete volumes
+      for (let i = 0; i < volumes.length; i++) {
+        const vol = volumes[i];
+        const chapters = vol.chapters || [];
+        const expectedCount = (vol.endChapter - vol.startChapter) + 1;
+        
+        // Heuristic for "incomplete":
+        // 1. No chapters
+        // 2. Significantly fewer chapters than expected (e.g., < 20% of expected, or just placeholder 1 chapter)
+        // 3. Most chapters are empty (no goal)
+        
+        const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
+        const isPlaceholder = chapters.length <= 1;
+        const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1)); // Less than 10% content populated
 
-      if (isPlaceholder || isEmpty) {
-        console.log(`Refining Volume ${i + 1}: ${vol.title}`);
-        
-        // Regenerate chapters for this volume
-        // We need to construct a temporary master outline context for the AI
-        // Since generateVolumeChapters expects the master outline structure
-        const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
-        
-        // Normalize and replace
-        volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
-        updated = true;
+        if (isPlaceholder || isEmpty) {
+          console.log(`Refining Volume ${i + 1}: ${vol.title}`);
+          
+          const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
+          volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
+          updated = true;
+        }
       }
     }
 

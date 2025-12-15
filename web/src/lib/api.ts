@@ -117,11 +117,13 @@ export async function generateOutline(
 
 export async function refineOutline(
   name: string,
+  volumeIndex?: number,
   aiHeaders?: Record<string, string>
 ): Promise<NovelOutline> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline/refine`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ volumeIndex }),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);

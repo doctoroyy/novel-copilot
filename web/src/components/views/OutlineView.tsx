@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Sparkles, RotateCw } from 'lucide-react';
 import { type ProjectDetail, refineOutline } from '@/lib/api';
 
 interface OutlineViewProps {
@@ -12,13 +12,13 @@ interface OutlineViewProps {
 
 export function OutlineView({ project }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
+  const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
 
   const handleRefine = async () => {
     try {
       setIsRefining(true);
       await refineOutline(project.name);
       
-      // Give user a moment to see the success state basically
       setTimeout(() => {
         window.location.reload();
       }, 500);
@@ -27,6 +27,22 @@ export function OutlineView({ project }: OutlineViewProps) {
       alert(`操作失败: ${(error as Error).message}`);
     } finally {
       setIsRefining(false);
+    }
+  };
+
+  const handleRefineVolume = async (volIndex: number) => {
+    try {
+      setRefiningVolIdx(volIndex);
+      // Explicitly pass volumeIndex to force regeneration of this volume
+      await refineOutline(project.name, volIndex);
+      
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch (error) {
+      alert(`操作失败: ${(error as Error).message}`);
+    } finally {
+      setRefiningVolIdx(null);
     }
   };
 
@@ -45,6 +61,7 @@ export function OutlineView({ project }: OutlineViewProps) {
   }
 
   const { outline } = project;
+  const isBusy = isRefining || refiningVolIdx !== null;
 
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
@@ -105,7 +122,7 @@ export function OutlineView({ project }: OutlineViewProps) {
             variant="outline" 
             size="sm" 
             onClick={handleRefine}
-            disabled={isRefining}
+            disabled={isBusy}
             className="h-8 text-xs lg:text-sm"
           >
             {isRefining ? (
@@ -127,9 +144,21 @@ export function OutlineView({ project }: OutlineViewProps) {
                       <Badge variant="outline" className="text-xs shrink-0">第 {volIndex + 1} 卷</Badge>
                       <span className="truncate">{vol.title}</span>
                     </CardTitle>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {vol.startChapter}-{vol.endChapter}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-muted-foreground">
+                        {vol.startChapter}-{vol.endChapter}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 lg:h-8 lg:w-8"
+                        title="重新生成本卷章节"
+                        onClick={() => handleRefineVolume(volIndex)}
+                        disabled={isBusy}
+                      >
+                         <RotateCw className={`h-3 w-3 lg:h-4 lg:w-4 ${refiningVolIdx === volIndex ? 'animate-spin' : ''}`} />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
