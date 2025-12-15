@@ -16,12 +16,12 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
       {/* Logo */}
       <div className="p-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center text-xl">
+          <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center text-xl shrink-0">
             📚
           </div>
-          <div>
-            <h1 className="font-bold text-lg gradient-text">Novel Copilot</h1>
-            <p className="text-xs text-muted-foreground">AI 小说创作助手</p>
+          <div className="min-w-0">
+            <h1 className="font-bold text-lg gradient-text truncate">Novel Copilot</h1>
+            <p className="text-xs text-muted-foreground truncate">AI 小说创作助手</p>
           </div>
         </div>
       </div>

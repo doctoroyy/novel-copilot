@@ -47,12 +47,12 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
   const progressPercent = progress ? Math.round((progress.current / progress.total) * 100) : 0;
 
   return (
-    <aside className="w-80 h-screen flex flex-col border-l border-border bg-sidebar">
+    <aside className="w-80 lg:w-80 sm:w-72 h-screen flex flex-col border-l border-border bg-sidebar">
       {/* Header */}
-      <div className="p-4 border-b border-border flex items-center justify-between">
+      <div className="p-3 lg:p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="font-medium text-sm">活动日志</span>
+          <span className="font-medium text-xs lg:text-sm">活动日志</span>
         </div>
         <Button variant="ghost" size="sm" onClick={onClear} className="text-xs">
           清空
