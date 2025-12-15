@@ -49,8 +49,6 @@ async function testAIConnection(config: {
           }
         );
 
-        clearTimeout(timeoutId);
-
         if (!response.ok) {
           const error = await response.json();
           return { success: false, message: `连接失败: ${error.error?.message || response.statusText}` };
@@ -64,6 +62,8 @@ async function testAIConnection(config: {
           return { success: false, message: '连接超时（超过30秒），请检查网络或API配置' };
         }
         throw error;
+      } finally {
+        clearTimeout(timeoutId);
       }
     } else {
       // OpenAI-compatible API
@@ -93,8 +93,6 @@ async function testAIConnection(config: {
           signal: controller.signal,
         });
 
-        clearTimeout(timeoutId);
-
         if (!response.ok) {
           const error = await response.json();
           return { success: false, message: `连接失败: ${(error as any).error?.message || response.statusText}` };
@@ -108,6 +106,8 @@ async function testAIConnection(config: {
           return { success: false, message: '连接超时（超过30秒），请检查网络或API配置' };
         }
         throw error;
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
   } catch (error) {
