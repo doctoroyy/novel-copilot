@@ -18,6 +18,39 @@ function getAIConfigFromHeaders(c: any): AIConfig | null {
   return { provider: provider as AIConfig['provider'], model, apiKey, baseUrl };
 }
 
+// Normalize chapter data from LLM output to consistent structure
+function normalizeChapter(ch: any, fallbackIndex: number): { index: number; title: string; goal: string; hook: string } {
+  return {
+    index: ch.index ?? ch.chapter_id ?? ch.chapter_number ?? fallbackIndex,
+    title: ch.title || `第${fallbackIndex}章`,
+    goal: ch.goal || ch.outline || ch.description || ch.plot_summary || '',
+    hook: ch.hook || '',
+  };
+}
+
+// Normalize volume data from LLM output
+function normalizeVolume(vol: any, volIndex: number, chapters: any[]): any {
+  return {
+    title: vol.title || vol.volumeTitle || vol.volume_title || `第${volIndex + 1}卷`,
+    startChapter: vol.startChapter ?? vol.start_chapter ?? (volIndex * 80 + 1),
+    endChapter: vol.endChapter ?? vol.end_chapter ?? ((volIndex + 1) * 80),
+    goal: vol.goal || vol.summary || vol.volume_goal || '',
+    conflict: vol.conflict || '',
+    climax: vol.climax || '',
+    chapters: chapters.map((ch, i) => normalizeChapter(ch, i + 1)),
+  };
+}
+
+// Normalize milestones - ensure it's an array of strings
+function normalizeMilestones(milestones: any[]): string[] {
+  if (!Array.isArray(milestones)) return [];
+  return milestones.map((m) => {
+    if (typeof m === 'string') return m;
+    // Handle object format like {milestone: '...', description: '...'}
+    return m.milestone || m.description || m.title || JSON.stringify(m);
+  });
+}
+
 // Generate outline
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
@@ -47,19 +80,20 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
     // Generate master outline
     const masterOutline = await generateMasterOutline(aiConfig, bible, targetChapters, targetWordCount);
     
-    // Generate volume chapters
+    // Generate volume chapters and normalize
     const volumes = [];
-    for (const vol of masterOutline.volumes) {
+    for (let i = 0; i < masterOutline.volumes.length; i++) {
+      const vol = masterOutline.volumes[i];
       const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol);
-      volumes.push({ ...vol, chapters });
+      volumes.push(normalizeVolume(vol, i, chapters));
     }
 
     const outline = {
       totalChapters: targetChapters,
       targetWordCount,
       volumes,
-      mainGoal: masterOutline.mainGoal,
-      milestones: masterOutline.milestones,
+      mainGoal: masterOutline.mainGoal || '',
+      milestones: normalizeMilestones(masterOutline.milestones || []),
     };
 
     // Save outline
@@ -308,3 +342,59 @@ ${chapterGoalHint || '承接上一章结尾，推进主线一步。'}
 
   return generateText(aiConfig, { system, prompt, temperature: 0.85 });
 }
+
+// Migration endpoint to normalize existing outline data
+generationRoutes.post('/migrate-outlines', async (c) => {
+  try {
+    // Get all outlines from database
+    const { results } = await c.env.DB.prepare(`
+      SELECT o.project_id, o.outline_json, p.name as project_name
+      FROM outlines o
+      JOIN projects p ON o.project_id = p.id
+    `).all();
+
+    const migrated: string[] = [];
+    const errors: string[] = [];
+
+    for (const row of results) {
+      try {
+        const outline = JSON.parse((row as any).outline_json);
+        
+        // Normalize the outline
+        const normalizedOutline = {
+          totalChapters: outline.totalChapters,
+          targetWordCount: outline.targetWordCount,
+          mainGoal: outline.mainGoal || '',
+          milestones: normalizeMilestones(outline.milestones || []),
+          volumes: (outline.volumes || []).map((vol: any, volIndex: number) => ({
+            title: vol.title || vol.volumeTitle || vol.volume_title || `第${volIndex + 1}卷`,
+            startChapter: vol.startChapter ?? vol.start_chapter ?? (volIndex * 80 + 1),
+            endChapter: vol.endChapter ?? vol.end_chapter ?? ((volIndex + 1) * 80),
+            goal: vol.goal || vol.summary || vol.volume_goal || '',
+            conflict: vol.conflict || '',
+            climax: vol.climax || '',
+            chapters: (vol.chapters || []).map((ch: any, chIndex: number) => normalizeChapter(ch, chIndex + 1)),
+          })),
+        };
+
+        // Update the database
+        await c.env.DB.prepare(`
+          UPDATE outlines SET outline_json = ? WHERE project_id = ?
+        `).bind(JSON.stringify(normalizedOutline), (row as any).project_id).run();
+
+        migrated.push((row as any).project_name);
+      } catch (err) {
+        errors.push(`${(row as any).project_name}: ${(err as Error).message}`);
+      }
+    }
+
+    return c.json({ 
+      success: true, 
+      message: `Migrated ${migrated.length} outlines`,
+      migrated,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});

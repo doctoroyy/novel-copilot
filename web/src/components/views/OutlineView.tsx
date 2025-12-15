@@ -116,8 +116,8 @@ export function OutlineView({ project }: OutlineViewProps) {
                       查看 {vol.chapters.length} 章详情 →
                     </summary>
                     <div className="mt-3 space-y-1.5 pl-2 border-l-2 border-primary/30">
-                      {vol.chapters.map((ch) => (
-                        <div key={ch.index} className="text-xs lg:text-sm py-1">
+                      {vol.chapters.map((ch, chIdx) => (
+                        <div key={ch.index || chIdx} className="text-xs lg:text-sm py-1">
                           <span className="text-muted-foreground mr-2">第{ch.index}章</span>
                           <span className="font-medium">{ch.title}</span>
                           {ch.goal && (
