@@ -162,6 +162,7 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                 size="sm"
                 onClick={handleCopy}
                 className="gap-1 lg:gap-2 text-xs lg:text-sm shrink-0"
+                aria-label={copySuccess ? '已复制' : '复制章节内容'}
               >
                 {copySuccess ? '✅' : '📋'}
                 <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>

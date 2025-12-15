@@ -80,11 +80,11 @@ export function Header({
             <div className="flex items-center gap-1 lg:gap-2 text-xs lg:text-sm text-muted-foreground">
               <span>{project.state.nextChapterIndex - 1} / {project.state.totalChapters}</span>
               <span className="hidden sm:inline">章</span>
-              <span className="hidden md:inline">•</span>
+              <span className="hidden md:inline" aria-hidden="true">•</span>
               <span className="hidden md:inline">{Math.round(progress)}% 完成</span>
               {project.outline && (
                 <>
-                  <span className="hidden lg:inline">•</span>
+                  <span className="hidden lg:inline" aria-hidden="true">•</span>
                   <Badge variant="secondary" className="text-xs hidden lg:inline-flex">
                     {project.outline.targetWordCount} 万字
                   </Badge>
