@@ -55,12 +55,18 @@ export function OutlineView({ project }: OutlineViewProps) {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {outline.milestones.map((milestone, i) => (
-                <div key={i} className="flex items-start gap-3 p-2">
-                  <span className="text-primary">•</span>
-                  <span className="text-xs lg:text-sm text-muted-foreground">{milestone}</span>
-                </div>
-              ))}
+              {outline.milestones.map((milestone, i) => {
+                // Handle both string and object formats from LLM
+                const milestoneText = typeof milestone === 'string' 
+                  ? milestone 
+                  : (milestone as any).milestone || (milestone as any).description || JSON.stringify(milestone);
+                return (
+                  <div key={i} className="flex items-start gap-3 p-2">
+                    <span className="text-primary">•</span>
+                    <span className="text-xs lg:text-sm text-muted-foreground">{milestoneText}</span>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
