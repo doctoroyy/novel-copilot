@@ -64,6 +64,10 @@ function App() {
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
 
+  // Mobile state
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [showActivityPanel, setShowActivityPanel] = useState(false);
+
   // Outline form
   const [outlineChapters, setOutlineChapters] = useState('400');
   const [outlineWordCount, setOutlineWordCount] = useState('100');
@@ -354,13 +358,36 @@ function App() {
 
   return (
     <div className="h-screen flex bg-background text-foreground overflow-hidden">
+      {/* Mobile Overlay */}
+      {(showSidebar || showActivityPanel) && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => {
+            setShowSidebar(false);
+            setShowActivityPanel(false);
+          }}
+        />
+      )}
+
       {/* Left Sidebar */}
-      <Sidebar
-        projects={projects}
-        selectedProject={selectedProject?.name || null}
-        onSelectProject={loadProject}
-        onNewProject={() => setShowNewProjectDialog(true)}
-      />
+      <div className={`
+        fixed lg:relative inset-y-0 left-0 z-50 lg:z-auto
+        transform transition-transform duration-300 lg:transform-none
+        ${showSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <Sidebar
+          projects={projects}
+          selectedProject={selectedProject?.name || null}
+          onSelectProject={(name) => {
+            loadProject(name);
+            setShowSidebar(false);
+          }}
+          onNewProject={() => {
+            setShowNewProjectDialog(true);
+            setShowSidebar(false);
+          }}
+        />
+      </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -373,6 +400,8 @@ function App() {
           onDownload={handleDownloadBook}
           onDelete={handleDeleteProject}
           onSettings={() => setShowSettingsDialog(true)}
+          onToggleSidebar={() => setShowSidebar(!showSidebar)}
+          onToggleActivityPanel={() => setShowActivityPanel(!showActivityPanel)}
         />
 
         {/* Error banner */}
@@ -392,88 +421,94 @@ function App() {
       </div>
 
       {/* Right Activity Panel */}
-      <ActivityPanel 
-        logs={logs} 
-        onClear={() => setLogs([])} 
-        progress={generationProgress}
-      />
+      <div className={`
+        fixed lg:relative inset-y-0 right-0 z-50 lg:z-auto
+        transform transition-transform duration-300 lg:transform-none
+        ${showActivityPanel ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
+      `}>
+        <ActivityPanel 
+          logs={logs} 
+          onClear={() => setLogs([])} 
+          progress={generationProgress}
+        />
+      </div>
 
       {/* New Project Dialog */}
       <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto glass-card">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto glass-card w-[95vw] sm:w-full">
           <DialogHeader>
-            <DialogTitle className="gradient-text">✨ 新建项目</DialogTitle>
-            <DialogDescription>创建一个新的小说项目</DialogDescription>
+            <DialogTitle className="gradient-text text-lg lg:text-xl">✨ 新建项目</DialogTitle>
+            <DialogDescription className="text-sm">创建一个新的小说项目</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>项目名称</Label>
+              <Label className="text-sm">项目名称</Label>
               <Input
                 placeholder="my-novel"
                 value={newProjectName}
                 onChange={(e) => setNewProjectName(e.target.value)}
-                className="bg-muted/50"
+                className="bg-muted/50 text-sm"
               />
             </div>
             <div className="space-y-2">
-              <Label>计划章数</Label>
+              <Label className="text-sm">计划章数</Label>
               <Input
                 type="number"
                 value={newProjectChapters}
                 onChange={(e) => setNewProjectChapters(e.target.value)}
-                className="bg-muted/50"
+                className="bg-muted/50 text-sm"
               />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label>Story Bible</Label>
+                <Label className="text-sm">Story Bible</Label>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={handleGenerateBible}
                   disabled={generatingBible}
-                  className="gap-2"
+                  className="gap-2 text-xs"
                 >
                   {generatingBible ? '⏳ 生成中...' : '🤖 AI 自动想象'}
                 </Button>
               </div>
-              <div className="grid grid-cols-3 gap-2 mb-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
                 <Input
                   placeholder="题材: 玄幻/都市/科幻"
                   value={aiGenre}
                   onChange={(e) => setAiGenre(e.target.value)}
-                  className="bg-muted/50"
+                  className="bg-muted/50 text-sm"
                 />
                 <Input
                   placeholder="风格: 热血/悬疑/爽文"
                   value={aiTheme}
                   onChange={(e) => setAiTheme(e.target.value)}
-                  className="bg-muted/50"
+                  className="bg-muted/50 text-sm"
                 />
                 <Input
                   placeholder="关键词: 逆袭、复仇"
                   value={aiKeywords}
                   onChange={(e) => setAiKeywords(e.target.value)}
-                  className="bg-muted/50"
+                  className="bg-muted/50 text-sm"
                 />
               </div>
               <Textarea
                 placeholder="世界观、人物设定、主线目标..."
-                className="h-[250px] max-h-[300px] font-mono text-sm resize-none bg-muted/50"
+                className="h-[200px] sm:h-[250px] max-h-[300px] font-mono text-xs sm:text-sm resize-none bg-muted/50"
                 value={newProjectBible}
                 onChange={(e) => setNewProjectBible(e.target.value)}
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <DialogClose asChild>
-              <Button variant="outline">取消</Button>
+              <Button variant="outline" className="w-full sm:w-auto">取消</Button>
             </DialogClose>
             <Button 
               onClick={handleCreateProject} 
               disabled={loading}
-              className="gradient-bg hover:opacity-90"
+              className="gradient-bg hover:opacity-90 w-full sm:w-auto"
             >
               创建项目
             </Button>
