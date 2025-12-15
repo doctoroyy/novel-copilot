@@ -3,7 +3,15 @@ import { TIMEOUTS } from '@/config/timeouts';
 
 const API_BASE = '/api';
 
-// Helper to create fetch with timeout
+/**
+ * Wraps fetch with timeout functionality using AbortController
+ * 
+ * @param url - The URL to fetch
+ * @param options - Standard fetch options
+ * @param timeout - Timeout in milliseconds (defaults to TIMEOUTS.DEFAULT)
+ * @returns Promise<Response> - The fetch response
+ * @throws AbortError if the request times out
+ */
 function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number = TIMEOUTS.DEFAULT): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
