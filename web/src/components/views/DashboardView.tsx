@@ -14,6 +14,10 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
   const chaptersGenerated = project.state.nextChapterIndex - 1;
   const chaptersRemaining = project.state.totalChapters - chaptersGenerated;
 
+  // SVG circle constants
+  const MOBILE_CIRCLE = { cx: 64, cy: 64, r: 56 };
+  const DESKTOP_CIRCLE = { cx: 80, cy: 80, r: 70 };
+
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
       {/* Progress Ring Section */}
@@ -24,45 +28,45 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
             <div className="relative w-32 h-32 lg:w-40 lg:h-40">
               <svg className="w-full h-full transform -rotate-90">
                 <circle
-                  cx="64"
-                  cy="64"
-                  r="56"
+                  cx={MOBILE_CIRCLE.cx}
+                  cy={MOBILE_CIRCLE.cy}
+                  r={MOBILE_CIRCLE.r}
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="none"
                   className="text-muted lg:hidden"
                 />
                 <circle
-                  cx="80"
-                  cy="80"
-                  r="70"
+                  cx={DESKTOP_CIRCLE.cx}
+                  cy={DESKTOP_CIRCLE.cy}
+                  r={DESKTOP_CIRCLE.r}
                   stroke="currentColor"
                   strokeWidth="8"
                   fill="none"
                   className="text-muted hidden lg:block"
                 />
                 <circle
-                  cx="64"
-                  cy="64"
-                  r="56"
+                  cx={MOBILE_CIRCLE.cx}
+                  cy={MOBILE_CIRCLE.cy}
+                  r={MOBILE_CIRCLE.r}
                   stroke="url(#progressGradient)"
                   strokeWidth="8"
                   fill="none"
                   strokeLinecap="round"
-                  strokeDasharray={`${2 * Math.PI * 56}`}
-                  strokeDashoffset={`${2 * Math.PI * 56 * (1 - progress / 100)}`}
+                  strokeDasharray={`${2 * Math.PI * MOBILE_CIRCLE.r}`}
+                  strokeDashoffset={`${2 * Math.PI * MOBILE_CIRCLE.r * (1 - progress / 100)}`}
                   className="transition-all duration-1000 lg:hidden"
                 />
                 <circle
-                  cx="80"
-                  cy="80"
-                  r="70"
+                  cx={DESKTOP_CIRCLE.cx}
+                  cy={DESKTOP_CIRCLE.cy}
+                  r={DESKTOP_CIRCLE.r}
                   stroke="url(#progressGradient)"
                   strokeWidth="8"
                   fill="none"
                   strokeLinecap="round"
-                  strokeDasharray={`${2 * Math.PI * 70}`}
-                  strokeDashoffset={`${2 * Math.PI * 70 * (1 - progress / 100)}`}
+                  strokeDasharray={`${2 * Math.PI * DESKTOP_CIRCLE.r}`}
+                  strokeDashoffset={`${2 * Math.PI * DESKTOP_CIRCLE.r * (1 - progress / 100)}`}
                   className="transition-all duration-1000 hidden lg:block"
                 />
                 <defs>
