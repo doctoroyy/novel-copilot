@@ -444,7 +444,11 @@ function App() {
           project={selectedProject}
           activeTab={tab}
           onTabChange={handleTabChange}
-          onRefresh={() => selectedProject && loadProject(selectedProject.name)}
+          onRefresh={async () => {
+            if (selectedProject) {
+              await Promise.all([loadProject(selectedProject.name), loadProjects()]);
+            }
+          }}
           onDownload={handleDownloadBook}
           onDelete={handleDeleteProject}
           onSettings={() => setShowSettingsDialog(true)}
