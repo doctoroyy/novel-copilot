@@ -218,10 +218,8 @@ function App() {
       setLoading(true);
       const count = parseInt(generateCount, 10);
       log(`生成章节: ${selectedProject.name}, ${count} 章`);
-      const results = await generateChapters(selectedProject.name, count, getAIConfigHeaders(aiConfig));
-      for (const r of results) {
-        log(`✅ 第${r.chapter}章: ${r.title}`);
-      }
+      // SSE will push real-time progress logs, no need to add logs here after completion
+      await generateChapters(selectedProject.name, count, getAIConfigHeaders(aiConfig));
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
