@@ -17,9 +17,10 @@ interface ChapterListViewProps {
   project: ProjectDetail;
   onViewChapter: (index: number) => Promise<string>;
   onDeleteChapter?: (index: number) => Promise<void>;
+  onBatchDeleteChapters?: (indices: number[]) => Promise<void>;
 }
 
-export function ChapterListView({ project, onViewChapter, onDeleteChapter }: ChapterListViewProps) {
+export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters }: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -27,6 +28,12 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
   const [copiedChapter, setCopiedChapter] = useState<number | null>(null);
   const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
+  
+  // Selection mode for batch delete
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -87,6 +94,41 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
     }
   };
 
+  // Selection handlers for batch delete
+  const toggleSelection = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedChapters);
+    if (newSelected.has(index)) {
+      newSelected.delete(index);
+    } else {
+      newSelected.add(index);
+    }
+    setSelectedChapters(newSelected);
+  };
+
+  const allChapterIndices = project.chapters.map(ch => parseInt(ch.replace('.md', ''), 10));
+  
+  const selectAll = () => {
+    setSelectedChapters(new Set(allChapterIndices));
+  };
+
+  const clearSelection = () => {
+    setSelectedChapters(new Set());
+  };
+
+  const confirmBatchDelete = async () => {
+    if (!onBatchDeleteChapters || selectedChapters.size === 0) return;
+    setBatchDeleting(true);
+    try {
+      await onBatchDeleteChapters(Array.from(selectedChapters));
+      setSelectedChapters(new Set());
+      setSelectionMode(false);
+    } finally {
+      setBatchDeleting(false);
+      setShowBatchDeleteConfirm(false);
+    }
+  };
+
   // Group chapters by volume
   const volumeGroups = project.outline?.volumes.map(vol => ({
     ...vol,
@@ -99,9 +141,41 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
     <div className="p-4 lg:p-6">
       <Card className="glass-card">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base lg:text-lg">已生成章节</CardTitle>
-            <Badge variant="secondary" className="text-xs">{project.chapters.length} 章</Badge>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base lg:text-lg">已生成章节</CardTitle>
+              <Badge variant="secondary" className="text-xs">{project.chapters.length} 章</Badge>
+            </div>
+            {onBatchDeleteChapters && project.chapters.length > 0 && (
+              <div className="flex items-center gap-2">
+                {selectionMode ? (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs h-7">
+                      全选
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={clearSelection} className="text-xs h-7">
+                      清除
+                    </Button>
+                    <Button 
+                      variant="destructive" 
+                      size="sm" 
+                      onClick={() => setShowBatchDeleteConfirm(true)}
+                      disabled={selectedChapters.size === 0}
+                      className="text-xs h-7"
+                    >
+                      删除选中 ({selectedChapters.size})
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { setSelectionMode(false); clearSelection(); }} className="text-xs h-7">
+                      取消
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7">
+                    🗑️ 批量删除
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -124,11 +198,16 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
                           return (
                             <button
                               key={chapterIndex}
-                              onClick={() => handleView(chapterIndex)}
-                              disabled={loading}
-                              className="w-full p-2.5 lg:p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
+                              onClick={selectionMode ? (e) => toggleSelection(chapterIndex, e) : () => handleView(chapterIndex)}
+                              disabled={loading && !selectionMode}
+                              className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
                             >
-                              <div className="flex-1 min-w-0">
+                              <div className="flex-1 min-w-0 flex items-center gap-2">
+                                {selectionMode && (
+                                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(chapterIndex) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                                    {selectedChapters.has(chapterIndex) && '✓'}
+                                  </div>
+                                )}
                                 <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
                                 {title && (
                                   <span className="ml-2 text-xs lg:text-sm text-muted-foreground truncate">
@@ -175,11 +254,18 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
                   return (
                     <button
                       key={ch}
-                      onClick={() => handleView(index)}
-                      disabled={loading}
-                      className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-left flex items-center justify-between group"
+                      onClick={selectionMode ? (e) => toggleSelection(index, e) : () => handleView(index)}
+                      disabled={loading && !selectionMode}
+                      className={`w-full p-3 rounded-lg transition-colors text-left flex items-center justify-between group ${selectionMode && selectedChapters.has(index) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
                     >
-                      <span className="font-medium">第 {index} 章</span>
+                      <div className="flex items-center gap-2">
+                        {selectionMode && (
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(index) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                            {selectedChapters.has(index) && '✓'}
+                          </div>
+                        )}
+                        <span className="font-medium">第 {index} 章</span>
+                      </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={(e) => handleQuickCopy(index, e)}
@@ -270,6 +356,26 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter }: Cha
             </Button>
             <Button variant="destructive" onClick={confirmDelete} disabled={deletingChapter !== null}>
               {deletingChapter !== null ? '删除中...' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Delete Confirmation Dialog */}
+      <Dialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认批量删除</DialogTitle>
+            <DialogDescription>
+              确定要删除选中的 {selectedChapters.size} 个章节吗？此操作不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowBatchDeleteConfirm(false)}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={confirmBatchDelete} disabled={batchDeleting}>
+              {batchDeleting ? '删除中...' : `删除 ${selectedChapters.size} 章`}
             </Button>
           </DialogFooter>
         </DialogContent>

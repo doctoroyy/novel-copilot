@@ -203,6 +203,112 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
   }
 });
 
+// Delete chapter
+projectsRoutes.delete('/:name/chapters/:index', async (c) => {
+  const name = c.req.param('name');
+  const index = parseInt(c.req.param('index'), 10);
+  
+  try {
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ?
+    `).bind(name).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const projectId = (project as any).id;
+
+    // Check if chapter exists
+    const chapter = await c.env.DB.prepare(`
+      SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ?
+    `).bind(projectId, index).first();
+
+    if (!chapter) {
+      return c.json({ success: false, error: 'Chapter not found' }, 404);
+    }
+
+    // Delete the chapter
+    await c.env.DB.prepare(`
+      DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?
+    `).bind(projectId, index).run();
+
+    // Recalculate nextChapterIndex based on remaining chapters
+    const maxChapterResult = await c.env.DB.prepare(`
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+    `).bind(projectId).first();
+
+    const maxChapter = (maxChapterResult as any)?.max_index || 0;
+    const newNextChapterIndex = maxChapter + 1;
+
+    // Update state
+    await c.env.DB.prepare(`
+      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+    `).bind(newNextChapterIndex, projectId).run();
+
+    return c.json({ 
+      success: true, 
+      message: `Chapter ${index} deleted`,
+      newNextChapterIndex,
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Batch delete chapters
+projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
+  const name = c.req.param('name');
+  
+  try {
+    const { indices } = await c.req.json();
+    
+    if (!Array.isArray(indices) || indices.length === 0) {
+      return c.json({ success: false, error: 'indices array is required' }, 400);
+    }
+
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ?
+    `).bind(name).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const projectId = (project as any).id;
+
+    // Delete chapters in batch
+    const placeholders = indices.map(() => '?').join(', ');
+    await c.env.DB.prepare(`
+      DELETE FROM chapters WHERE project_id = ? AND chapter_index IN (${placeholders})
+    `).bind(projectId, ...indices).run();
+
+    // Recalculate nextChapterIndex based on remaining chapters
+    const maxChapterResult = await c.env.DB.prepare(`
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+    `).bind(projectId).first();
+
+    const maxChapter = (maxChapterResult as any)?.max_index || 0;
+    const newNextChapterIndex = maxChapter + 1;
+
+    // Update state
+    await c.env.DB.prepare(`
+      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+    `).bind(newNextChapterIndex, projectId).run();
+
+    return c.json({ 
+      success: true, 
+      message: `Deleted ${indices.length} chapters`,
+      deletedIndices: indices,
+      newNextChapterIndex,
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Download all chapters as a ZIP file
 // Download all chapters as a ZIP file
 projectsRoutes.get('/:name/download', async (c) => {

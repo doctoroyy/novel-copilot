@@ -137,6 +137,22 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
+    // Validate state: check if nextChapterIndex matches actual chapter data
+    const maxChapterResult = await c.env.DB.prepare(`
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+    `).bind(project.id).first() as any;
+    
+    const actualMaxChapter = maxChapterResult?.max_index || 0;
+    const expectedNextIndex = actualMaxChapter + 1;
+    
+    if (project.next_chapter_index !== expectedNextIndex) {
+      console.log(`State mismatch: next_chapter_index=${project.next_chapter_index}, actual max=${actualMaxChapter}. Auto-correcting to ${expectedNextIndex}`);
+      project.next_chapter_index = expectedNextIndex;
+      await c.env.DB.prepare(`
+        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+      `).bind(expectedNextIndex, project.id).run();
+    }
+
     const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
     const results: { chapter: number; title: string }[] = [];
 
