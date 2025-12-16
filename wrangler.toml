@@ -20,3 +20,5 @@ command = "cd web && pnpm install && pnpm build"
 # Assets (frontend)
 [assets]
 directory = "./web/dist"
+not_found_handling = "single-page-application"
+

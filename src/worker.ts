@@ -37,4 +37,8 @@ app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISO
 // 404 handler for API routes
 app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
 
+// SPA routing is handled by wrangler.toml: not_found_handling = "single-page-application"
+
 export default app;
+
+
