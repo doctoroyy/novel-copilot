@@ -13,6 +13,47 @@ import {
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
 
+// Cross-platform clipboard copy with fallback for mobile browsers
+// The fallback is needed because clipboard API may fail when called after async operations
+async function copyToClipboard(text: string): Promise<boolean> {
+  // Try modern clipboard API first
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.warn('Clipboard API failed, trying fallback:', err);
+    }
+  }
+  
+  // Fallback: create a temporary textarea and use execCommand
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    
+    // Position off-screen and make invisible
+    textArea.style.position = 'fixed';
+    textArea.style.top = '-9999px';
+    textArea.style.left = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    // For iOS Safari
+    textArea.setSelectionRange(0, text.length);
+    
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    
+    return successful;
+  } catch (err) {
+    console.error('Fallback copy failed:', err);
+    return false;
+  }
+}
+
 interface ChapterListViewProps {
   project: ProjectDetail;
   onViewChapter: (index: number) => Promise<string>;
@@ -26,6 +67,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
   const [copiedChapter, setCopiedChapter] = useState<number | null>(null);
+  const [copyError, setCopyError] = useState<number | null>(null);
   const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
   
@@ -60,19 +102,27 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
 
   const handleCopy = async () => {
     if (!viewingChapter?.content) return;
-    await navigator.clipboard.writeText(viewingChapter.content);
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
+    const success = await copyToClipboard(viewingChapter.content);
+    if (success) {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
   };
 
   const handleQuickCopy = async (index: number, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent opening the dialog
     setCopyingChapter(index);
+    setCopyError(null);
     try {
       const content = await onViewChapter(index);
-      await navigator.clipboard.writeText(content);
-      setCopiedChapter(index);
-      setTimeout(() => setCopiedChapter(null), 2000);
+      const success = await copyToClipboard(content);
+      if (success) {
+        setCopiedChapter(index);
+        setTimeout(() => setCopiedChapter(null), 2000);
+      } else {
+        setCopyError(index);
+        setTimeout(() => setCopyError(null), 2000);
+      }
     } finally {
       setCopyingChapter(null);
     }
@@ -222,7 +272,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                   className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                                   title="复制章节内容"
                                 >
-                                  {copyingChapter === chapterIndex ? '复制中...' : copiedChapter === chapterIndex ? '✅ 已复制' : '📋 复制'}
+                                  {copyingChapter === chapterIndex ? '复制中...' : copiedChapter === chapterIndex ? '✅ 已复制' : copyError === chapterIndex ? '❌ 失败' : '📋 复制'}
                                 </button>
                                 {onDeleteChapter && (
                                   <button
@@ -273,7 +323,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                           className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                           title="复制章节内容"
                         >
-                          {copyingChapter === index ? '复制中...' : copiedChapter === index ? '✅ 已复制' : '📋 复制'}
+                          {copyingChapter === index ? '复制中...' : copiedChapter === index ? '✅ 已复制' : copyError === index ? '❌ 失败' : '📋 复制'}
                         </button>
                         {onDeleteChapter && (
                           <button
