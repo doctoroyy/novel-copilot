@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,12 +45,15 @@ import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
 function App() {
+  // URL routing
+  const { projectName, tab = 'dashboard' } = useParams<{ projectName?: string; tab?: string }>();
+  const navigate = useNavigate();
+
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState('dashboard');
   const [generationProgress, setGenerationProgress] = useState<ProgressEvent | null>(null);
 
   // AI Config from localStorage
@@ -133,6 +137,26 @@ function App() {
     // Set dark mode by default
     document.documentElement.classList.add('dark');
   }, [loadProjects]);
+
+  // Load project when URL changes
+  useEffect(() => {
+    if (projectName && projectName !== selectedProject?.name) {
+      loadProject(projectName);
+    } else if (!projectName) {
+      setSelectedProject(null);
+    }
+  }, [projectName, selectedProject?.name, loadProject]);
+
+  // Navigation helpers
+  const handleSelectProject = useCallback((name: string) => {
+    navigate(`/project/${encodeURIComponent(name)}`);
+  }, [navigate]);
+
+  const handleTabChange = useCallback((newTab: string) => {
+    if (projectName) {
+      navigate(`/project/${encodeURIComponent(projectName)}/${newTab}`);
+    }
+  }, [navigate, projectName]);
 
   const handleCreateProject = async () => {
     if (!newProjectName || !newProjectBible) {
@@ -336,7 +360,7 @@ function App() {
       );
     }
 
-    switch (activeTab) {
+    switch (tab) {
       case 'dashboard':
         return (
           <DashboardView 
@@ -347,7 +371,7 @@ function App() {
           />
         );
       case 'outline':
-        return <OutlineView project={selectedProject} />;
+        return <OutlineView project={selectedProject} onRefresh={() => loadProject(selectedProject.name)} />;
       case 'generate':
         return (
           <GenerateView
@@ -405,7 +429,7 @@ function App() {
           projects={projects}
           selectedProject={selectedProject?.name || null}
           onSelectProject={(name) => {
-            loadProject(name);
+            handleSelectProject(name);
             setShowSidebar(false);
           }}
           onNewProject={() => {
@@ -420,8 +444,8 @@ function App() {
         {/* Header */}
         <Header
           project={selectedProject}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
+          activeTab={tab}
+          onTabChange={handleTabChange}
           onRefresh={() => selectedProject && loadProject(selectedProject.name)}
           onDownload={handleDownloadBook}
           onDelete={handleDeleteProject}

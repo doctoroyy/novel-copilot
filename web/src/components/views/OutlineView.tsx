@@ -9,9 +9,10 @@ import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
 interface OutlineViewProps {
   project: ProjectDetail;
+  onRefresh?: () => void;
 }
 
-export function OutlineView({ project }: OutlineViewProps) {
+export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
   const { config, isConfigured } = useAIConfig();
@@ -26,11 +27,7 @@ export function OutlineView({ project }: OutlineViewProps) {
       setIsRefining(true);
       const headers = getAIConfigHeaders(config);
       await refineOutline(project.name, undefined, headers);
-      
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
-
+      onRefresh?.();
     } catch (error) {
       alert(`操作失败: ${(error as Error).message}`);
     } finally {
@@ -49,10 +46,7 @@ export function OutlineView({ project }: OutlineViewProps) {
       const headers = getAIConfigHeaders(config);
       // Explicitly pass volumeIndex to force regeneration of this volume
       await refineOutline(project.name, volIndex, headers);
-      
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
+      onRefresh?.();
     } catch (error) {
       alert(`操作失败: ${(error as Error).message}`);
     } finally {
