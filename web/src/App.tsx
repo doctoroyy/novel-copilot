@@ -23,6 +23,7 @@ import {
   deleteProject,
   resetProject,
   generateBible,
+  deleteChapter,
   type ProjectSummary,
   type ProjectDetail,
 } from '@/lib/api';
@@ -211,6 +212,17 @@ function App() {
     return content;
   };
 
+  const handleDeleteChapter = async (index: number): Promise<void> => {
+    if (!selectedProject) return;
+    try {
+      await deleteChapter(selectedProject.name, index);
+      log(`🗑️ 已删除第 ${index} 章`);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const handleDeleteProject = async () => {
     if (!selectedProject) return;
     if (!confirm(`确定要删除项目 "${selectedProject.name}" 吗？此操作不可恢复。`)) return;
@@ -347,6 +359,7 @@ function App() {
           <ChapterListView 
             project={selectedProject} 
             onViewChapter={handleViewChapter}
+            onDeleteChapter={handleDeleteChapter}
           />
         );
       case 'bible':

@@ -168,6 +168,15 @@ export async function resetProject(name: string): Promise<void> {
   if (!data.success) throw new Error(data.error);
 }
 
+export async function deleteChapter(name: string, index: number): Promise<{ newNextChapterIndex: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { newNextChapterIndex: data.newNextChapterIndex };
+}
+
 export async function generateBible(
   genre?: string,
   theme?: string,

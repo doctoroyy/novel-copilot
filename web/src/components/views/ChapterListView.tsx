@@ -8,20 +8,25 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
 
 interface ChapterListViewProps {
   project: ProjectDetail;
   onViewChapter: (index: number) => Promise<string>;
+  onDeleteChapter?: (index: number) => Promise<void>;
 }
 
-export function ChapterListView({ project, onViewChapter }: ChapterListViewProps) {
+export function ChapterListView({ project, onViewChapter, onDeleteChapter }: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
   const [copiedChapter, setCopiedChapter] = useState<number | null>(null);
+  const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
+  const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -63,6 +68,22 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
       setTimeout(() => setCopiedChapter(null), 2000);
     } finally {
       setCopyingChapter(null);
+    }
+  };
+
+  const handleDelete = async (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setChapterToDelete(index);
+  };
+
+  const confirmDelete = async () => {
+    if (!chapterToDelete || !onDeleteChapter) return;
+    setDeletingChapter(chapterToDelete);
+    try {
+      await onDeleteChapter(chapterToDelete);
+    } finally {
+      setDeletingChapter(null);
+      setChapterToDelete(null);
     }
   };
 
@@ -124,6 +145,16 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                                 >
                                   {copyingChapter === chapterIndex ? '复制中...' : copiedChapter === chapterIndex ? '✅ 已复制' : '📋 复制'}
                                 </button>
+                                {onDeleteChapter && (
+                                  <button
+                                    onClick={(e) => handleDelete(chapterIndex, e)}
+                                    disabled={deletingChapter === chapterIndex}
+                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                                    title="删除章节"
+                                  >
+                                    {deletingChapter === chapterIndex ? '删除中...' : '🗑️ 删除'}
+                                  </button>
+                                )}
                                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
                                   查看 →
                                 </span>
@@ -158,6 +189,16 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
                         >
                           {copyingChapter === index ? '复制中...' : copiedChapter === index ? '✅ 已复制' : '📋 复制'}
                         </button>
+                        {onDeleteChapter && (
+                          <button
+                            onClick={(e) => handleDelete(index, e)}
+                            disabled={deletingChapter === index}
+                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                            title="删除章节"
+                          >
+                            {deletingChapter === index ? '删除中...' : '🗑️ 删除'}
+                          </button>
+                        )}
                         <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
                           查看 →
                         </span>
@@ -211,6 +252,26 @@ export function ChapterListView({ project, onViewChapter }: ChapterListViewProps
               </pre>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={chapterToDelete !== null} onOpenChange={() => setChapterToDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认删除</DialogTitle>
+            <DialogDescription>
+              确定要删除第 {chapterToDelete} 章吗？此操作不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setChapterToDelete(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deletingChapter !== null}>
+              {deletingChapter !== null ? '删除中...' : '确认删除'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

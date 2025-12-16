@@ -283,6 +283,31 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
     let state = await readState(projectPath);
     const outline = await readOutline(projectPath);
     
+    // Validate state: check if nextChapterIndex matches actual chapter files
+    const chaptersDir = path.join(projectPath, 'chapters');
+    let chapterFiles: string[] = [];
+    try {
+      const files = await fs.readdir(chaptersDir);
+      chapterFiles = files.filter(f => /^\d{3}\.md$/.test(f));
+    } catch {
+      // No chapters directory yet
+    }
+    
+    const chapterNumbers = chapterFiles
+      .map(f => parseInt(f.replace('.md', ''), 10))
+      .sort((a, b) => a - b);
+    const actualMaxChapter = chapterNumbers.length > 0 ? Math.max(...chapterNumbers) : 0;
+    const expectedNextIndex = actualMaxChapter + 1;
+    
+    if (state.nextChapterIndex !== expectedNextIndex) {
+      eventBus.warning(
+        `状态不一致: state.nextChapterIndex=${state.nextChapterIndex}, 实际最大章节=${actualMaxChapter}. 自动修正为 ${expectedNextIndex}`,
+        projectName
+      );
+      state.nextChapterIndex = expectedNextIndex;
+      await writeState(projectPath, state);
+    }
+    
     eventBus.info(`[${projectName}] 开始生成 ${chaptersToGenerate} 章...`, projectName);
     eventBus.progress({
       projectName,
@@ -444,6 +469,50 @@ app.get('/api/projects/:name/chapters/:index', async (req: Request, res: Respons
     res.json({ success: true, chapter: chapterIndex, content });
   } catch (error) {
     res.status(404).json({ success: false, error: 'Chapter not found' });
+  }
+});
+
+/**
+ * DELETE /api/projects/:name/chapters/:index - 删除指定章节
+ */
+app.delete('/api/projects/:name/chapters/:index', async (req: Request, res: Response) => {
+  try {
+    const projectPath = path.join(PROJECTS_DIR, req.params.name);
+    const chapterIndex = parseInt(req.params.index, 10);
+    const filename = `${String(chapterIndex).padStart(3, '0')}.md`;
+    const chapterPath = path.join(projectPath, 'chapters', filename);
+    
+    // Check if chapter exists
+    try {
+      await fs.access(chapterPath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'Chapter not found' });
+    }
+    
+    // Delete the chapter file
+    await fs.unlink(chapterPath);
+    
+    // Recalculate state based on remaining chapters
+    const chaptersDir = path.join(projectPath, 'chapters');
+    const files = await fs.readdir(chaptersDir);
+    const chapterNumbers = files
+      .filter(f => /^\d{3}\.md$/.test(f))
+      .map(f => parseInt(f.replace('.md', ''), 10))
+      .sort((a, b) => a - b);
+    
+    // Update state: nextChapterIndex should be max existing + 1, or 1 if no chapters
+    const state = await readState(projectPath);
+    const maxChapter = chapterNumbers.length > 0 ? Math.max(...chapterNumbers) : 0;
+    state.nextChapterIndex = maxChapter + 1;
+    await writeState(projectPath, state);
+    
+    res.json({ 
+      success: true, 
+      message: `Chapter ${chapterIndex} deleted`,
+      newNextChapterIndex: state.nextChapterIndex,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
   }
 });
 
