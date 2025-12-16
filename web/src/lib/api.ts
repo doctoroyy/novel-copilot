@@ -177,6 +177,17 @@ export async function deleteChapter(name: string, index: number): Promise<{ newN
   return { newNextChapterIndex: data.newNextChapterIndex };
 }
 
+export async function batchDeleteChapters(name: string, indices: number[]): Promise<{ deletedIndices: number[]; newNextChapterIndex: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/batch-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ indices }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { deletedIndices: data.deletedIndices, newNextChapterIndex: data.newNextChapterIndex };
+}
+
 export async function generateBible(
   genre?: string,
   theme?: string,

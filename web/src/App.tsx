@@ -24,6 +24,7 @@ import {
   resetProject,
   generateBible,
   deleteChapter,
+  batchDeleteChapters,
   type ProjectSummary,
   type ProjectDetail,
 } from '@/lib/api';
@@ -223,6 +224,17 @@ function App() {
     }
   };
 
+  const handleBatchDeleteChapters = async (indices: number[]): Promise<void> => {
+    if (!selectedProject) return;
+    try {
+      await batchDeleteChapters(selectedProject.name, indices);
+      log(`🗑️ 已批量删除 ${indices.length} 个章节`);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const handleDeleteProject = async () => {
     if (!selectedProject) return;
     if (!confirm(`确定要删除项目 "${selectedProject.name}" 吗？此操作不可恢复。`)) return;
@@ -360,6 +372,7 @@ function App() {
             project={selectedProject} 
             onViewChapter={handleViewChapter}
             onDeleteChapter={handleDeleteChapter}
+            onBatchDeleteChapters={handleBatchDeleteChapters}
           />
         );
       case 'bible':
