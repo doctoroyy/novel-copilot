@@ -112,7 +112,7 @@ async function main() {
   // Read AI config from environment variables
   const aiConfig: AIConfig = {
     provider: (process.env.AI_PROVIDER || 'gemini') as AIConfig['provider'],
-    model: process.env.AI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    model: process.env.AI_MODEL || process.env.GEMINI_MODEL || 'gemini-3-flash-preview',
     apiKey: process.env.AI_API_KEY || process.env.GEMINI_API_KEY || '',
     baseUrl: process.env.AI_BASE_URL,
   };
