@@ -31,14 +31,18 @@ function normalizeChapter(ch: any, fallbackIndex: number): { index: number; titl
 
 // Normalize volume data from LLM output
 function normalizeVolume(vol: any, volIndex: number, chapters: any[]): any {
+  const startChapter = vol.startChapter ?? vol.start_chapter ?? (volIndex * 80 + 1);
+  const endChapter = vol.endChapter ?? vol.end_chapter ?? ((volIndex + 1) * 80);
+  
   return {
     title: vol.title || vol.volumeTitle || vol.volume_title || `第${volIndex + 1}卷`,
-    startChapter: vol.startChapter ?? vol.start_chapter ?? (volIndex * 80 + 1),
-    endChapter: vol.endChapter ?? vol.end_chapter ?? ((volIndex + 1) * 80),
+    startChapter,
+    endChapter,
     goal: vol.goal || vol.summary || vol.volume_goal || '',
     conflict: vol.conflict || '',
     climax: vol.climax || '',
-    chapters: chapters.map((ch, i) => normalizeChapter(ch, i + 1)),
+    // Use startChapter + i as the correct fallback index for each chapter
+    chapters: chapters.map((ch, i) => normalizeChapter(ch, startChapter + i)),
   };
 }
 
