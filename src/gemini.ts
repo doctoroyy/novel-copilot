@@ -6,7 +6,7 @@ if (!apiKey) {
   throw new Error('Missing GEMINI_API_KEY in .env file');
 }
 
-export const MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+export const MODEL = process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview';
 
 export const ai = new GoogleGenAI({ apiKey });
 

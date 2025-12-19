@@ -13,13 +13,15 @@ const STORAGE_KEY = 'novel-copilot-ai-config';
 
 const DEFAULT_CONFIG: AIConfig = {
   provider: 'gemini',
-  model: 'gemini-2.0-flash',
+  model: 'gemini-3-flash-preview',
   apiKey: '',
   baseUrl: '',
 };
 
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
   gemini: [
+    'gemini-3-flash-preview',
+    'models/gemini-3-pro-preview',
     'gemini-2.5-pro',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
