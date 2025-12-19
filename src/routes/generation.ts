@@ -222,8 +222,12 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
     const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
     const results: { chapter: number; title: string }[] = [];
 
+    // Store the starting index BEFORE the loop to avoid double-increment bug
+    const startingChapterIndex = project.next_chapter_index;
+
     for (let i = 0; i < chaptersToGenerate; i++) {
-      const chapterIndex = project.next_chapter_index + i;
+      // Use the ORIGINAL starting index + i, NOT the constantly-updating project.next_chapter_index
+      const chapterIndex = startingChapterIndex + i;
       if (chapterIndex > project.total_chapters) break;
 
       // Get last 2 chapters
