@@ -59,7 +59,11 @@ export type WriteChapterResult = {
 /**
  * 构建 System Prompt
  */
-function buildSystemPrompt(isFinal: boolean, chapterTitle?: string): string {
+function buildSystemPrompt(isFinal: boolean, chapterIndex: number, chapterTitle?: string): string {
+  const titleText = chapterTitle 
+    ? `第${chapterIndex}章 ${chapterTitle}` 
+    : `第${chapterIndex}章 [你需要起一个创意标题]`;
+    
   return `
 你是一个"稳定连载"的网文写作引擎。
 
@@ -70,7 +74,8 @@ function buildSystemPrompt(isFinal: boolean, chapterTitle?: string): string {
 - 每章字数建议 2500~3500 汉字
 
 输出格式：
-- 第一行必须是章节标题：第${chapterTitle ? 'X章 ' + chapterTitle : 'X章 标题内容'}（不要改动给定的标题）
+- 第一行必须是章节标题：${titleText}
+- 章节号必须是 ${chapterIndex}，**严禁使用其他数字**
 - 其后是正文
 - **严禁**写任何解释、元说明、目标完成提示
 - **严禁**在正文中出现如下内容：【本章写作目标】、【已完成】、（本章结束）等任何形式的编辑备注
@@ -127,7 +132,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   const { aiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
   const isFinal = chapterIndex === totalChapters;
 
-  const system = buildSystemPrompt(isFinal, chapterTitle);
+  const system = buildSystemPrompt(isFinal, chapterIndex, chapterTitle);
   const prompt = buildUserPrompt(params);
 
   // 第一次生成
