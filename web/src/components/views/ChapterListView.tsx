@@ -369,16 +369,49 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                   </span>
                 )}
               </DialogTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCopy}
-                className="gap-1 lg:gap-2 text-xs lg:text-sm shrink-0"
-                aria-label={copySuccess ? '已复制' : '复制章节内容'}
-              >
-                {copySuccess ? '✅' : '📋'}
-                <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    if (!viewingChapter) return;
+                    const nextIndex = viewingChapter.index + 1;
+                    const nextChapterExists = project.chapters.some(
+                      ch => parseInt(ch.replace('.md', ''), 10) === nextIndex
+                    );
+                    if (nextChapterExists) {
+                      setLoading(true);
+                      try {
+                        const content = await onViewChapter(nextIndex);
+                        setViewingChapter({
+                          index: nextIndex,
+                          content,
+                          title: getChapterTitle(nextIndex) || undefined
+                        });
+                      } finally {
+                        setLoading(false);
+                      }
+                    }
+                  }}
+                  disabled={loading || !viewingChapter || !project.chapters.some(
+                    ch => parseInt(ch.replace('.md', ''), 10) === (viewingChapter?.index ?? 0) + 1
+                  )}
+                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
+                >
+                  {loading ? '⏳' : '➡️'}
+                  <span className="hidden sm:inline">{loading ? '加载中' : '下一章'}</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopy}
+                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
+                  aria-label={copySuccess ? '已复制' : '复制章节内容'}
+                >
+                  {copySuccess ? '✅' : '📋'}
+                  <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
+                </Button>
+              </div>
             </div>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto mt-3 lg:mt-4 scrollbar-thin">
