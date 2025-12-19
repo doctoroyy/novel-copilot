@@ -10,7 +10,7 @@ import {
 } from './memory.js';
 import { writeOneChapter } from './generateChapter.js';
 import { readOutline, getChapterOutline } from './generateOutline.js';
-import type { AIConfig } from './aiClient.js';
+import type { AIConfig } from './services/aiClient.js';
 
 /**
  * 运行参数

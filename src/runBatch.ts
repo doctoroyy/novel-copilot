@@ -2,7 +2,7 @@ import path from 'node:path';
 import 'dotenv/config';
 import { listProjects, readState } from './memory.js';
 import { runOneBook } from './runOneBook.js';
-import type { AIConfig } from './aiClient.js';
+import type { AIConfig } from './services/aiClient.js';
 
 /**
  * 批量运行参数
