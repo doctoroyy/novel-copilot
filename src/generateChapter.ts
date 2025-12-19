@@ -1,4 +1,4 @@
-import { generateTextWithRetry, type AIConfig } from './aiClient.js';
+import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
 import { z } from 'zod';
 

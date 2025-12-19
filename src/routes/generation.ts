@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, type AIConfig } from '../services/aiClient.js';
+import { writeOneChapter } from '../generateChapter.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -182,7 +183,8 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       }
 
       // Generate chapter
-      const chapterText = await generateChapter(aiConfig, {
+      const result = await writeOneChapter({
+        aiConfig,
         bible: project.bible,
         rollingSummary: project.rolling_summary || '',
         openLoops: JSON.parse(project.open_loops || '[]'),
@@ -192,6 +194,8 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
         chapterGoalHint,
         chapterTitle: outlineTitle,
       });
+
+      const chapterText = result.chapterText;
 
       // Save chapter
       await c.env.DB.prepare(`
@@ -206,8 +210,22 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
       // Update state
       await c.env.DB.prepare(`
-        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-      `).bind(chapterIndex + 1, project.id).run();
+        UPDATE states SET 
+          next_chapter_index = ?,
+          rolling_summary = ?,
+          open_loops = ?
+        WHERE project_id = ?
+      `).bind(
+        chapterIndex + 1, 
+        result.updatedSummary, 
+        JSON.stringify(result.updatedOpenLoops),
+        project.id
+      ).run();
+
+      // Update project object for next iteration in loop
+      project.rolling_summary = result.updatedSummary;
+      project.open_loops = JSON.stringify(result.updatedOpenLoops);
+      project.next_chapter_index = chapterIndex + 1;
     }
 
     return c.json({ success: true, generated: results });
@@ -302,62 +320,7 @@ ${bible.slice(0, 2000)}...
   return JSON.parse(jsonText);
 }
 
-// Helper: Generate chapter
-async function generateChapter(
-  aiConfig: AIConfig,
-  params: {
-    bible: string;
-    rollingSummary: string;
-    openLoops: string[];
-    lastChapters: string[];
-    chapterIndex: number;
-    totalChapters: number;
-    chapterGoalHint?: string;
-    chapterTitle?: string;
-  }
-) {
-  const { bible, rollingSummary, openLoops, lastChapters, chapterIndex, totalChapters, chapterGoalHint, chapterTitle } = params;
-  const isFinal = chapterIndex === totalChapters;
 
-  const system = `你是一个"稳定连载"的网文写作引擎。
-
-硬性规则：
-- 只有当 is_final_chapter=true 才允许收束主线、写结局
-- 若 is_final_chapter=false：严禁出现任何收尾表达
-- 每章必须推进冲突，并以强钩子结尾
-- 每章字数建议 2500~3500 汉字
-
-输出格式：
-- 第一行必须是章节标题
-- 其后是正文
-- 严禁写任何元说明
-
-当前是否为最终章：${isFinal}`;
-
-  const prompt = `【章节信息】
-- chapter_index: ${chapterIndex}
-- total_chapters: ${totalChapters}
-- is_final_chapter: ${isFinal}
-
-【Story Bible】
-${bible}
-
-【Rolling Summary】
-${rollingSummary || '（暂无）'}
-
-【Open Loops】
-${openLoops.length ? openLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（暂无）'}
-
-【Last Chapters】
-${lastChapters.length ? lastChapters.map((t, i) => `---近章${i + 1}---\n${t.slice(0, 1000)}`).join('\n\n') : '（暂无）'}
-
-【本章写作目标】
-${chapterGoalHint || '承接上一章结尾，推进主线一步。'}
-
-请写出本章内容：`;
-
-  return generateText(aiConfig, { system, prompt, temperature: 0.85 });
-}
 
 
 // Refine outline (regenerate missing/incomplete volumes)
