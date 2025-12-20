@@ -67,6 +67,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     saveConfig(newConfig);
     setTestResult({ success: true, message: '配置已保存到本地' });
     setApiKey(''); // Clear input field (key is saved in config)
+    // Auto-close the dialog after successful save
+    setTimeout(() => onOpenChange(false), 500);
   };
 
   const handleTest = async () => {
@@ -210,7 +212,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <div className="flex gap-2">
               <Input
                 type={showApiKey ? 'text' : 'password'}
-                placeholder="输入新的 API Key（留空保持不变）"
+                placeholder={maskedApiKey ? `当前: ${maskedApiKey}` : '请输入 API Key'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="flex-1 bg-muted/50 text-sm"
