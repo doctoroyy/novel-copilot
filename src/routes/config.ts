@@ -43,7 +43,7 @@ async function testAIConnection(config: {
       );
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json() as any;
         return { success: false, message: `连接失败: ${error.error?.message || response.statusText}` };
       }
 

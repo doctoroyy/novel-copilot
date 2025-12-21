@@ -39,3 +39,11 @@ CREATE TABLE IF NOT EXISTS outlines (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_project_index ON chapters(project_id, chapter_index);
+
+-- Characters table (Character Relationship Graph)
+CREATE TABLE IF NOT EXISTS characters (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  characters_json TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
