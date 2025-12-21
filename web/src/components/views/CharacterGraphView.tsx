@@ -89,24 +89,32 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
       })),
     ];
 
-    const links = data.relationships.map(r => ({
-      source: r.from,
-      target: r.to,
-      ...r,
-      value: r.bondStrength
-    }));
+    const nodeIds = new Set(nodes.map(n => n.id));
+
+    const links = data.relationships
+      .filter(r => nodeIds.has(r.from) && nodeIds.has(r.to)) // Critical fix: Ensure both nodes exist
+      .map(r => ({
+        source: r.from,
+        target: r.to,
+        ...r,
+        value: r.bondStrength
+      }));
 
     return { nodes, links };
   }, [data]);
 
-  // Highlight logic
+  // Highlight logic - updated to handle both string IDs and object references safely
   const highlightLinks = useMemo(() => {
     const activeNode = hoverNode || selectedNode;
     if (!activeNode) return new Set();
     
     const links = new Set();
     graphData.links.forEach(link => {
-      if ((link.source as any).id === activeNode.id || (link.target as any).id === activeNode.id) {
+      // Safe access: d3 might have converted source/target to objects, or they might still be strings
+      const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
+      const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+
+      if (sourceId === activeNode.id || targetId === activeNode.id) {
         links.add(link);
       }
     });
@@ -120,8 +128,11 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     const nodes = new Set();
     nodes.add(activeNode.id);
     graphData.links.forEach(link => {
-      if ((link.source as any).id === activeNode.id) nodes.add((link.target as any).id);
-      if ((link.target as any).id === activeNode.id) nodes.add((link.source as any).id);
+      const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
+      const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+
+      if (sourceId === activeNode.id && targetId) nodes.add(targetId);
+      if (targetId === activeNode.id && sourceId) nodes.add(sourceId);
     });
     return nodes;
   }, [hoverNode, selectedNode, graphData]);
