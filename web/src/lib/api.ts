@@ -1,6 +1,8 @@
 // API client for novel automation backend
 const API_BASE = '/api';
 
+import type { CharacterRelationGraph } from '../types/characters';
+
 export type ProjectSummary = {
   name: string;
   path: string;
@@ -217,4 +219,34 @@ export async function testAIConnection(config: {
   });
   const data = await res.json();
   return data;
+}
+// Character API
+export async function fetchCharacters(name: string): Promise<CharacterRelationGraph | null> {
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.characters;
+}
+
+export async function generateCharacters(
+  name: string,
+  aiHeaders?: Record<string, string>
+): Promise<CharacterRelationGraph> {
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}/generate`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.characters;
+}
+
+export async function updateCharacters(name: string, characters: CharacterRelationGraph): Promise<void> {
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ characters }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
 }

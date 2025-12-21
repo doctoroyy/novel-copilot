@@ -149,3 +149,31 @@ export async function generateTextWithRetry(
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Extract AI config from request headers
+ */
+export function getAIConfigFromHeaders(headers: Record<string, string | string[] | undefined> | any): AIConfig | null {
+  // Handle both Node http.IncomingMessage headers and Hono Context headers (or raw object)
+  const getHeader = (key: string): string | undefined => {
+    if (typeof headers.get === 'function') return headers.get(key);
+    if (typeof headers.header === 'function') return headers.header(key);
+    return headers[key] as string;
+  };
+
+  const provider = getHeader('x-ai-provider') || getHeader('X-AI-Provider');
+  const model = getHeader('x-ai-model') || getHeader('X-AI-Model');
+  const apiKey = getHeader('x-ai-key') || getHeader('X-AI-Key');
+  const baseUrl = getHeader('x-ai-baseurl') || getHeader('X-AI-BaseUrl');
+  
+  if (!provider || !model || !apiKey) {
+    return null;
+  }
+  
+  return {
+    provider: provider as AIProvider,
+    model,
+    apiKey,
+    baseUrl,
+  };
+}

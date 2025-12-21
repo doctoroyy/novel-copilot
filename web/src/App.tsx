@@ -39,7 +39,8 @@ import {
   ChapterListView, 
   GenerateView, 
   OutlineView, 
-  BibleView 
+  BibleView,
+  CharacterGraphView
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
@@ -399,6 +400,8 @@ function App() {
         );
       case 'bible':
         return <BibleView project={selectedProject} />;
+      case 'characters':
+        return <CharacterGraphView project={selectedProject} />;
       default:
         return null;
     }

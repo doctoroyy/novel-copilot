@@ -1,4 +1,6 @@
 import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
+import { getCharacterContext } from './generateCharacters.js';
+import type { CharacterRelationGraph } from './types/characters.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
 import { z } from 'zod';
 
@@ -36,6 +38,8 @@ export type WriteChapterParams = {
   maxRewriteAttempts?: number;
   /** 跳过摘要更新以节省 token */
   skipSummaryUpdate?: boolean;
+  /** 人物关系图谱 (可选) */
+  characters?: CharacterRelationGraph;
 };
 
 /**
@@ -96,6 +100,7 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
     chapterIndex,
     totalChapters,
     chapterGoalHint,
+    characters,
   } = params;
 
   const isFinal = chapterIndex === totalChapters;
@@ -120,6 +125,8 @@ ${lastChapters.length ? lastChapters.map((t, i) => `---近章${i + 1}---\n${t}`)
 
 【本章写作目标提示】
 ${chapterGoalHint ?? '承接上一章结尾，推进主线一步，并制造更大的危机；结尾留强钩子。'}
+
+${characters ? getCharacterContext(characters, chapterIndex) : ''}
 
 请写出本章内容：
 `.trim();

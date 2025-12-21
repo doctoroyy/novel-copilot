@@ -21,6 +21,7 @@ const tabs = [
   { id: 'generate', label: '生成', icon: '✍️' },
   { id: 'chapters', label: '章节', icon: '📖' },
   { id: 'bible', label: '设定', icon: '📕' },
+  { id: 'characters', label: '人物关系', icon: '🕸️' },
 ];
 
 export function Header({ 

@@ -192,10 +192,11 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     // Get project with state and outline
     const project = await c.env.DB.prepare(`
-      SELECT p.id, p.bible, s.*, o.outline_json
+      SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
       FROM projects p
       JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
+      LEFT JOIN characters c ON p.id = c.project_id
       WHERE p.name = ?
     `).bind(name).first() as any;
 
@@ -220,6 +221,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
     }
 
     const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+    const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
     const results: { chapter: number; title: string }[] = [];
 
     // Store the starting index BEFORE the loop to avoid double-increment bug
@@ -262,6 +264,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
         totalChapters: project.total_chapters,
         chapterGoalHint,
         chapterTitle: outlineTitle,
+        characters,
       });
 
       const chapterText = result.chapterText;

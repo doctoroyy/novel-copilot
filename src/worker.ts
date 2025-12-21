@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { projectsRoutes } from './routes/projects.js';
 import { configRoutes } from './routes/config.js';
 import { generationRoutes } from './routes/generation.js';
+import { charactersRoutes } from './routes/characters.js';
 
 export interface Env {
   DB: D1Database;
@@ -17,6 +18,7 @@ app.use('*', cors());
 app.route('/api/projects', projectsRoutes);
 app.route('/api/config', configRoutes);
 app.route('/api', generationRoutes);
+app.route('/api/characters', charactersRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects
