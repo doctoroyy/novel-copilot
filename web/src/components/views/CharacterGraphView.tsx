@@ -89,15 +89,34 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
       })),
     ];
 
-    const nodeIds = new Set(nodes.map(n => n.id));
+    // Create lookup maps for robust matching (ID and Name)
+    const nodeById = new Map(nodes.map(n => [n.id, n]));
+    const nodeByName = new Map(nodes.map(n => [n.name, n]));
+
+    const resolveNodeId = (ref: string): string | null => {
+      if (nodeById.has(ref)) return ref;
+      if (nodeByName.has(ref)) return nodeByName.get(ref)!.id;
+      // Try fuzzy match or case-insensitive match if needed, but let's start with exact name match
+      // Also handle potential case differences
+      const lowerRef = ref.toLowerCase();
+      for (const node of nodes) {
+          if (node.id.toLowerCase() === lowerRef) return node.id;
+          if (node.name.toLowerCase() === lowerRef) return node.id;
+      }
+      return null;
+    };
 
     const links = data.relationships
-      .filter(r => nodeIds.has(r.from) && nodeIds.has(r.to)) // Critical fix: Ensure both nodes exist
+      .map(r => {
+        const sourceId = resolveNodeId(r.from);
+        const targetId = resolveNodeId(r.to);
+        return { ...r, source: sourceId, target: targetId, value: r.bondStrength };
+      })
+      .filter(r => r.source && r.target) // Filter out links where endpoints couldn't be resolved
       .map(r => ({
-        source: r.from,
-        target: r.to,
         ...r,
-        value: r.bondStrength
+        source: r.source!, // TS assertion since we filtered
+        target: r.target!
       }));
 
     return { nodes, links };
