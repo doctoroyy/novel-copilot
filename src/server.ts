@@ -349,7 +349,7 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
       let outlineTitle: string | undefined;
       if (outline) {
         for (const vol of outline.volumes) {
-          const ch = vol.chapters.find(c => c.index === chapterIndex);
+          const ch = vol.chapters?.find(c => c.index === chapterIndex);
           if (ch) {
             outlineTitle = ch.title;
             chapterGoalHint = `【章节大纲】
@@ -576,7 +576,7 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
     const getChapterTitle = (index: number): string | null => {
       if (!outline) return null;
       for (const vol of outline.volumes) {
-        const ch = vol.chapters.find(c => c.index === index);
+        const ch = vol.chapters?.find(c => c.index === index);
         if (ch) return ch.title;
       }
       return null;

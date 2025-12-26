@@ -25,28 +25,28 @@ async function copyToClipboard(text: string): Promise<boolean> {
       console.warn('Clipboard API failed, trying fallback:', err);
     }
   }
-  
+
   // Fallback: create a temporary textarea and use execCommand
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
-    
+
     // Position off-screen and make invisible
     textArea.style.position = 'fixed';
     textArea.style.top = '-9999px';
     textArea.style.left = '-9999px';
     textArea.style.opacity = '0';
-    
+
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    
+
     // For iOS Safari
     textArea.setSelectionRange(0, text.length);
-    
+
     const successful = document.execCommand('copy');
     document.body.removeChild(textArea);
-    
+
     return successful;
   } catch (err) {
     console.error('Fallback copy failed:', err);
@@ -70,7 +70,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const [copyError, setCopyError] = useState<number | null>(null);
   const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
-  
+
   // Selection mode for batch delete
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
@@ -80,7 +80,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
     for (const vol of project.outline.volumes) {
-      const ch = vol.chapters.find(c => c.index === chapterIndex);
+      const ch = vol.chapters?.find(c => c.index === chapterIndex);
       if (ch) return ch.title;
     }
     return null;
@@ -90,10 +90,10 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     setLoading(true);
     try {
       const content = await onViewChapter(index);
-      setViewingChapter({ 
-        index, 
-        content, 
-        title: getChapterTitle(index) || undefined 
+      setViewingChapter({
+        index,
+        content,
+        title: getChapterTitle(index) || undefined
       });
     } finally {
       setLoading(false);
@@ -157,7 +157,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   };
 
   const allChapterIndices = project.chapters.map(ch => parseInt(ch.replace('.md', ''), 10));
-  
+
   const selectAll = () => {
     setSelectedChapters(new Set(allChapterIndices));
   };
@@ -206,9 +206,9 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                     <Button variant="ghost" size="sm" onClick={clearSelection} className="text-xs h-7">
                       清除
                     </Button>
-                    <Button 
-                      variant="destructive" 
-                      size="sm" 
+                    <Button
+                      variant="destructive"
+                      size="sm"
                       onClick={() => setShowBatchDeleteConfirm(true)}
                       disabled={selectedChapters.size === 0}
                       className="text-xs h-7"
@@ -344,7 +344,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                 })}
               </div>
             )}
-            
+
             {project.chapters.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
                 <div className="text-4xl mb-3">📖</div>
