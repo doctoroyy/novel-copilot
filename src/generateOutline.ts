@@ -252,7 +252,7 @@ export async function readOutline(projectDir: string): Promise<NovelOutline | nu
  */
 export function getChapterOutline(outline: NovelOutline, chapterIndex: number): ChapterOutline | null {
   for (const vol of outline.volumes) {
-    const chapter = vol.chapters.find((c) => c.index === chapterIndex);
+    const chapter = vol.chapters?.find((c) => c.index === chapterIndex);
     if (chapter) return chapter;
   }
   return null;

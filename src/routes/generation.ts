@@ -33,7 +33,7 @@ function normalizeChapter(ch: any, fallbackIndex: number): { index: number; titl
 function normalizeVolume(vol: any, volIndex: number, chapters: any[]): any {
   const startChapter = vol.startChapter ?? vol.start_chapter ?? (volIndex * 80 + 1);
   const endChapter = vol.endChapter ?? vol.end_chapter ?? ((volIndex + 1) * 80);
-  
+
   return {
     title: vol.title || vol.volumeTitle || vol.volume_title || `第${volIndex + 1}卷`,
     startChapter,
@@ -59,40 +59,40 @@ function normalizeMilestones(milestones: any[]): string[] {
 // Validate outline for coverage and quality
 function validateOutline(outline: any, targetChapters: number): { valid: boolean; issues: string[] } {
   const issues: string[] = [];
-  
+
   // Check total chapter coverage
   let totalChaptersInOutline = 0;
   const allIndices = new Set<number>();
-  
+
   for (const vol of outline.volumes || []) {
     for (const ch of vol.chapters || []) {
       totalChaptersInOutline++;
       allIndices.add(ch.index);
-      
+
       // Check for placeholder titles
       if (!ch.title || ch.title.match(/^第?\d+章?$/) || ch.title.includes('待补充')) {
         issues.push(`第${ch.index}章标题缺失或为占位符`);
       }
-      
+
       // Check for missing goals
       if (!ch.goal || ch.goal === '待补充' || ch.goal.length < 10) {
         issues.push(`第${ch.index}章目标缺失或过短`);
       }
     }
   }
-  
+
   // Check for missing indices
   for (let i = 1; i <= targetChapters; i++) {
     if (!allIndices.has(i)) {
       issues.push(`缺失第${i}章`);
     }
   }
-  
+
   // Check total count
   if (totalChaptersInOutline !== targetChapters) {
     issues.push(`章节总数不匹配: 实际${totalChaptersInOutline}章 vs 目标${targetChapters}章`);
   }
-  
+
   return {
     valid: issues.length === 0,
     issues: issues.slice(0, 20), // Limit to first 20 issues
@@ -131,7 +131,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
     console.log('Phase 1: Generating master outline...');
     const masterOutline = await generateMasterOutline(aiConfig, bible, targetChapters, targetWordCount);
     console.log(`Master outline generated: ${masterOutline.volumes?.length || 0} volumes`);
-    
+
     // Generate volume chapters and normalize
     const volumes = [];
     for (let i = 0; i < masterOutline.volumes.length; i++) {
@@ -168,8 +168,8 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
     console.log(`Outline generation complete for ${name}!`);
 
-    return c.json({ 
-      success: true, 
+    return c.json({
+      success: true,
       outline,
       validation: validation.valid ? undefined : validation,
     });
@@ -208,10 +208,10 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
     const maxChapterResult = await c.env.DB.prepare(`
       SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
     `).bind(project.id).first() as any;
-    
+
     const actualMaxChapter = maxChapterResult?.max_index || 0;
     const expectedNextIndex = actualMaxChapter + 1;
-    
+
     if (project.next_chapter_index !== expectedNextIndex) {
       console.log(`State mismatch: next_chapter_index=${project.next_chapter_index}, actual max=${actualMaxChapter}. Auto-correcting to ${expectedNextIndex}`);
       project.next_chapter_index = expectedNextIndex;
@@ -244,7 +244,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       let outlineTitle: string | undefined;
       if (outline) {
         for (const vol of outline.volumes) {
-          const ch = vol.chapters.find((c: any) => c.index === chapterIndex);
+          const ch = vol.chapters?.find((c: any) => c.index === chapterIndex);
           if (ch) {
             outlineTitle = ch.title;
             chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
@@ -288,8 +288,8 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
           open_loops = ?
         WHERE project_id = ?
       `).bind(
-        chapterIndex + 1, 
-        result.updatedSummary, 
+        chapterIndex + 1,
+        result.updatedSummary,
         JSON.stringify(result.updatedOpenLoops),
         project.id
       ).run();
@@ -478,7 +478,7 @@ ${bible}
   // Validate and auto-correct volume chapter coverage
   const volumes = outline.volumes || [];
   let expectedStart = 1;
-  
+
   for (let i = 0; i < volumes.length; i++) {
     const vol = volumes[i];
     // Ensure startChapter is correct
@@ -486,13 +486,13 @@ ${bible}
       console.log(`Auto-correcting volume ${i + 1} startChapter: ${vol.startChapter} -> ${expectedStart}`);
       vol.startChapter = expectedStart;
     }
-    
+
     // For the last volume, ensure endChapter equals targetChapters
     if (i === volumes.length - 1 && vol.endChapter !== targetChapters) {
       console.log(`Auto-correcting last volume endChapter: ${vol.endChapter} -> ${targetChapters}`);
       vol.endChapter = targetChapters;
     }
-    
+
     expectedStart = vol.endChapter + 1;
   }
 
@@ -519,7 +519,7 @@ async function generateVolumeChapters(
   const startChapter = volume.startChapter;
   const endChapter = volume.endChapter;
   const totalChapters = endChapter - startChapter + 1;
-  
+
   // Chunk size for generation (to avoid token limits)
   const CHUNK_SIZE = 20;
   const allChapters: any[] = [];
@@ -528,7 +528,7 @@ async function generateVolumeChapters(
   for (let chunkStart = startChapter; chunkStart <= endChapter; chunkStart += CHUNK_SIZE) {
     const chunkEnd = Math.min(chunkStart + CHUNK_SIZE - 1, endChapter);
     const chunkSize = chunkEnd - chunkStart + 1;
-    
+
     console.log(`Generating chapters ${chunkStart}-${chunkEnd} for volume "${volume.title}"...`);
 
     const system = `你是一个**网文章节大纲策划专家**，擅长设计引人入胜的章节结构。
@@ -554,7 +554,7 @@ JSON 结构:
 ]`;
 
     // Build context from previously generated chapters in this volume
-    const prevChaptersContext = allChapters.length > 0 
+    const prevChaptersContext = allChapters.length > 0
       ? `\n【本卷已生成章节】\n${allChapters.slice(-5).map(c => `- 第${c.index}章 ${c.title}: ${c.goal.slice(0, 50)}...`).join('\n')}`
       : '';
 
@@ -577,7 +577,7 @@ ${prevChaptersContext}
       const raw = await generateText(aiConfig, { system, prompt, temperature: 0.75 });
       const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
       const chapters = JSON.parse(jsonText);
-      
+
       // Validate and fix chapter indices
       const validatedChapters = chapters.map((ch: any, i: number) => ({
         index: chunkStart + i,
@@ -585,7 +585,7 @@ ${prevChaptersContext}
         goal: ch.goal || ch.description || ch.plot || '剧情推进',
         hook: ch.hook || ch.cliffhanger || '悬念待续',
       }));
-      
+
       allChapters.push(...validatedChapters);
     } catch (error) {
       console.error(`Error generating chapters ${chunkStart}-${chunkEnd}:`, error);
@@ -627,7 +627,7 @@ ${prevChaptersContext}
   allChapters.sort((a, b) => a.index - b.index);
 
   console.log(`Volume "${volume.title}" complete: ${allChapters.length}/${totalChapters} chapters generated.`);
-  
+
   return allChapters;
 }
 
@@ -689,19 +689,19 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
         const vol = volumes[i];
         const chapters = vol.chapters || [];
         const expectedCount = (vol.endChapter - vol.startChapter) + 1;
-        
+
         // Heuristic for "incomplete":
         // 1. No chapters
         // 2. Significantly fewer chapters than expected (e.g., < 20% of expected, or just placeholder 1 chapter)
         // 3. Most chapters are empty (no goal)
-        
+
         const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
         const isPlaceholder = chapters.length <= 1;
         const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1)); // Less than 10% content populated
 
         if (isPlaceholder || isEmpty) {
           console.log(`Refining Volume ${i + 1}: ${vol.title}`);
-          
+
           const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
           volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
           updated = true;
@@ -711,12 +711,12 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
 
     if (updated) {
       outline.volumes = volumes;
-      
+
       // Save updated outline
       await c.env.DB.prepare(`
         UPDATE outlines SET outline_json = ? WHERE project_id = ?
       `).bind(JSON.stringify(outline), (project as any).id).run();
-      
+
       return c.json({ success: true, message: 'Outline refined successfully', outline });
     } else {
       return c.json({ success: true, message: 'Outline is already complete', outline });
@@ -744,7 +744,7 @@ generationRoutes.post('/migrate-outlines', async (c) => {
     for (const row of results) {
       try {
         const outline = JSON.parse((row as any).outline_json);
-        
+
         // Normalize the outline
         const normalizedOutline = {
           totalChapters: outline.totalChapters,
@@ -773,8 +773,8 @@ generationRoutes.post('/migrate-outlines', async (c) => {
       }
     }
 
-    return c.json({ 
-      success: true, 
+    return c.json({
+      success: true,
       message: `Migrated ${migrated.length} outlines`,
       migrated,
       errors: errors.length > 0 ? errors : undefined
