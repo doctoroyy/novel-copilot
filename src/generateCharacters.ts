@@ -66,19 +66,19 @@ export function getCharacterContext(
   if (!crg) return '';
 
   // 1. 找出主角
-  const protagonist = crg.protagonists[0]; // 假设第一个是第一主角
+  const protagonist = (crg.protagonists || [])[0]; // 假设第一个是第一主角
   if (!protagonist) return '';
 
   // 2. 找出当前处于活跃期的关系
   const activeRelationships: string[] = [];
   
-  for (const rel of crg.relationships) {
+  for (const rel of (crg.relationships || [])) {
     // 检查是否涉及主角
     const isRelatedToProtagonist = rel.from === protagonist.id || rel.to === protagonist.id;
     if (!isRelatedToProtagonist) continue;
 
     // 找出当前章节对应的关系阶段
-    const currentPhase = rel.evolution.find(
+    const currentPhase = rel.evolution?.find(
       phase => chapterIndex >= phase.chapterRange[0] && chapterIndex <= phase.chapterRange[1]
     );
 
@@ -115,9 +115,9 @@ ${activeRelationships.length > 0 ? activeRelationships.join('\n') : '(暂无重�
 }
 
 function findCharacterName(crg: CharacterRelationGraph, id: string): string {
-  const p = crg.protagonists.find(c => c.id === id);
+  const p = (crg.protagonists || []).find(c => c.id === id);
   if (p) return p.name;
-  const m = crg.mainCharacters.find(c => c.id === id);
+  const m = (crg.mainCharacters || []).find(c => c.id === id);
   if (m) return m.name;
   return id;
 }
