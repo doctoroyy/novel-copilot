@@ -96,18 +96,30 @@ export function getCharacterContext(
   }
 
   // 3. 找出当前阶段的主角弧线
-  let currentArc = protagonist.arc.middle;
+  // 防御性检查：确保 arc 存在
+  if (!protagonist.arc) {
+    return `
+【主角当前状态】
+- 角色: ${protagonist.name}
+- 核心欲望: ${protagonist.personality?.desires?.join(', ') || '未定义'}
+
+【本章活跃关系网】
+${activeRelationships.length > 0 ? activeRelationships.join('\n') : '(暂无重点关系)'}
+`.trim();
+  }
+  
+  let currentArc = protagonist.arc.middle || '发展中';
   const turningPoints = protagonist.arc.turningPoints || [];
   // 简单逻辑：如果此时在早期，用 start，晚期用 end，中间用 middle
   // 这里可以根据 turningPoints 更精细判断，暂时简化
-  if (chapterIndex < 50) currentArc = protagonist.arc.start;
-  else if (chapterIndex > crg.relationshipEvents[crg.relationshipEvents.length - 1]?.chapter) currentArc = protagonist.arc.end;
+  if (chapterIndex < 50) currentArc = protagonist.arc.start || currentArc;
+  else if ((crg.relationshipEvents || []).length > 0 && chapterIndex > crg.relationshipEvents[crg.relationshipEvents.length - 1]?.chapter) currentArc = protagonist.arc.end || currentArc;
 
   return `
 【主角当前状态】
-- 心理模型: ${protagonist.personality.traits.join(', ')}
+- 心理模型: ${protagonist.personality?.traits?.join(', ') || '未定义'}
 - 当前弧线阶段: ${currentArc}
-- 核心欲望: ${protagonist.personality.desires.join(', ')}
+- 核心欲望: ${protagonist.personality?.desires?.join(', ') || '未定义'}
 
 【本章活跃关系网】
 ${activeRelationships.length > 0 ? activeRelationships.join('\n') : '(暂无重点关系)'}
