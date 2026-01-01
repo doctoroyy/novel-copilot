@@ -1,6 +1,8 @@
 import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
 import { getCharacterContext } from './generateCharacters.js';
 import type { CharacterRelationGraph } from './types/characters.js';
+import type { CharacterStateRegistry } from './types/characterState.js';
+import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
 import { z } from 'zod';
 
@@ -40,6 +42,8 @@ export type WriteChapterParams = {
   skipSummaryUpdate?: boolean;
   /** 人物关系图谱 (可选) */
   characters?: CharacterRelationGraph;
+  /** 人物状态注册表 (可选, Phase 1 新增) */
+  characterStates?: CharacterStateRegistry;
 };
 
 /**
@@ -101,9 +105,15 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
     totalChapters,
     chapterGoalHint,
     characters,
+    characterStates,
   } = params;
 
   const isFinal = chapterIndex === totalChapters;
+
+  // 构建人物状态上下文 (Phase 1 新增)
+  const characterStateContext = characterStates
+    ? buildCharacterStateContext(characterStates, chapterIndex, 5)
+    : '';
 
   return `
 【章节信息】
@@ -114,7 +124,7 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
 【Story Bible（长期设定）】
 ${bible}
 
-【Rolling Summary（到目前为止剧情摘要）】
+${characterStateContext ? characterStateContext + '\n' : ''}【Rolling Summary（到目前为止剧情摘要）】
 ${rollingSummary || '（暂无摘要：请根据近章原文自行推断并保持一致）'}
 
 【Open Loops（未解伏笔/悬念，最多12条）】

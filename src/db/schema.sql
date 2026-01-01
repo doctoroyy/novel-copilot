@@ -47,3 +47,62 @@ CREATE TABLE IF NOT EXISTS characters (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- =====================================================
+-- Phase 1: Character State Tracking System
+-- =====================================================
+
+-- Character States table (动态人物状态快照)
+CREATE TABLE IF NOT EXISTS character_states (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  registry_json TEXT NOT NULL,
+  last_updated_chapter INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- Phase 2: Plot Graph System
+-- =====================================================
+
+-- Plot Graphs table (剧情图谱)
+CREATE TABLE IF NOT EXISTS plot_graphs (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  graph_json TEXT NOT NULL,
+  last_updated_chapter INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- Phase 3: Narrative Control System
+-- =====================================================
+
+-- Narrative Config table (叙事配置)
+CREATE TABLE IF NOT EXISTS narrative_config (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  pacing_curve_json TEXT,
+  narrative_arc_json TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- Phase 4: Multi-dimensional QC System
+-- =====================================================
+
+-- Chapter QC Results table (章节质量检测结果)
+CREATE TABLE IF NOT EXISTS chapter_qc (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chapter_index INTEGER NOT NULL,
+  qc_json TEXT NOT NULL,
+  passed INTEGER DEFAULT 0,
+  score INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(project_id, chapter_index)
+);
+
+-- Indexes for new tables
+CREATE INDEX IF NOT EXISTS idx_chapter_qc_project ON chapter_qc(project_id);
+CREATE INDEX IF NOT EXISTS idx_chapter_qc_score ON chapter_qc(project_id, score);

@@ -2,6 +2,13 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, type AIConfig } from '../services/aiClient.js';
 import { writeOneChapter } from '../generateChapter.js';
+import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
+import type { CharacterStateRegistry } from '../types/characterState.js';
+import type { PlotGraph } from '../types/plotGraph.js';
+import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js';
+import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
+import { createEmptyPlotGraph } from '../types/plotGraph.js';
+import { generateNarrativeArc } from '../narrative/pacingController.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -302,6 +309,241 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     return c.json({ success: true, generated: results });
   } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Enhanced chapter generation with full context engineering
+generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
+  const name = c.req.param('name');
+  const aiConfig = getAIConfigFromHeaders(c);
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  try {
+    const {
+      chaptersToGenerate = 1,
+      enableContextOptimization = true,
+      enableFullQC = false,
+      enableAutoRepair = false,
+    } = await c.req.json();
+
+    // Get project with state and outline
+    const project = await c.env.DB.prepare(`
+      SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json,
+             cs.registry_json as character_states_json, cs.last_updated_chapter as states_chapter,
+             pg.graph_json as plot_graph_json, pg.last_updated_chapter as plot_chapter,
+             nc.narrative_arc_json
+      FROM projects p
+      JOIN states s ON p.id = s.project_id
+      LEFT JOIN outlines o ON p.id = o.project_id
+      LEFT JOIN characters c ON p.id = c.project_id
+      LEFT JOIN character_states cs ON p.id = cs.project_id
+      LEFT JOIN plot_graphs pg ON p.id = pg.project_id
+      LEFT JOIN narrative_config nc ON p.id = nc.project_id
+      WHERE p.name = ?
+    `).bind(name).first() as any;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    // Validate state
+    const maxChapterResult = await c.env.DB.prepare(`
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+    `).bind(project.id).first() as any;
+
+    const actualMaxChapter = maxChapterResult?.max_index || 0;
+    const expectedNextIndex = actualMaxChapter + 1;
+
+    if (project.next_chapter_index !== expectedNextIndex) {
+      console.log(`State mismatch: auto-correcting to ${expectedNextIndex}`);
+      project.next_chapter_index = expectedNextIndex;
+      await c.env.DB.prepare(`
+        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+      `).bind(expectedNextIndex, project.id).run();
+    }
+
+    const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+    const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+
+    // Initialize or load context engineering state
+    let characterStates: CharacterStateRegistry | undefined;
+    if (project.character_states_json) {
+      characterStates = JSON.parse(project.character_states_json);
+    } else if (characters) {
+      characterStates = initializeRegistryFromGraph(characters);
+      await c.env.DB.prepare(`
+        INSERT OR REPLACE INTO character_states (project_id, registry_json, last_updated_chapter)
+        VALUES (?, ?, 0)
+      `).bind(project.id, JSON.stringify(characterStates)).run();
+    }
+
+    let plotGraph: PlotGraph | undefined;
+    if (project.plot_graph_json) {
+      plotGraph = JSON.parse(project.plot_graph_json);
+    } else {
+      plotGraph = createEmptyPlotGraph();
+      await c.env.DB.prepare(`
+        INSERT OR REPLACE INTO plot_graphs (project_id, graph_json, last_updated_chapter)
+        VALUES (?, ?, 0)
+      `).bind(project.id, JSON.stringify(plotGraph)).run();
+    }
+
+    let narrativeArc: NarrativeArc | undefined;
+    if (project.narrative_arc_json) {
+      narrativeArc = JSON.parse(project.narrative_arc_json);
+    } else if (outline) {
+      narrativeArc = generateNarrativeArc(outline.volumes || [], project.total_chapters);
+      await c.env.DB.prepare(`
+        INSERT OR REPLACE INTO narrative_config (project_id, narrative_arc_json)
+        VALUES (?, ?)
+      `).bind(project.id, JSON.stringify(narrativeArc)).run();
+    }
+
+    const results: {
+      chapter: number;
+      title: string;
+      qcScore?: number;
+      wasRewritten: boolean;
+    }[] = [];
+
+    const startingChapterIndex = project.next_chapter_index;
+    let previousPacing: number | undefined;
+
+    for (let i = 0; i < chaptersToGenerate; i++) {
+      const chapterIndex = startingChapterIndex + i;
+      if (chapterIndex > project.total_chapters) break;
+
+      // Get last 2 chapters
+      const { results: lastChapters } = await c.env.DB.prepare(`
+        SELECT content FROM chapters
+        WHERE project_id = ? AND chapter_index >= ?
+        ORDER BY chapter_index DESC LIMIT 2
+      `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+
+      // Get chapter info from outline
+      let chapterGoalHint: string | undefined;
+      let outlineTitle: string | undefined;
+      let enhancedOutline: EnhancedChapterOutline | undefined;
+
+      if (outline) {
+        for (const vol of outline.volumes) {
+          const ch = vol.chapters?.find((c: any) => c.index === chapterIndex);
+          if (ch) {
+            outlineTitle = ch.title;
+            chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+            break;
+          }
+        }
+      }
+
+      // Generate chapter using enhanced engine
+      const result = await writeEnhancedChapter({
+        aiConfig,
+        bible: project.bible,
+        rollingSummary: project.rolling_summary || '',
+        openLoops: JSON.parse(project.open_loops || '[]'),
+        lastChapters: lastChapters.map((c: any) => c.content).reverse(),
+        chapterIndex,
+        totalChapters: project.total_chapters,
+        chapterGoalHint,
+        chapterTitle: outlineTitle,
+        characters,
+        characterStates,
+        plotGraph,
+        narrativeArc,
+        enhancedOutline,
+        previousPacing,
+        enableContextOptimization,
+        enableFullQC,
+        enableAutoRepair,
+      });
+
+      const chapterText = result.chapterText;
+
+      // Save chapter
+      await c.env.DB.prepare(`
+        INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+      `).bind(project.id, chapterIndex, chapterText).run();
+
+      // Extract title
+      const titleMatch = chapterText.match(/^第?\d*[章回节]?\s*[：:.]?\s*(.+)/m);
+      const title = titleMatch ? titleMatch[1] : (outlineTitle || `Chapter ${chapterIndex}`);
+
+      results.push({
+        chapter: chapterIndex,
+        title,
+        qcScore: result.qcResult?.score,
+        wasRewritten: result.wasRewritten,
+      });
+
+      // Update state
+      await c.env.DB.prepare(`
+        UPDATE states SET
+          next_chapter_index = ?,
+          rolling_summary = ?,
+          open_loops = ?
+        WHERE project_id = ?
+      `).bind(
+        chapterIndex + 1,
+        result.updatedSummary,
+        JSON.stringify(result.updatedOpenLoops),
+        project.id
+      ).run();
+
+      // Update character states if changed
+      if (result.updatedCharacterStates) {
+        characterStates = result.updatedCharacterStates;
+        await c.env.DB.prepare(`
+          UPDATE character_states SET registry_json = ?, last_updated_chapter = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE project_id = ?
+        `).bind(JSON.stringify(characterStates), chapterIndex, project.id).run();
+      }
+
+      // Update plot graph if changed
+      if (result.updatedPlotGraph) {
+        plotGraph = result.updatedPlotGraph;
+        await c.env.DB.prepare(`
+          UPDATE plot_graphs SET graph_json = ?, last_updated_chapter = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE project_id = ?
+        `).bind(JSON.stringify(plotGraph), chapterIndex, project.id).run();
+      }
+
+      // Save QC result if available
+      if (result.qcResult) {
+        await c.env.DB.prepare(`
+          INSERT OR REPLACE INTO chapter_qc (project_id, chapter_index, qc_json, passed, score)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(
+          project.id,
+          chapterIndex,
+          JSON.stringify(result.qcResult),
+          result.qcResult.passed ? 1 : 0,
+          result.qcResult.score
+        ).run();
+      }
+
+      // Update for next iteration
+      project.rolling_summary = result.updatedSummary;
+      project.open_loops = JSON.stringify(result.updatedOpenLoops);
+      project.next_chapter_index = chapterIndex + 1;
+      previousPacing = result.narrativeGuide?.pacingTarget;
+    }
+
+    return c.json({
+      success: true,
+      generated: results,
+      contextStats: {
+        characterStatesActive: characterStates ? Object.keys(characterStates.snapshots).length : 0,
+        plotNodesCount: plotGraph ? plotGraph.nodes.length : 0,
+        pendingForeshadowing: plotGraph ? plotGraph.pendingForeshadowing.length : 0,
+      },
+    });
+  } catch (error) {
+    console.error('Enhanced generation error:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
