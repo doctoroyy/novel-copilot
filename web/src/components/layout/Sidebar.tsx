@@ -38,7 +38,7 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
       </div>
 
       {/* Project List */}
-      <ScrollArea className="flex-1 px-3">
+      <ScrollArea className="flex-1 px-3 min-h-0">
         <div className="space-y-2 py-2">
           {projects.map((project) => {
             const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
