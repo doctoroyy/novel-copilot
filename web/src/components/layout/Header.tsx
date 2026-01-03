@@ -22,6 +22,7 @@ const tabs = [
   { id: 'chapters', label: '章节', icon: '📖' },
   { id: 'bible', label: '设定', icon: '📕' },
   { id: 'characters', label: '人物关系', icon: '🕸️' },
+  { id: 'anime', label: 'AI动漫', icon: '🎬' },
 ];
 
 export function Header({ 

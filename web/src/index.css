@@ -184,7 +184,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground subpixel-antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 }
@@ -193,11 +193,11 @@
 @layer utilities {
   /* Glassmorphism - Premium Feel */
   .glass {
-    @apply bg-background/60 backdrop-blur-xl border border-border/50;
+    @apply bg-background/80 border border-border/50;
   }
 
   .glass-card {
-    @apply bg-card/40 backdrop-blur-2xl border border-white/5 shadow-xl;
+    @apply bg-card/95 border border-white/10 shadow-xl;
     /* In light mode, give it more substance */
     :where(.light &) {
       @apply bg-white/70 border-gray-200/50 shadow-sm;
@@ -205,7 +205,7 @@
   }
 
   .glass-panel {
-    @apply bg-sidebar/80 backdrop-blur-xl border-r border-sidebar-border/50;
+    @apply bg-sidebar/95 border-r border-sidebar-border/50;
   }
 
   /* Typography Gradients */
@@ -306,7 +306,7 @@
   }
 
   .grid-pattern {
-    mask-image: linear-gradient(to bottom, transparent, black, black);
+    /* Grid pattern only, no mask */
   }
   
   :is(.dark .grid-pattern) {
