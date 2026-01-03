@@ -25,7 +25,35 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
   // Action states
   const [processing, setProcessing] = useState(false);
 
-  // ... (useEffect loadData remains)
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        // 1. Get Anime Project ID
+        const projectsRes = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`);
+        const projectsData = await projectsRes.json();
+        const anime = projectsData.projects?.find((p: any) => p.name === `anime-${project.name}`);
+        
+        if (anime) {
+            setAnimeProject(anime);
+            // 2. Get Episode Details
+            // Assuming episodeId is episode_num
+            const epNum = parseInt(episodeId); 
+            const epRes = await fetch(`/api/anime/projects/${anime.id}/episodes/${epNum}`);
+            const epData = await epRes.json();
+            
+            if (epData.success && epData.episode) {
+                setEpisode(epData.episode);
+            }
+        }
+      } catch (error) {
+        console.error("Failed to load episode", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [project.name, episodeId]);
 
   // Actions
   const reloadEpisode = async () => {
