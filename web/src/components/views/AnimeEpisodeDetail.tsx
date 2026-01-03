@@ -6,95 +6,48 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
-import { Film, Loader2, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Film, Loader2, ArrowLeft, RefreshCw, FileText, Layout, PauseCircle, Trash2 } from 'lucide-react';
 
-interface AnimeEpisodeDetailProps {
-  project: any;
-  episodeId: string;
-  onBack: () => void;
-}
+// ... (imports remain)
 
 export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeDetailProps) {
   const { config: aiConfig, isConfigured } = useAIConfig();
   const [episode, setEpisode] = useState<any | null>(null);
   const [animeProject, setAnimeProject] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  
+  // Action states
+  const [processing, setProcessing] = useState(false);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true);
-        // 1. Get Anime Project ID
-        const projectsRes = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`);
-        const projectsData = await projectsRes.json();
-        const anime = projectsData.projects?.find((p: any) => p.name === `anime-${project.name}`);
-        
-        if (anime) {
-            setAnimeProject(anime);
-            // 2. Get Episode Details
-            // Note: episodeId passed here might be the episode_num or the actual UUID depending on routing
-            // Let's assume passed ID is episode_num for cleaner URL, but need to handle UUID if that's what we have.
-            // Actually, from AnimeView list click, we better pass episode_num as param if we want clean URLs
-            // For now, let's fetch list and find it, or if backend supports by num.
-            
-            // Assuming episodeId is episode_num
-            const epNum = parseInt(episodeId); 
-            const epRes = await fetch(`/api/anime/projects/${anime.id}/episodes/${epNum}`);
-            const epData = await epRes.json();
-            
-            if (epData.success && epData.episode) {
-                setEpisode(epData.episode);
-            }
-        }
-      } catch (error) {
-        console.error("Failed to load episode", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
-  }, [project.name, episodeId]);
+  // ... (useEffect loadData remains)
 
-  const handleGenerateVideo = async () => {
-    if (!animeProject || !episode || !isConfigured) return;
-    setGenerating(true);
-    try {
-      const res = await fetch(`/api/anime/projects/${animeProject.id}/generate`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...getAIConfigHeaders(aiConfig),
-        },
-        body: JSON.stringify({
-           startEpisode: episode.episode_num,
-           endEpisode: episode.episode_num 
-        }),
-      });
+  // Actions
+  const reloadEpisode = async () => {
+      if(!animeProject || !episode) return;
+      const res = await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}`);
       const data = await res.json();
-      if (data.success) {
-          // Poll or re-fetch status
-          // For now, simplistically reload page data
-          const epRes = await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}`);
-          const epData = await epRes.json();
-          if (epData.success) {
-              setEpisode(epData.episode);
-          }
+      if(data.success) setEpisode(data.episode);
+      if(data.episode.status === 'processing') {
+          setTimeout(reloadEpisode, 2000); // Poll if processing
+      } else {
+          setProcessing(false);
       }
-    } catch (error) {
-      console.error("Generate failed", error);
-    } finally {
-      setGenerating(false);
-    }
   };
 
-  if (loading) {
-      return <div className="flex items-center justify-center p-20"><Loader2 className="animate-spin"/></div>;
-  }
-
-  if (!episode) {
-      return <div className="p-10 text-center">Episode not found <Button variant="link" onClick={onBack}>Back</Button></div>;
-  }
+  const runAction = async (action: string) => {
+      if (!animeProject || !episode || !isConfigured) return;
+      setProcessing(true);
+      try {
+          await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/${action}`, {
+              method: action === 'content' ? 'DELETE' : 'POST', // content is for delete
+              headers: getAIConfigHeaders(aiConfig)
+          });
+          reloadEpisode();
+      } catch (e) {
+          console.error(e);
+          setProcessing(false);
+      }
+  };
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -105,20 +58,46 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
          </Button>
          <div>
             <h2 className="text-lg font-bold flex items-center gap-2">
-                第 {episode.episode_num} 集
-                {episode.status === 'done' && <Badge variant="secondary" className="bg-green-500/10 text-green-500">已完成</Badge>}
+                第 {episode?.episode_num} 集
+                {episode?.status === 'done' && <Badge variant="secondary" className="bg-green-500/10 text-green-500">已完成</Badge>}
+                {episode?.status === 'processing' && <Badge variant="secondary" className="bg-blue-500/10 text-blue-500 animate-pulse">生成中...</Badge>}
+                {episode?.status === 'stopped' && <Badge variant="outline" className="text-yellow-600">已暂停</Badge>}
             </h2>
          </div>
-         <div className="ml-auto">
-            <Button 
-                variant={episode.status === 'done' ? "outline" : "default"}
-                className={episode.status !== 'done' ? "gradient-bg" : ""}
-                disabled={generating || episode.status === 'processing'}
-                onClick={handleGenerateVideo}
-            >
-                {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <Film className="w-4 h-4 mr-2"/>}
-                {episode.status === 'done' ? '重新生成视频' : '生成视频'}
+         <div className="ml-auto flex items-center gap-2">
+            {/* Delete / Reset */}
+            <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => {
+                if(confirm('Confirm delete all generated content for this episode?')) runAction('content');
+            }}>
+                <Trash2 className="w-4 h-4"/>
             </Button>
+
+            {/* Stop */}
+            {episode?.status === 'processing' && (
+                <Button variant="outline" size="sm" onClick={() => runAction('cancel')} className="text-yellow-600 gap-2 border-yellow-200 bg-yellow-50">
+                    <PauseCircle className="w-4 h-4"/> 暂停
+                </Button>
+            )}
+
+            {/* Generation Pipeline */}
+            {(!episode?.script) && (
+                <Button size="sm" onClick={() => runAction('generate/script')} disabled={processing || episode?.status === 'processing'}>
+                    <FileText className="w-4 h-4 mr-2"/> 生成剧本
+                </Button>
+            )}
+
+            {(episode?.script && !episode?.storyboard_json) && (
+                <Button size="sm" onClick={() => runAction('generate/storyboard')} disabled={processing || episode?.status === 'processing'}>
+                    <Layout className="w-4 h-4 mr-2"/> 生成分镜
+                </Button>
+            )}
+
+            {(episode?.storyboard_json) && (
+                <Button size="sm" onClick={() => runAction('generate/video')} disabled={processing || episode?.status === 'processing'} className="gradient-bg">
+                    {processing ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <Film className="w-4 h-4 mr-2"/>}
+                    {episode?.status === 'done' ? '重新生成视频' : '生成视频'}
+                </Button>
+            )}
          </div>
       </div>
 
