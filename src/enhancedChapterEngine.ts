@@ -15,6 +15,8 @@ import type { CharacterRelationGraph } from './types/characters.js';
 import type { CharacterStateRegistry } from './types/characterState.js';
 import type { PlotGraph } from './types/plotGraph.js';
 import type { NarrativeGuide, NarrativeArc, EnhancedChapterOutline } from './types/narrative.js';
+import type { TimelineState } from './types/timeline.js';
+import { createEmptyTimelineState } from './types/timeline.js';
 import {
   analyzeChapterForStateChanges,
   updateRegistry as updateCharacterRegistry,
@@ -38,6 +40,12 @@ import {
 import { repairChapter } from './qc/repairLoop.js';
 import { buildOptimizedContext, getContextStats } from './contextOptimizer.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
+import {
+  analyzeChapterForEvents,
+  applyEventAnalysis,
+  getCharacterNameMap,
+  checkEventDuplication,
+} from './context/timelineManager.js';
 import { z } from 'zod';
 
 /**
@@ -78,6 +86,8 @@ export type EnhancedWriteChapterParams = {
   characterStates?: CharacterStateRegistry;
   /** 剧情图谱 */
   plotGraph?: PlotGraph;
+  /** 时间线状态 (追踪已完成事件) */
+  timeline?: TimelineState;
   /** 叙事弧线 */
   narrativeArc?: NarrativeArc;
   /** 增强型章节大纲 */
@@ -114,6 +124,8 @@ export type EnhancedWriteChapterResult = {
   updatedCharacterStates?: CharacterStateRegistry;
   /** 更新后的剧情图谱 */
   updatedPlotGraph?: PlotGraph;
+  /** 更新后的时间线状态 */
+  updatedTimeline?: TimelineState;
   /** QC 检测结果 */
   qcResult?: QCResult;
   /** 叙事指导 */
@@ -127,6 +139,8 @@ export type EnhancedWriteChapterResult = {
     totalChars: number;
     estimatedTokens: number;
   };
+  /** 事件重复警告 */
+  eventDuplicationWarnings?: string[];
 };
 
 /**
@@ -142,6 +156,8 @@ export async function writeEnhancedChapter(
     totalChapters,
     characterStates,
     plotGraph,
+    timeline,
+    characters,
     narrativeArc,
     enhancedOutline,
     previousPacing,
@@ -183,6 +199,8 @@ export async function writeEnhancedChapter(
       bible,
       characterStates,
       plotGraph,
+      timeline,
+      characters,
       rollingSummary: params.rollingSummary,
       lastChapters: params.lastChapters,
       narrativeGuide,
@@ -340,17 +358,55 @@ ${buildChapterGoalSection(params, enhancedOutline)}
     }
   }
 
+  // 10. 更新时间线（追踪已完成事件）
+  let updatedTimeline = timeline;
+  let eventDuplicationWarnings: string[] = [];
+
+  if (!skipStateUpdate) {
+    const characterNameMap = getCharacterNameMap(characters, characterStates);
+
+    // 检查事件重复
+    if (timeline && timeline.events.length > 0) {
+      const duplicationCheck = checkEventDuplication(chapterText, timeline, characterNameMap);
+      if (duplicationCheck.hasDuplication) {
+        eventDuplicationWarnings = duplicationCheck.warnings;
+        console.warn(`⚠️ 章节 ${chapterIndex} 检测到事件重复:`, duplicationCheck.warnings);
+      }
+    }
+
+    // 分析并更新时间线
+    try {
+      const currentTimeline = timeline || createEmptyTimelineState();
+      const eventAnalysis = await analyzeChapterForEvents(
+        aiConfig,
+        chapterText,
+        chapterIndex,
+        currentTimeline,
+        characterNameMap
+      );
+
+      if (eventAnalysis.newEvents.length > 0) {
+        updatedTimeline = applyEventAnalysis(currentTimeline, eventAnalysis, chapterIndex);
+        console.log(`📅 章节 ${chapterIndex} 记录了 ${eventAnalysis.newEvents.length} 个新事件`);
+      }
+    } catch (error) {
+      console.warn('Timeline update failed:', error);
+    }
+  }
+
   return {
     chapterText,
     updatedSummary,
     updatedOpenLoops,
     updatedCharacterStates,
     updatedPlotGraph,
+    updatedTimeline,
     qcResult,
     narrativeGuide,
     wasRewritten,
     rewriteCount,
     contextStats,
+    eventDuplicationWarnings,
   };
 }
 
@@ -565,6 +621,7 @@ export async function generateChapterBatch(
       openLoops: string[];
       characterStates?: CharacterStateRegistry;
       plotGraph?: PlotGraph;
+      timeline?: TimelineState;
       narrativeArc?: NarrativeArc;
     };
     onChapterComplete?: (result: {
@@ -582,6 +639,7 @@ export async function generateChapterBatch(
     openLoops: string[];
     characterStates?: CharacterStateRegistry;
     plotGraph?: PlotGraph;
+    timeline?: TimelineState;
   };
 }> {
   const {
@@ -605,6 +663,7 @@ export async function generateChapterBatch(
       characters ? initializeRegistryFromGraph(characters) : undefined
     ),
     plotGraph: initialState.plotGraph,
+    timeline: initialState.timeline || createEmptyTimelineState(),
     narrativeArc: initialState.narrativeArc || (
       outline ? generateNarrativeArc(outline.volumes || [], totalChapters) : undefined
     ),
@@ -644,6 +703,7 @@ export async function generateChapterBatch(
       characters,
       characterStates: currentState.characterStates,
       plotGraph: currentState.plotGraph,
+      timeline: currentState.timeline,
       narrativeArc: currentState.narrativeArc,
       previousPacing,
       enableContextOptimization,
@@ -659,6 +719,9 @@ export async function generateChapterBatch(
     }
     if (result.updatedPlotGraph) {
       currentState.plotGraph = result.updatedPlotGraph;
+    }
+    if (result.updatedTimeline) {
+      currentState.timeline = result.updatedTimeline;
     }
     previousPacing = result.narrativeGuide?.pacingTarget;
 
@@ -691,6 +754,7 @@ export async function generateChapterBatch(
       openLoops: currentState.openLoops,
       characterStates: currentState.characterStates,
       plotGraph: currentState.plotGraph,
+      timeline: currentState.timeline,
     },
   };
 }

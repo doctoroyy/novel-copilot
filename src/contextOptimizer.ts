@@ -13,6 +13,8 @@
 import type { CharacterStateRegistry, CharacterStateSnapshot } from './types/characterState.js';
 import type { PlotGraph, PlotNode, PendingForeshadowing } from './types/plotGraph.js';
 import type { NarrativeGuide, PacingType } from './types/narrative.js';
+import type { TimelineState } from './types/timeline.js';
+import type { CharacterRelationGraph } from './types/characters.js';
 import {
   globalSemanticCache,
   detectContextChanges,
@@ -20,6 +22,10 @@ import {
   computeStateVersion,
   type CacheEntry,
 } from './context/semanticCache.js';
+import {
+  buildTimelineContext,
+  getCharacterNameMap,
+} from './context/timelineManager.js';
 
 /**
  * 上下文预算配置
@@ -32,6 +38,7 @@ export type ContextBudget = {
     bible: number;           // Story Bible 占比
     characterState: number;  // 人物状态占比
     plotContext: number;     // 剧情图谱占比
+    timeline: number;        // 时间线占比 (防止事件重复)
     rollingSummary: number;  // 滚动摘要占比
     lastChapters: number;    // 近章原文占比
     narrativeGuide: number;  // 叙事指导占比
@@ -39,17 +46,21 @@ export type ContextBudget = {
 };
 
 /**
- * 默认上下文预算 (基于 ~8k 有效 context)
+ * 默认上下文预算 (基于现代大模型的大上下文窗口)
+ *
+ * 注意：现代模型（如 Claude 3.5/4, GPT-4o）支持 128k+ 上下文
+ * 这里预算设置较为保守，可根据实际模型能力调整
  */
 export const DEFAULT_BUDGET: ContextBudget = {
-  totalTokens: 6000, // 给输出留 2k
+  totalTokens: 16000, // 总上下文预算，给输出留足空间
   allocation: {
-    bible: 0.20,           // 1200 tokens
-    characterState: 0.15,  // 900 tokens
-    plotContext: 0.10,     // 600 tokens
-    rollingSummary: 0.15,  // 900 tokens
-    lastChapters: 0.30,    // 1800 tokens
-    narrativeGuide: 0.10,  // 600 tokens
+    bible: 0.18,           // ~2880 tokens - 核心设定
+    characterState: 0.12,  // ~1920 tokens - 人物状态
+    plotContext: 0.10,     // ~1600 tokens - 剧情图谱
+    timeline: 0.10,        // ~1600 tokens - 时间线（防重复）
+    rollingSummary: 0.15,  // ~2400 tokens - 剧情摘要
+    lastChapters: 0.25,    // ~4000 tokens - 近章原文
+    narrativeGuide: 0.10,  // ~1600 tokens - 叙事指导
   },
 };
 
@@ -390,6 +401,8 @@ export function buildOptimizedContext(params: {
   bible: string;
   characterStates?: CharacterStateRegistry;
   plotGraph?: PlotGraph;
+  timeline?: TimelineState;
+  characters?: CharacterRelationGraph;
   rollingSummary: string;
   lastChapters: string[];
   narrativeGuide?: NarrativeGuide;
@@ -402,6 +415,8 @@ export function buildOptimizedContext(params: {
     bible,
     characterStates,
     plotGraph,
+    timeline,
+    characters,
     rollingSummary,
     lastChapters,
     narrativeGuide,
@@ -452,6 +467,15 @@ export function buildOptimizedContext(params: {
     );
     if (plotContext) {
       parts.push(plotContext);
+    }
+  }
+
+  // 时间线上下文 (防止事件重复)
+  if (timeline && timeline.events.length > 0) {
+    const characterNameMap = getCharacterNameMap(characters, characterStates);
+    const timelineContext = buildTimelineContext(timeline, chapterIndex, characterNameMap);
+    if (timelineContext) {
+      parts.push(timelineContext);
     }
   }
 
