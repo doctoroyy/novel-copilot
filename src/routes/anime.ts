@@ -1108,7 +1108,7 @@ ${script}
 }
 
 
-// Edge TTS synthesis (for future video generation)
+// ... (Previous existing code for synthesizeSpeech)
 export async function synthesizeSpeech(text: string, voice: string = 'zh-CN-YunxiNeural'): Promise<ArrayBuffer> {
   const response = await fetch('https://tts-api.doctoroyy.net/tts', {
     method: 'POST',
@@ -1124,3 +1124,257 @@ export async function synthesizeSpeech(text: string, voice: string = 'zh-CN-Yunx
 
   return response.arrayBuffer();
 }
+
+// ==================== New/Updated AI Functions ====================
+
+// 1. Generate Text Script (Chinese)
+async function generateTextScript(novelChunk: string, episodeNum: number, aiConfig: AIConfig): Promise<string> {
+    const system = `你是一位专业的动漫编剧。`;
+    const prompt = `请将以下小说片段改编为第${episodeNum}集的动漫剧本。
+    
+要求：
+1. **全中文输出**。
+2. 包含 场景描写 (Scene)、动作指导 (Action)、对白 (Dialogue) 和 旁白 (Narration)。
+3. 格式清晰，易于阅读。
+4. 不需要 JSON，直接输出文本剧本。
+
+小说片段：
+${novelChunk.slice(0, 4000)}
+
+请输出剧本：`;
+
+    return await generateText(aiConfig, {
+        system,
+        prompt,
+        temperature: 0.7
+    });
+}
+
+// 2. Generate Storyboard JSON (Chinese, from Script)
+async function generateStoryboardFromScript(script: string, aiConfig: AIConfig): Promise<StoryboardShot[]> {
+    const SYSTEM_INSTRUCTION = `
+你是一位顶级动漫分镜师。你的任务是将文字剧本转化为包含【详细视觉指令】的分镜脚本。
+
+要求：
+1. **全中文输出**。包括画面描述和动作指令，必须是中文。
+2. **风格**：极致写实国漫风格，电影质感光影。
+3. **输出 JSON 数组**。
+4. 字段说明：
+   - shot_id: 镜头编号 (数字)
+   - visual_description: 画面详细描述 (中文)，包含环境、光影、人物外观。
+   - action_motion: 镜头的动作/运镜指令 (中文)，例如"推镜头"、"慢动作"、"发丝飘动"。
+   - narration_text: 对应的对白或旁白 (中文)。
+   - duration: 预估时长 (秒，数字)。
+
+格式示例：
+[
+  {
+    "shot_id": 1,
+    "visual_description": "特写镜头。主角的眼睛猛地睁开，瞳孔收缩。冷汗顺着额头流下。",
+    "action_motion": "瞳孔颤抖，摄影机轻微晃动模拟头痛感。",
+    "narration_text": "头好痛...",
+    "duration": 3
+  }
+]
+`;
+
+    const prompt = `请将以下剧本转换为分镜脚本（JSON格式）：
+
+${script.slice(0, 6000)}
+
+请只输出 JSON，不要包含 Markdown 标记。`;
+
+    const raw = await generateText(aiConfig, {
+        system: SYSTEM_INSTRUCTION,
+        prompt,
+        temperature: 0.7
+    });
+
+    try {
+        const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
+        const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error('No JSON array found');
+        return JSON.parse(jsonMatch[0]);
+    } catch (e) {
+        console.error('Failed to parse storyboard JSON', e);
+        throw new Error('Storyboard generation failed to produce valid JSON');
+    }
+}
+
+// ==================== Granular Generation Routes ====================
+
+// 1. Generate Script Only
+animeRoutes.post('/projects/:projectId/episodes/:num/generate/script', async (c) => {
+    const { projectId, num } = c.req.param();
+    const aiConfig = getAIConfigFromHeaders(c.req);
+    if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
+
+    try {
+        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        if (!episode) return c.json({ success: false, error: 'Episode not found' }, 404);
+
+        if (!episode.novel_chunk) return c.json({ error: 'No novel chunk' }, 400);
+
+        // Update status
+        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
+
+        const script = await generateTextScript(episode.novel_chunk, parseInt(num), aiConfig);
+
+        await c.env.DB.prepare(`
+            UPDATE anime_episodes SET script = ?, status = 'script', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).bind(script, episode.id).run();
+
+        return c.json({ success: true, script });
+    } catch (e) {
+        return c.json({ success: false, error: (e as Error).message }, 500);
+    }
+});
+
+// 2. Generate Storyboard Only
+animeRoutes.post('/projects/:projectId/episodes/:num/generate/storyboard', async (c) => {
+    const { projectId, num } = c.req.param();
+    const aiConfig = getAIConfigFromHeaders(c.req);
+    if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
+
+    try {
+        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        if (!episode || !episode.script) return c.json({ success: false, error: 'Script not exist' }, 404);
+
+        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
+
+        const storyboard = await generateStoryboardFromScript(episode.script, aiConfig);
+
+        await c.env.DB.prepare(`
+            UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).bind(JSON.stringify(storyboard), episode.id).run();
+
+        return c.json({ success: true, storyboard });
+    } catch (e) {
+        return c.json({ success: false, error: (e as Error).message }, 500);
+    }
+});
+
+// 3. Generate Video Only (Loop over shots)
+animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) => {
+    const { projectId, num } = c.req.param();
+    const aiConfig = getAIConfigFromHeaders(c.req);
+    if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
+
+    // This runs in background (conceptually). For Cloudflare Workers, we might time out if too long.
+    // Ideally use Queues. For now, we run as much as we can or use `ctx.waitUntil` if possible, 
+    // but here we just await and hope standard timeout is enough for a few shots, or frontend re-triggers.
+    // Actually, simple loop with status checks.
+
+    try {
+        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        if (!episode || !episode.storyboard_json) return c.json({ success: false, error: 'Storyboard not exist' }, 404);
+
+        // Reset error if restarting
+        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing', error_message = NULL WHERE id = ?`).bind(episode.id).run();
+
+        const { getVoiceProvider } = await import('../services/voiceService.js');
+        const voiceProvider = getVoiceProvider(aiConfig.apiKey);
+        const { generateVideoWithVeo } = await import('../services/veoClient.js');
+
+        // Prepare context
+        const characters = await c.env.DB.prepare(`SELECT name, image_url, voice_id FROM anime_characters WHERE project_id = ?`).bind(projectId).all();
+        const charImageUrls = (characters.results || []).map((c: any) => c.image_url).filter((u: string) => !!u);
+        const charVoices = (characters.results || []).reduce((acc: any, c: any) => { if(c.voice_id) acc[c.name] = c.voice_id; return acc; }, {});
+
+        let storyboard = JSON.parse(episode.storyboard_json);
+        let hasError = false;
+
+        // Loop
+        for (let i = 0; i < storyboard.length; i++) {
+            // CHECK CANCELLATION
+            const currentEp = await c.env.DB.prepare(`SELECT status FROM anime_episodes WHERE id = ?`).bind(episode.id).first();
+            if (!currentEp || currentEp.status === 'stopped' || currentEp.status === 'pending') {
+                return c.json({ success: false, message: 'Generation cancelled' });
+            }
+
+            const shot = storyboard[i];
+            if (shot.video_key && shot.audio_key) continue; // Skip done
+
+            let updated = false;
+
+            // TTS
+            if (!shot.audio_key && (shot.narration_text || shot.dialogue)) {
+                try {
+                    const text = shot.narration_text || shot.dialogue;
+                    // Voice logic
+                    let voiceId = 'Puck';
+                    // ... (simple matching logic same as before, omitted for brevity, defaulting)
+                    const colonIndex = text.indexOf('：');
+                    if (colonIndex > -1 && colonIndex < 10) {
+                         const name = text.substring(0, colonIndex);
+                         const bestMatch = Object.keys(charVoices).find(cn => name.includes(cn) || cn.includes(name));
+                         if (bestMatch) voiceId = charVoices[bestMatch];
+                    }
+
+                    const audio = await voiceProvider.generateSpeech(text, voiceId);
+                    const key = `projects/${projectId}/episodes/${num}/shot_${shot.shot_id}_audio.mp3`;
+                    await c.env.ANIME_VIDEOS.put(key, audio, { httpMetadata: { contentType: 'audio/mpeg' } });
+                    shot.audio_key = key;
+                    updated = true;
+                } catch (err) {
+                    shot.error = 'TTS Error: ' + (err as Error).message;
+                    hasError = true;
+                }
+            }
+
+            // Video
+            if (!shot.video_key && !shot.error) {
+                try {
+                    const prompt = `Cinematic Chinese Manhua Animation. ${shot.visual_description}. ${shot.action_motion}. No text.`;
+                    const videoUrl = await generateVideoWithVeo(prompt, charImageUrls, aiConfig);
+                    const res = await fetch(videoUrl);
+                    const buf = await res.arrayBuffer();
+                    const key = `projects/${projectId}/episodes/${num}/shot_${shot.shot_id}_video.mp4`;
+                    await c.env.ANIME_VIDEOS.put(key, buf, { httpMetadata: { contentType: 'video/mp4' } });
+                    shot.video_key = key;
+                    updated = true;
+                } catch (err) {
+                    shot.error = 'Video Error: ' + (err as Error).message;
+                    hasError = true;
+                }
+            }
+
+            if (updated || hasError) {
+                storyboard[i] = shot;
+                await c.env.DB.prepare(`UPDATE anime_episodes SET storyboard_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+                    .bind(JSON.stringify(storyboard), episode.id).run();
+            }
+        }
+
+        const finalStatus = hasError ? 'error' : 'done';
+        await c.env.DB.prepare(`UPDATE anime_episodes SET status = ? WHERE id = ?`).bind(finalStatus, episode.id).run();
+
+        return c.json({ success: true, storyboard });
+
+    } catch (e) {
+        return c.json({ success: false, error: (e as Error).message }, 500);
+    }
+});
+
+// 4. Cancel/Stop
+animeRoutes.post('/projects/:projectId/episodes/:num/cancel', async (c) => {
+    const { projectId, num } = c.req.param();
+    await c.env.DB.prepare(`
+        UPDATE anime_episodes SET status = 'stopped' 
+        WHERE project_id = ? AND episode_num = ? AND status = 'processing'
+    `).bind(projectId, num).run();
+    return c.json({ success: true });
+});
+
+// 5. Delete Content
+animeRoutes.delete('/projects/:projectId/episodes/:num/content', async (c) => {
+    const { projectId, num } = c.req.param();
+    // Reset to pending, clear script/storyboard/keys
+    await c.env.DB.prepare(`
+        UPDATE anime_episodes 
+        SET status = 'pending', script = NULL, storyboard_json = NULL, video_r2_key = NULL, audio_r2_key = NULL, error_message = NULL
+        WHERE project_id = ? AND episode_num = ?
+    `).bind(projectId, num).run();
+    // Note: R2 files are not deleted here to save ops/latency, but could be.
+    return c.json({ success: true });
+});
