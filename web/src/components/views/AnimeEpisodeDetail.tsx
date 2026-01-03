@@ -83,6 +83,19 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
       }
   };
 
+  // Loading state
+  if (!episode) {
+    return (
+      <div className="h-full flex flex-col bg-background items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mb-4" />
+        <p className="text-muted-foreground">加载中...</p>
+        <Button variant="ghost" className="mt-4" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" /> 返回
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Header */}
