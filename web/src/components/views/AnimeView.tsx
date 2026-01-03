@@ -66,6 +66,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   const [characters, setCharacters] = useState<any[]>([]);
   const [voices, setVoices] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('episodes');
+  
+  // Character image preview
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  // Track which character is generating image
+  const [generatingCharId, setGeneratingCharId] = useState<string | null>(null);
 
   // Load voices on mount
   useEffect(() => {
@@ -551,11 +556,30 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                  </div>
              ) : (
                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                     {characters.map(char => (
+                     {characters.map(char => {
+                         const isGenerating = generatingCharId === char.id;
+                         
+                         return (
                          <Card key={char.id} className="overflow-hidden group flex flex-col">
-                             <div className="aspect-[3/4] bg-muted relative shrink-0">
+                             <div 
+                                 className="aspect-[3/4] bg-muted relative shrink-0 cursor-pointer"
+                                 onClick={() => {
+                                     if (char.image_url) {
+                                         setPreviewImage({ url: char.image_url, name: char.name });
+                                     }
+                                 }}
+                             >
                                  {char.image_url ? (
-                                     <img src={char.image_url} alt={char.name} className="w-full h-full object-cover transition-transform group-hover:scale-105"/>
+                                     <img 
+                                         src={char.image_url} 
+                                         alt={char.name} 
+                                         className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                     />
+                                 ) : isGenerating ? (
+                                     <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800 text-primary">
+                                         <Loader2 className="w-8 h-8 animate-spin mb-2"/>
+                                         <span className="text-xs">生成中...</span>
+                                     </div>
                                  ) : (
                                      <div className="w-full h-full flex items-center justify-center bg-zinc-800 text-zinc-600">
                                          <span className="text-4xl">?</span>
@@ -563,26 +587,45 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                  )}
                                  
                                  {/* Overlay Action */}
-                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                      {char.status === 'generated' ? (
-                                          <Button size="sm" variant="secondary" onClick={async () => {
-                                              // Regenerate
-                                              await fetch(`/api/anime/projects/${animeProject.id}/characters/${char.id}/image`, {
-                                                  method: 'POST',
-                                                  headers: getAIConfigHeaders(aiConfig)
-                                              });
-                                              fetchAnimeProject();
-                                          }}>重新生成 (Nano Banana)</Button>
-                                      ) : (
-                                           <Button size="sm" onClick={async () => {
-                                              // Generate Image
-                                              await fetch(`/api/anime/projects/${animeProject.id}/characters/${char.id}/image`, {
-                                                  method: 'POST',
-                                                  headers: getAIConfigHeaders(aiConfig)
-                                              });
-                                              fetchAnimeProject();
-                                          }}>生成立绘 (Nano Banana)</Button>
+                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 flex-col">
+                                      {char.image_url && (
+                                          <Button 
+                                              size="sm" 
+                                              variant="secondary"
+                                              onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setPreviewImage({ url: char.image_url, name: char.name });
+                                              }}
+                                          >
+                                              👁️ 预览大图
+                                          </Button>
                                       )}
+                                      <Button 
+                                          size="sm" 
+                                          variant={char.status === 'generated' ? 'outline' : 'default'}
+                                          disabled={isGenerating}
+                                          onClick={async (e) => {
+                                              e.stopPropagation();
+                                              setGeneratingCharId(char.id);
+                                              try {
+                                                  await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}/image`, {
+                                                      method: 'POST',
+                                                      headers: getAIConfigHeaders(aiConfig)
+                                                  });
+                                                  await fetchAnimeProject();
+                                              } finally {
+                                                  setGeneratingCharId(null);
+                                              }
+                                          }}
+                                      >
+                                          {isGenerating ? (
+                                              <><Loader2 className="w-3 h-3 mr-1 animate-spin"/> 生成中...</>
+                                          ) : char.status === 'generated' ? (
+                                              '🔄 重新生成'
+                                          ) : (
+                                              '✨ 生成立绘'
+                                          )}
+                                      </Button>
                                  </div>
                              </div>
                              <CardContent className="p-3 flex-1 flex flex-col gap-2">
@@ -597,10 +640,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                         value={char.voice_id || ''}
                                         onChange={async (e) => {
                                             const voiceId = e.target.value;
-                                            // Optimistic update
                                             setCharacters(prev => prev.map(c => c.id === char.id ? { ...c, voice_id: voiceId } : c));
                                             
-                                            await fetch(`/api/anime/projects/${animeProject.id}/characters/${char.id}`, {
+                                            await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}`, {
                                                 method: 'PATCH',
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({ voiceId })
@@ -615,9 +657,32 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                  </div>
                              </CardContent>
                          </Card>
-                     ))}
+                         );
+                     })}
                  </div>
              )}
+             
+             {/* Image Preview Dialog */}
+             <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
+                 <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/95 border-zinc-800 overflow-hidden">
+                     <DialogHeader className="sr-only">
+                         <DialogTitle>{previewImage?.name}</DialogTitle>
+                         <DialogDescription>角色立绘预览</DialogDescription>
+                     </DialogHeader>
+                     <div className="relative w-full h-full flex items-center justify-center p-4">
+                         {previewImage && (
+                             <img 
+                                 src={previewImage.url} 
+                                 alt={previewImage.name}
+                                 className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+                             />
+                         )}
+                         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 rounded-full text-white text-sm backdrop-blur">
+                             {previewImage?.name}
+                         </div>
+                     </div>
+                 </DialogContent>
+             </Dialog>
         </TabsContent>
 
         {/* ================= EPISODES TAB ================= */}
