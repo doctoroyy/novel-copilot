@@ -139,7 +139,7 @@ function App() {
   }, []);
 
   // SSE for real-time logs - now provided via Context
-  const { connected, logs, lastProgress: generationProgress, clearLogs } = useServerEventsContext();
+  const { connected, logs, lastProgress: generationProgress, clearLogs, enabled: eventsEnabled, toggleEnabled: toggleEvents } = useServerEventsContext();
 
   // Handle project refresh on 'done' progress
   useEffect(() => {
