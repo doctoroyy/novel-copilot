@@ -1,6 +1,12 @@
 import { Button } from '@/components/ui/button';
-import { PanelRightClose } from 'lucide-react';
+import { PanelRightClose, Power } from 'lucide-react';
 import type { ProgressEvent } from '@/hooks/useServerEvents';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ActivityPanelProps {
   logs: string[];
@@ -8,11 +14,21 @@ interface ActivityPanelProps {
   onToggle: () => void;
   progress?: ProgressEvent | null;
   connected?: boolean;
+  enabled?: boolean;
+  onToggleEnabled?: (val?: boolean) => void;
 }
 
-export function ActivityPanel({ logs, onClear, onToggle, progress, connected = true }: ActivityPanelProps) {
+export function ActivityPanel({ 
+  logs, 
+  onClear, 
+  onToggle, 
+  progress, 
+  connected = true,
+  enabled = true,
+  onToggleEnabled 
+}: ActivityPanelProps) {
   const getStatusColor = (status: ProgressEvent['status']) => {
-
+    // ... (rest of getStatusColor implementation)
     switch (status) {
       case 'analyzing':
       case 'planning':
@@ -36,6 +52,7 @@ export function ActivityPanel({ logs, onClear, onToggle, progress, connected = t
   };
 
   const getStatusEmoji = (status: ProgressEvent['status']) => {
+     // ... (rest of getStatusEmoji implementation)
     switch (status) {
       case 'starting':
         return '🚀';
@@ -73,8 +90,24 @@ export function ActivityPanel({ logs, onClear, onToggle, progress, connected = t
             <Button variant="ghost" size="icon" className="h-6 w-6 -ml-2 text-muted-foreground" onClick={onToggle}>
                 <PanelRightClose className="h-4 w-4" />
             </Button>
-          <div className={`w-2 h-2 rounded-full transition-colors duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-
+            
+            <TooltipProvider>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                         <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className={`h-6 w-6 transition-colors ${enabled ? (connected ? 'text-green-500' : 'text-yellow-500 animate-pulse') : 'text-zinc-600'}`}
+                            onClick={() => onToggleEnabled?.(!enabled)}
+                         >
+                            <Power className="h-4 w-4" />
+                         </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>{enabled ? (connected ? '实时连接正常' : '正在连接...') : '实时连接已关闭 (点击开启)'}</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
 
           <span className="font-medium text-xs lg:text-sm">活动日志</span>
         </div>
@@ -82,6 +115,8 @@ export function ActivityPanel({ logs, onClear, onToggle, progress, connected = t
           清空
         </Button>
       </div>
+      
+      {/* ... rest of the component */}
 
       {/* Progress Card */}
       {progress && progress.status !== 'done' && (

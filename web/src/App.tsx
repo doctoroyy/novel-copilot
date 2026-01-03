@@ -531,6 +531,8 @@ function App() {
             progress={generationProgress}
             connected={connected}
             onToggle={toggleActivityPanel}
+            enabled={eventsEnabled}
+            onToggleEnabled={toggleEvents}
           />
         </div>
       </div>
