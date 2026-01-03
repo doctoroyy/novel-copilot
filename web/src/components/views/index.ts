@@ -4,3 +4,4 @@ export { GenerateView } from './GenerateView';
 export { OutlineView } from './OutlineView';
 export { BibleView } from './BibleView';
 export { CharacterGraphView } from './CharacterGraphView';
+export { AnimeView } from './AnimeView';

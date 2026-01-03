@@ -5,9 +5,11 @@ import { configRoutes } from './routes/config.js';
 import { generationRoutes } from './routes/generation.js';
 import { charactersRoutes } from './routes/characters.js';
 import { contextRoutes } from './routes/context.js';
+import { animeRoutes } from './routes/anime.js';
 
 export interface Env {
   DB: D1Database;
+  ANIME_VIDEOS: R2Bucket;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -21,6 +23,7 @@ app.route('/api/config', configRoutes);
 app.route('/api', generationRoutes);
 app.route('/api/characters', charactersRoutes);
 app.route('/api/context', contextRoutes);
+app.route('/api/anime', animeRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects

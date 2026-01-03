@@ -40,7 +40,8 @@ import {
   GenerateView, 
   OutlineView, 
   BibleView,
-  CharacterGraphView
+  CharacterGraphView,
+  AnimeView
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
@@ -402,6 +403,8 @@ function App() {
         return <BibleView project={selectedProject} />;
       case 'characters':
         return <CharacterGraphView project={selectedProject} />;
+      case 'anime':
+        return <AnimeView project={selectedProject} />;
       default:
         return null;
     }
