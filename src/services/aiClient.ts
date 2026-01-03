@@ -12,24 +12,30 @@ export interface AIConfig {
 /**
  * Generate text using the configured AI provider
  */
+// ... (imports)
+
+/**
+ * Generate text using the configured AI provider
+ */
 export async function generateText(
   config: AIConfig,
   args: {
     system: string;
     prompt: string;
     temperature?: number;
+    maxTokens?: number;
   }
 ): Promise<string> {
-  const { system, prompt, temperature = 0.8 } = args;
+  const { system, prompt, temperature = 0.8, maxTokens } = args;
 
   if (!config.apiKey) {
     throw new Error('API Key not configured. Please set up in Settings.');
   }
 
   if (config.provider === 'gemini') {
-    return generateWithGemini(config, system, prompt, temperature);
+    return generateWithGemini(config, system, prompt, temperature, maxTokens);
   } else {
-    return generateWithOpenAI(config, system, prompt, temperature);
+    return generateWithOpenAI(config, system, prompt, temperature, maxTokens);
   }
 }
 
@@ -40,7 +46,8 @@ async function generateWithGemini(
   config: AIConfig,
   system: string,
   prompt: string,
-  temperature: number
+  temperature: number,
+  maxTokens?: number
 ): Promise<string> {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
@@ -50,7 +57,10 @@ async function generateWithGemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature },
+        generationConfig: { 
+            temperature,
+            maxOutputTokens: maxTokens 
+        },
       }),
     }
   );
@@ -77,7 +87,8 @@ async function generateWithOpenAI(
   config: AIConfig,
   system: string,
   prompt: string,
-  temperature: number
+  temperature: number,
+  maxTokens?: number
 ): Promise<string> {
   const baseUrl = config.baseUrl || 
     (config.provider === 'openai' ? 'https://api.openai.com/v1' : 
@@ -97,6 +108,7 @@ async function generateWithOpenAI(
         { role: 'user', content: prompt },
       ],
       temperature,
+      max_tokens: maxTokens,
     }),
   });
 

@@ -35,3 +35,31 @@ CREATE TABLE IF NOT EXISTS anime_episodes (
 CREATE INDEX IF NOT EXISTS idx_anime_projects_status ON anime_projects(status);
 CREATE INDEX IF NOT EXISTS idx_anime_episodes_project ON anime_episodes(project_id);
 CREATE INDEX IF NOT EXISTS idx_anime_episodes_status ON anime_episodes(project_id, status);
+
+-- Phase 2: Series Script and Character Consistency
+
+-- Series Scripts table (Global script for the entire series/season)
+CREATE TABLE IF NOT EXISTS anime_series_scripts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES anime_projects(id) ON DELETE CASCADE,
+  content TEXT NOT NULL, -- Full global script
+  outline TEXT, -- JSON scene breakdown per episode or global structure
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_series_scripts_project_unique ON anime_series_scripts(project_id);
+
+-- Anime Characters table (Visual consistency references)
+CREATE TABLE IF NOT EXISTS anime_characters (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES anime_projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT, -- Visual prompt/description
+  image_url TEXT, -- Generated image URL (R2 or external)
+  voice_id TEXT, -- Voice ID for TTS
+  status TEXT DEFAULT 'pending', -- pending/generated/approved
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_anime_characters_project ON anime_characters(project_id);

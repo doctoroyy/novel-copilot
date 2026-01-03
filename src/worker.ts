@@ -27,9 +27,68 @@ app.route('/api/anime', animeRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects
-app.get('/api/events', (c) => {
-  // Return a simple SSE response that closes after sending a ping
-  return new Response(': connected\n\n', {
+// SSE endpoint
+app.get('/api/events', async (c) => {
+  const { eventBus } = await import('./eventBus.js');
+  
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      
+      const send = (data: any) => {
+        try {
+          // Check if controller is still valid (best effort)
+          // encode and enqueue
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch (err) {
+          // Controller might be closed or cross-request error
+          // e.g. "The controller is already closed" or "Invalid state" or "Promise resolved from different context"
+          // We can just stop listening if it's broken
+          console.warn('SSE send failed, unsubscribing:', (err as Error).message);
+          eventBus.off('event', send);
+        }
+      };
+
+      // Polling loop to check for events in the queue
+      // This ensures we write to the controller from the request's own context
+      const pollInterval = setInterval(() => {
+        try {
+          // Consume events from the bus
+          const events = eventBus.consume();
+          
+          if (events.length > 0) {
+             for (const event of events) {
+               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+             }
+          } else {
+             // Optional: keep alive ping every few ticks if no events
+             // But we can just use a separate ping or just rely on standard keepalive
+             // Let's explicitly ping every ~30 polls (30 * 500ms = 15s)
+             if (Math.random() < 0.05) { 
+               controller.enqueue(encoder.encode(': ping\n\n')); 
+             }
+          }
+        } catch (err) {
+          console.warn('SSE polling failed:', (err as Error).message);
+          clearInterval(pollInterval);
+        }
+      }, 500); // Check every 500ms
+
+      c.req.raw.signal.addEventListener('abort', () => {
+        clearInterval(pollInterval);
+        try {
+          // controller.close(); 
+        } catch {}
+      });
+
+
+    },
+    cancel() {
+      // Cleanup happen in abort listener usually, but here too for safety
+    }
+  });
+
+  return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -37,6 +96,7 @@ app.get('/api/events', (c) => {
     },
   });
 });
+
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents';
+// import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents'; // Removed
+import { ServerEventsProvider, useServerEventsContext } from '@/contexts/ServerEventsContext';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -41,22 +43,24 @@ import {
   OutlineView, 
   BibleView,
   CharacterGraphView,
-  AnimeView
+  AnimeView,
+  AnimeEpisodeDetail
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
 function App() {
   // URL routing
-  const { projectName, tab = 'dashboard' } = useParams<{ projectName?: string; tab?: string }>();
+  const { projectName, tab = 'dashboard', episodeId } = useParams<{ projectName?: string; tab?: string; episodeId?: string }>();
   const navigate = useNavigate();
 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [generationProgress, setGenerationProgress] = useState<ProgressEvent | null>(null);
+  // Logs and progress are managed by ServerEventsContext
+
 
   // AI Config from localStorage
   const { config: aiConfig, isConfigured } = useAIConfig();
@@ -73,8 +77,30 @@ function App() {
   const [generatingBible, setGeneratingBible] = useState(false);
 
   // Mobile state
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [showActivityPanel, setShowActivityPanel] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileActivityPanelOpen, setMobileActivityPanelOpen] = useState(false);
+  
+  // Desktop state (default open)
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(true);
+
+  // Toggle helpers
+  const toggleSidebar = useCallback(() => {
+    if (window.innerWidth >= 1024) {
+      setDesktopSidebarOpen(prev => !prev);
+    } else {
+      setMobileSidebarOpen(prev => !prev);
+    }
+  }, []);
+
+  const toggleActivityPanel = useCallback(() => {
+    if (window.innerWidth >= 1024) {
+      setDesktopActivityPanelOpen(prev => !prev);
+    } else {
+      setMobileActivityPanelOpen(prev => !prev);
+    }
+  }, []);
+
 
   // Outline form
   const [outlineChapters, setOutlineChapters] = useState('400');
@@ -84,8 +110,11 @@ function App() {
   // Generate form
   const [generateCount, setGenerateCount] = useState('1');
 
+  // Log helper (now pushes to context logs? No, context manages logs from server. 
+  // For local logs, we can't easily push to context without exposing setLogs.
+  // For now, let's just console log local actions or maybe ignore them since they are redundant with UI state.)
   const log = useCallback((msg: string) => {
-    setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    console.log(msg); // Fallback for local logs
   }, []);
 
   const loadProjects = useCallback(async () => {
@@ -109,30 +138,16 @@ function App() {
     }
   }, []);
 
-  // SSE for real-time logs
-  useServerEvents({
-    onLog: useCallback((event: { level: 'info' | 'success' | 'warning' | 'error'; timestamp: string; message: string }) => {
-      const prefixMap: Record<string, string> = {
-        info: '📋',
-        success: '✅',
-        warning: '⚠️',
-        error: '❌',
-      };
-      const prefix = prefixMap[event.level];
-      setLogs((prev) => [...prev, `[${event.timestamp}] ${prefix} ${event.message}`]);
-    }, []),
-    onProgress: useCallback((event: ProgressEvent) => {
-      setGenerationProgress(event);
-      // Clear progress after done
-      if (event.status === 'done' || event.status === 'error') {
-        setTimeout(() => setGenerationProgress(null), 3000);
-        // Refresh project data
-        if (selectedProject?.name === event.projectName) {
-          loadProject(event.projectName);
-        }
-      }
-    }, [selectedProject?.name, loadProject]),
-  });
+  // SSE for real-time logs - now provided via Context
+  const { connected, logs, lastProgress: generationProgress, clearLogs } = useServerEventsContext();
+
+  // Handle project refresh on 'done' progress
+  useEffect(() => {
+    if (generationProgress?.status === 'done' && selectedProject?.name === generationProgress.projectName) {
+      loadProject(generationProgress.projectName);
+    }
+  }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.name, loadProject]);
+
 
   useEffect(() => {
     loadProjects();
@@ -348,6 +363,17 @@ function App() {
 
   // Render current view based on active tab
   const renderContent = () => {
+    // If we have an episodeId, we are in the detail view
+    if (episodeId && selectedProject) {
+        return (
+            <AnimeEpisodeDetail 
+                project={selectedProject} 
+                episodeId={episodeId}
+                onBack={() => navigate(`/project/${encodeURIComponent(selectedProject.name)}/anime`)}
+            />
+        );
+    }
+
     if (!selectedProject) {
       return (
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -404,7 +430,12 @@ function App() {
       case 'characters':
         return <CharacterGraphView project={selectedProject} />;
       case 'anime':
-        return <AnimeView project={selectedProject} />;
+        return (
+            <AnimeView 
+                project={selectedProject} 
+                onEpisodeSelect={(epId) => navigate(`/project/${encodeURIComponent(selectedProject.name)}/anime/episode/${epId}`)}
+            />
+        );
       default:
         return null;
     }
@@ -413,34 +444,38 @@ function App() {
   return (
     <div className="h-screen flex bg-background text-foreground overflow-hidden">
       {/* Mobile Overlay */}
-      {(showSidebar || showActivityPanel) && (
+      {(mobileSidebarOpen || mobileActivityPanelOpen) && (
         <div 
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => {
-            setShowSidebar(false);
-            setShowActivityPanel(false);
+            setMobileSidebarOpen(false);
+            setMobileActivityPanelOpen(false);
           }}
         />
       )}
 
       {/* Left Sidebar */}
       <div className={`
-        fixed lg:relative inset-y-0 left-0 z-50 lg:z-auto
-        transform transition-transform duration-300 lg:transform-none
-        ${showSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        fixed inset-y-0 left-0 z-50 transition-all duration-300
+        ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        lg:translate-x-0 lg:static lg:z-auto
+        ${desktopSidebarOpen ? 'lg:w-[280px]' : 'lg:w-0'} 
+        lg:overflow-hidden
       `}>
-        <Sidebar
-          projects={projects}
-          selectedProject={selectedProject?.name || null}
-          onSelectProject={(name) => {
-            handleSelectProject(name);
-            setShowSidebar(false);
-          }}
-          onNewProject={() => {
-            setShowNewProjectDialog(true);
-            setShowSidebar(false);
-          }}
-        />
+        <div className="w-[280px] h-full">
+          <Sidebar
+            projects={projects}
+            selectedProject={selectedProject?.name || null}
+            onSelectProject={(name) => {
+              handleSelectProject(name);
+              setMobileSidebarOpen(false);
+            }}
+            onNewProject={() => {
+              setShowNewProjectDialog(true);
+              setMobileSidebarOpen(false);
+            }}
+          />
+        </div>
       </div>
 
       {/* Main Content */}
@@ -458,8 +493,8 @@ function App() {
           onDownload={handleDownloadBook}
           onDelete={handleDeleteProject}
           onSettings={() => setShowSettingsDialog(true)}
-          onToggleSidebar={() => setShowSidebar(!showSidebar)}
-          onToggleActivityPanel={() => setShowActivityPanel(!showActivityPanel)}
+          onToggleSidebar={toggleSidebar}
+          onToggleActivityPanel={toggleActivityPanel}
         />
 
         {/* Error banner */}
@@ -480,15 +515,20 @@ function App() {
 
       {/* Right Activity Panel */}
       <div className={`
-        fixed lg:relative inset-y-0 right-0 z-50 lg:z-auto
-        transform transition-transform duration-300 lg:transform-none
-        ${showActivityPanel ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
+        fixed inset-y-0 right-0 z-50 transition-all duration-300
+        ${mobileActivityPanelOpen ? 'translate-x-0' : 'translate-x-full'}
+        lg:translate-x-0 lg:static lg:z-auto
+        ${desktopActivityPanelOpen ? 'lg:w-[320px]' : 'lg:w-0'}
+        lg:overflow-hidden
       `}>
-        <ActivityPanel 
-          logs={logs} 
-          onClear={() => setLogs([])} 
-          progress={generationProgress}
-        />
+        <div className="w-[320px] h-full">
+          <ActivityPanel 
+            logs={logs} 
+            onClear={clearLogs} 
+            progress={generationProgress}
+            connected={connected}
+          />
+        </div>
       </div>
 
       {/* New Project Dialog */}
@@ -583,4 +623,13 @@ function App() {
   );
 }
 
-export default App;
+function AppWithProvider() {
+  return (
+    <ServerEventsProvider>
+      <App />
+    </ServerEventsProvider>
+  );
+}
+
+export default AppWithProvider;
+

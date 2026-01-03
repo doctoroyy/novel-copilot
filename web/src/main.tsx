@@ -14,6 +14,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/" element={<App />} />
           <Route path="/project/:projectName" element={<App />} />
           <Route path="/project/:projectName/:tab" element={<App />} />
+          <Route path="/project/:projectName/anime/episode/:episodeId" element={<App />} />
           <Route path="/anime" element={<AnimePage />} />
         </Routes>
       </BrowserRouter>

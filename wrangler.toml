@@ -1,7 +1,8 @@
 name = "novel-copilot"
 main = "src/worker.ts"
 compatibility_date = "2024-12-01"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "no_handle_cross_request_promise_resolution"]
+
 
 # D1 Database
 [[d1_databases]]

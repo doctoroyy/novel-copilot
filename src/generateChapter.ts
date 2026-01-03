@@ -44,7 +44,10 @@ export type WriteChapterParams = {
   characters?: CharacterRelationGraph;
   /** 人物状态注册表 (可选, Phase 1 新增) */
   characterStates?: CharacterStateRegistry;
+  /** 进度回调 */
+  onProgress?: (message: string, status?: 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary') => void;
 };
+
 
 /**
  * 章节生成结果
@@ -153,6 +156,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   const prompt = buildUserPrompt(params);
 
   // 第一次生成
+  params.onProgress?.('正在生成正文...', 'generating');
   let chapterText = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.85 });
   let wasRewritten = false;
   let rewriteCount = 0;
@@ -160,6 +164,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   // QC 检测：非最终章检测提前完结
   if (!isFinal) {
     for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
+      params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
       const qcResult = quickEndingHeuristic(chapterText);
 
       if (!qcResult.hit) {
@@ -168,6 +173,8 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
 
       console.log(`⚠️ 章节 ${chapterIndex} 检测到提前完结信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
       console.log(`   原因: ${qcResult.reasons.join('; ')}`);
+      
+      params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
 
       // 构建重写 prompt
       const rewriteInstruction = buildRewriteInstruction({
@@ -186,6 +193,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     const finalQc = quickEndingHeuristic(chapterText);
     if (finalQc.hit) {
       console.log(`❌ 章节 ${chapterIndex} 重写后仍检测到提前完结信号，需要人工介入`);
+      params.onProgress?.('QC 告警: 章节可能提前完结', 'reviewing');
     }
   }
 

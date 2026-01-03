@@ -71,7 +71,7 @@ export function Header({
           variant="ghost" 
           size="sm" 
           onClick={onToggleSidebar}
-          className="lg:hidden p-2"
+          className="p-2 mr-2"
         >
           ☰
         </Button>
@@ -124,7 +124,7 @@ export function Header({
             variant="ghost" 
             size="sm" 
             onClick={onToggleActivityPanel}
-            className="lg:hidden"
+            className=""
           >
             📊
           </Button>
