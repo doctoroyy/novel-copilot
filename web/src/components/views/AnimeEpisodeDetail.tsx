@@ -20,7 +20,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
   const { config: aiConfig, isConfigured } = useAIConfig();
   const [episode, setEpisode] = useState<any | null>(null);
   const [animeProject, setAnimeProject] = useState<any | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   
   // Action states
   const [processing, setProcessing] = useState(false);
