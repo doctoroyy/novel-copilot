@@ -10,6 +10,12 @@ import { Film, Loader2, ArrowLeft, RefreshCw, FileText, Layout, PauseCircle, Tra
 
 // ... (imports remain)
 
+interface AnimeEpisodeDetailProps {
+  project: any;
+  episodeId: string;
+  onBack: () => void;
+}
+
 export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeDetailProps) {
   const { config: aiConfig, isConfigured } = useAIConfig();
   const [episode, setEpisode] = useState<any | null>(null);

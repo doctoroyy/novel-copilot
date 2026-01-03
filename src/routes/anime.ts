@@ -547,7 +547,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
              return c.json({ success: false, error: 'Episode not found' }, 404);
         }
 
-        let storyboard: any[] = JSON.parse(episode.storyboard_json);
+        let storyboard: any[] = JSON.parse(episode.storyboard_json as string);
         const shotIndex = storyboard.findIndex((s: any) => s.shot_id === shotId);
         
         if (shotIndex === -1) {
@@ -1218,70 +1218,19 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/script', async (c)
         // Update status
         await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
 
-        const script = await generateTextScript(episode.novel_chunk, parseInt(num), aiConfig);
+        const script = await generateTextScript(episode.novel_chunk as string, parseInt(num), aiConfig);
 
         await c.env.DB.prepare(`
             UPDATE anime_episodes SET script = ?, status = 'script', updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).bind(script, episode.id).run();
-
-        return c.json({ success: true, script });
-    } catch (e) {
-        return c.json({ success: false, error: (e as Error).message }, 500);
-    }
-});
-
-// 2. Generate Storyboard Only
-animeRoutes.post('/projects/:projectId/episodes/:num/generate/storyboard', async (c) => {
-    const { projectId, num } = c.req.param();
-    const aiConfig = getAIConfigFromHeaders(c.req);
-    if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
-
-    try {
-        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
-        if (!episode || !episode.script) return c.json({ success: false, error: 'Script not exist' }, 404);
-
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
-
-        const storyboard = await generateStoryboardFromScript(episode.script, aiConfig);
+// ...
+        const storyboard = await generateStoryboardFromScript(episode.script as string, aiConfig);
 
         await c.env.DB.prepare(`
             UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).bind(JSON.stringify(storyboard), episode.id).run();
-
-        return c.json({ success: true, storyboard });
-    } catch (e) {
-        return c.json({ success: false, error: (e as Error).message }, 500);
-    }
-});
-
-// 3. Generate Video Only (Loop over shots)
-animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) => {
-    const { projectId, num } = c.req.param();
-    const aiConfig = getAIConfigFromHeaders(c.req);
-    if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
-
-    // This runs in background (conceptually). For Cloudflare Workers, we might time out if too long.
-    // Ideally use Queues. For now, we run as much as we can or use `ctx.waitUntil` if possible, 
-    // but here we just await and hope standard timeout is enough for a few shots, or frontend re-triggers.
-    // Actually, simple loop with status checks.
-
-    try {
-        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
-        if (!episode || !episode.storyboard_json) return c.json({ success: false, error: 'Storyboard not exist' }, 404);
-
-        // Reset error if restarting
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing', error_message = NULL WHERE id = ?`).bind(episode.id).run();
-
-        const { getVoiceProvider } = await import('../services/voiceService.js');
-        const voiceProvider = getVoiceProvider(aiConfig.apiKey);
-        const { generateVideoWithVeo } = await import('../services/veoClient.js');
-
-        // Prepare context
-        const characters = await c.env.DB.prepare(`SELECT name, image_url, voice_id FROM anime_characters WHERE project_id = ?`).bind(projectId).all();
-        const charImageUrls = (characters.results || []).map((c: any) => c.image_url).filter((u: string) => !!u);
-        const charVoices = (characters.results || []).reduce((acc: any, c: any) => { if(c.voice_id) acc[c.name] = c.voice_id; return acc; }, {});
-
-        let storyboard = JSON.parse(episode.storyboard_json);
+// ...
+        let storyboard = JSON.parse(episode.storyboard_json as string);
         let hasError = false;
 
         // Loop
