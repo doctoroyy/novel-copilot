@@ -272,7 +272,21 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
         chapterGoalHint,
         chapterTitle: outlineTitle,
         characters,
+        onProgress: (message, status) => {
+          // Import eventBus dynamically to avoid top-level side effects if possible, or just use it
+          import('../eventBus.js').then(({ eventBus }) => {
+            eventBus.progress({
+              projectName: name,
+              current: i,
+              total: chaptersToGenerate,
+              chapterIndex,
+              status: status || 'generating',
+              message,
+            });
+          });
+        },
       });
+
 
       const chapterText = result.chapterText;
 
@@ -460,7 +474,20 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
         enableContextOptimization,
         enableFullQC,
         enableAutoRepair,
+        onProgress: (message, status) => {
+          import('../eventBus.js').then(({ eventBus }) => {
+            eventBus.progress({
+              projectName: name,
+              current: i,
+              total: chaptersToGenerate,
+              chapterIndex,
+              status: status || 'generating',
+              message,
+            });
+          });
+        },
       });
+
 
       const chapterText = result.chapterText;
 

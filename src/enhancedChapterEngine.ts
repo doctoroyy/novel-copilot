@@ -108,7 +108,10 @@ export type EnhancedWriteChapterParams = {
   skipSummaryUpdate?: boolean;
   /** 跳过状态更新 */
   skipStateUpdate?: boolean;
+  /** 进度回调 */
+  onProgress?: (message: string, status?: 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary') => void;
 };
+
 
 /**
  * 增强版章节生成结果
@@ -173,6 +176,7 @@ export async function writeEnhancedChapter(
   const isFinal = chapterIndex === totalChapters;
 
   // 1. 生成叙事指导
+  params.onProgress?.('正在设计叙事节奏...', 'planning');
   let narrativeGuide: NarrativeGuide | undefined;
   if (narrativeArc) {
     narrativeGuide = generateNarrativeGuide(
@@ -194,6 +198,7 @@ export async function writeEnhancedChapter(
   let contextStats: { totalChars: number; estimatedTokens: number } | undefined;
 
   if (enableContextOptimization) {
+    params.onProgress?.('正在优化上下文...', 'analyzing');
     // 使用优化后的上下文
     const optimizedContext = buildOptimizedContext({
       bible,
@@ -226,6 +231,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   const system = buildEnhancedSystemPrompt(isFinal, chapterIndex, chapterTitle, narrativeGuide);
 
   // 4. 第一次生成
+  params.onProgress?.('正在生成正文...', 'generating');
   let chapterText = await generateTextWithRetry(aiConfig, {
     system,
     prompt: userPrompt,
@@ -238,11 +244,14 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   // 5. 快速 QC 检测（提前完结）
   if (!isFinal) {
     for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
+      params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
       const qcResult = quickEndingHeuristic(chapterText);
 
       if (!qcResult.hit) break;
 
       console.log(`⚠️ 章节 ${chapterIndex} 检测到提前完结信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
+      
+      params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
 
       const rewriteInstruction = buildRewriteInstruction({
         chapterIndex,
@@ -265,6 +274,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   // 6. 多维度 QC（可选）
   let qcResult: QCResult | undefined;
   if (enableFullQC) {
+    params.onProgress?.('正在进行深度 QC...', 'reviewing');
     qcResult = await runMultiDimensionalQC({
       aiConfig,
       chapterText,
@@ -278,6 +288,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 
     // 自动修复（可选）
     if (enableAutoRepair && !qcResult.passed) {
+      params.onProgress?.('正在自动修复问题...', 'repairing');
       const repairResult = await repairChapter(
         aiConfig,
         chapterText,
@@ -301,6 +312,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   let updatedOpenLoops = params.openLoops;
 
   if (!skipSummaryUpdate) {
+    params.onProgress?.('正在更新剧情记忆...', 'updating_summary');
     const summaryResult = await generateSummaryUpdate(
       aiConfig,
       bible,
@@ -315,6 +327,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   let updatedCharacterStates = characterStates;
   if (!skipStateUpdate && characterStates) {
     try {
+      params.onProgress?.('正在分析人物状态...', 'analyzing');
       const stateChanges = await analyzeChapterForStateChanges(
         aiConfig,
         chapterText,
@@ -363,6 +376,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   let eventDuplicationWarnings: string[] = [];
 
   if (!skipStateUpdate) {
+
     const characterNameMap = getCharacterNameMap(characters, characterStates);
 
     // 检查事件重复

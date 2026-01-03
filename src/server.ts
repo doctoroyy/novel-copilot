@@ -384,8 +384,20 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
         chapterIndex,
         totalChapters: state.totalChapters,
         chapterGoalHint,
+
         skipSummaryUpdate: !shouldUpdateSummary,
+        onProgress: (message, status) => {
+          eventBus.progress({
+            projectName,
+            current: i,
+            total: chaptersToGenerate,
+            chapterIndex,
+            status: status || 'generating',
+            message,
+          });
+        },
       });
+
       
       eventBus.progress({
         projectName,

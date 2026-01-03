@@ -5,13 +5,21 @@ interface ActivityPanelProps {
   logs: string[];
   onClear: () => void;
   progress?: ProgressEvent | null;
+  connected?: boolean;
 }
 
-export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
+export function ActivityPanel({ logs, onClear, progress, connected = true }: ActivityPanelProps) {
   const getStatusColor = (status: ProgressEvent['status']) => {
+
     switch (status) {
+      case 'analyzing':
+      case 'planning':
+        return 'text-indigo-400';
       case 'generating':
         return 'text-blue-400';
+      case 'reviewing':
+      case 'repairing':
+        return 'text-pink-400';
       case 'saving':
         return 'text-amber-400';
       case 'updating_summary':
@@ -29,8 +37,16 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
     switch (status) {
       case 'starting':
         return '🚀';
+      case 'analyzing':
+        return '🔍';
+      case 'planning':
+        return '🗺️';
       case 'generating':
         return '✍️';
+      case 'reviewing':
+        return '👀';
+      case 'repairing':
+        return '🔧';
       case 'saving':
         return '💾';
       case 'updating_summary':
@@ -44,6 +60,7 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
     }
   };
 
+
   const progressPercent = progress ? Math.round((progress.current / progress.total) * 100) : 0;
 
   return (
@@ -51,7 +68,9 @@ export function ActivityPanel({ logs, onClear, progress }: ActivityPanelProps) {
       {/* Header */}
       <div className="p-3 lg:p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <div className={`w-2 h-2 rounded-full transition-colors duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+
+
           <span className="font-medium text-xs lg:text-sm">活动日志</span>
         </div>
         <Button variant="ghost" size="sm" onClick={onClear} className="text-xs">

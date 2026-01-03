@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
+
 
 export interface LogEvent {
   type: 'log';
@@ -15,7 +16,8 @@ export interface ProgressEvent {
   total: number;
   chapterIndex: number;
   chapterTitle?: string;
-  status: 'starting' | 'generating' | 'saving' | 'updating_summary' | 'done' | 'error';
+  status: 'starting' | 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error';
+
   message?: string;
 }
 
@@ -31,6 +33,8 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  const [connected, setConnected] = useState(false);
+
   const connect = useCallback(() => {
     if (!enabled) return;
     
@@ -41,6 +45,11 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
 
     const eventSource = new EventSource('/api/events');
     eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      console.log('SSE connection established');
+      setConnected(true);
+    };
 
     eventSource.onmessage = (event) => {
       try {
@@ -57,14 +66,13 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
     };
 
     eventSource.onerror = () => {
+      console.log('SSE connection lost, reconnecting...');
+      setConnected(false);
       eventSource.close();
       // Reconnect after 3 seconds
       reconnectTimeoutRef.current = setTimeout(connect, 3000);
     };
 
-    eventSource.onopen = () => {
-      console.log('SSE connection established');
-    };
   }, [enabled, onLog, onProgress]);
 
   useEffect(() => {
@@ -79,4 +87,7 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
       }
     };
   }, [connect]);
+
+  return { connected };
 }
+
