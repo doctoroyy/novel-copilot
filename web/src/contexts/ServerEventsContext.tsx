@@ -10,9 +10,11 @@ interface LogMessage {
 
 interface ServerEventsContextType {
   connected: boolean;
+  enabled: boolean;
   logs: string[];
   lastProgress: ProgressEvent | null;
   clearLogs: () => void;
+  toggleEnabled: (val?: boolean) => void;
 }
 
 const ServerEventsContext = createContext<ServerEventsContextType | undefined>(undefined);
@@ -20,8 +22,11 @@ const ServerEventsContext = createContext<ServerEventsContextType | undefined>(u
 export function ServerEventsProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<string[]>([]);
   const [lastProgress, setLastProgress] = useState<ProgressEvent | null>(null);
+  // Default to enabled only in DEV mode
+  const [enabled, setEnabled] = useState(import.meta.env.DEV);
 
   const { connected } = useServerEvents({
+    enabled,
     onLog: useCallback((event: LogMessage) => {
       const prefixMap: Record<string, string> = {
         info: '📋',
@@ -45,9 +50,12 @@ export function ServerEventsProvider({ children }: { children: ReactNode }) {
   });
 
   const clearLogs = useCallback(() => setLogs([]), []);
+  const toggleEnabled = useCallback((val?: boolean) => {
+      setEnabled(prev => val !== undefined ? val : !prev);
+  }, []);
 
   return (
-    <ServerEventsContext.Provider value={{ connected, logs, lastProgress, clearLogs }}>
+    <ServerEventsContext.Provider value={{ connected, enabled, logs, lastProgress, clearLogs, toggleEnabled }}>
       {children}
     </ServerEventsContext.Provider>
   );
@@ -60,3 +68,4 @@ export function useServerEventsContext() {
   }
   return context;
 }
+
