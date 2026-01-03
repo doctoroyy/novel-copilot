@@ -1223,14 +1223,14 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/script', async (c)
         await c.env.DB.prepare(`
             UPDATE anime_episodes SET script = ?, status = 'script', updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).bind(script, episode.id).run();
-// ...
-        const storyboard = await generateStoryboardFromScript(episode.script as string, aiConfig);
+
+        // Generate storyboard from the script we just created
+        let storyboard = await generateStoryboardFromScript(script, aiConfig);
 
         await c.env.DB.prepare(`
             UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).bind(JSON.stringify(storyboard), episode.id).run();
-// ...
-        let storyboard = JSON.parse(episode.storyboard_json as string);
+
         let hasError = false;
 
         // Loop
