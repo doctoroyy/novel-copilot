@@ -474,6 +474,7 @@ function App() {
               setShowNewProjectDialog(true);
               setMobileSidebarOpen(false);
             }}
+            onToggle={toggleSidebar}
           />
         </div>
       </div>
@@ -495,6 +496,8 @@ function App() {
           onSettings={() => setShowSettingsDialog(true)}
           onToggleSidebar={toggleSidebar}
           onToggleActivityPanel={toggleActivityPanel}
+          sidebarOpen={desktopSidebarOpen || mobileSidebarOpen}
+          activityPanelOpen={desktopActivityPanelOpen || mobileActivityPanelOpen}
         />
 
         {/* Error banner */}
@@ -527,6 +530,7 @@ function App() {
             onClear={clearLogs} 
             progress={generationProgress}
             connected={connected}
+            onToggle={toggleActivityPanel}
           />
         </div>
       </div>
