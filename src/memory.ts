@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { TimelineState } from './types/timeline.js';
+import { createEmptyTimelineState } from './types/timeline.js';
 
 /**
  * 书籍状态
@@ -15,6 +17,8 @@ export type BookState = {
   rollingSummary: string;
   /** 未解伏笔/悬念 (最多 12 条) */
   openLoops: string[];
+  /** 时间线状态 (追踪已完成事件，防止重复) */
+  timeline?: TimelineState;
   /** 是否需要人工介入 */
   needHuman?: boolean;
   /** 人工介入原因 */
@@ -43,6 +47,7 @@ export async function ensureBook(
       nextChapterIndex: defaults?.nextChapterIndex ?? 1,
       rollingSummary: defaults?.rollingSummary ?? '',
       openLoops: defaults?.openLoops ?? [],
+      timeline: createEmptyTimelineState(),
     };
     await fs.writeFile(statePath, JSON.stringify(init, null, 2), 'utf-8');
   }

@@ -188,3 +188,39 @@ export {
   writeEnhancedChapter,
   generateChapterBatch,
 } from './enhancedChapterEngine.js';
+
+// ==================== Phase 6: 时间线追踪 ====================
+export type {
+  TimelineEventType,
+  TimelineEventStatus,
+  TimelineEvent,
+  TimelineState,
+  AIEventAnalysis,
+} from './types/timeline.js';
+
+export {
+  createEmptyTimelineState,
+  generateEventId,
+  addEventToTimeline,
+  updateEventStatus,
+  getCompletedEvents,
+  getActiveEvents,
+  getRecentlyCompletedEvents,
+  detectEventDuplication,
+  extractCharacterNamesFromGraph,
+  extractCharacterNamesFromRegistry,
+  findCharactersInText,
+  formatTimelineContext,
+  generateUniqueKey,
+  inferEventType,
+} from './types/timeline.js';
+
+export {
+  getCharacterNameMap,
+  analyzeChapterForEvents,
+  applyEventAnalysis,
+  buildTimelineContext,
+  checkEventDuplication,
+  initializeTimelineFromOutline,
+  getTimelineStats,
+} from './context/timelineManager.js';
