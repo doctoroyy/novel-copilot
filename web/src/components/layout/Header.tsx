@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
 import type { ProjectDetail } from '@/lib/api';
+import { PanelLeftOpen, PanelRightOpen } from 'lucide-react';
 
 interface HeaderProps {
   project: ProjectDetail | null;
@@ -13,6 +14,8 @@ interface HeaderProps {
   onSettings: () => void;
   onToggleSidebar: () => void;
   onToggleActivityPanel: () => void;
+  sidebarOpen?: boolean;
+  activityPanelOpen?: boolean;
 }
 
 const tabs = [
@@ -35,19 +38,23 @@ export function Header({
   onSettings,
   onToggleSidebar,
   onToggleActivityPanel,
+  sidebarOpen = true,
+  activityPanelOpen = true
 }: HeaderProps) {
   if (!project) {
     return (
       <header className="h-16 border-b border-border flex items-center justify-between px-4 lg:px-6">
         {/* Mobile menu button */}
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={onToggleSidebar}
-          className="lg:hidden"
-        >
-          ☰
-        </Button>
+        {!sidebarOpen && (
+            <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={onToggleSidebar}
+            className="lg:hidden"
+            >
+            <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+        )}
         <div className="text-muted-foreground text-sm lg:text-base">选择一个项目开始</div>
         <div className="flex items-center gap-1 lg:gap-2">
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
@@ -66,15 +73,17 @@ export function Header({
     <header className="border-b border-border">
       {/* Top Bar */}
       <div className="h-16 flex items-center justify-between px-4 lg:px-6 gap-2">
-        {/* Mobile menu button */}
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={onToggleSidebar}
-          className="p-2 mr-2"
-        >
-          ☰
-        </Button>
+        {/* Sidebar Toggle (Only show if closed) */}
+        {!sidebarOpen && (
+            <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={onToggleSidebar}
+            className="mr-2 text-muted-foreground"
+            >
+            <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+        )}
 
         <div className="flex items-center gap-2 lg:gap-4 flex-1 min-w-0">
           <div className="min-w-0 flex-1">
@@ -120,14 +129,19 @@ export function Header({
             <span className="hidden lg:inline">⚙️ 设置</span>
             <span className="lg:hidden">⚙️</span>
           </Button>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={onToggleActivityPanel}
-            className=""
-          >
-            📊
-          </Button>
+          
+          {/* Activity Panel Toggle (Only show if closed) */}
+          {!activityPanelOpen && (
+            <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={onToggleActivityPanel}
+                className="text-muted-foreground"
+            >
+                <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          )}
+          
           <ThemeToggle />
         </div>
       </div>

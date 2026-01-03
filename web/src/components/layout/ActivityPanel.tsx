@@ -1,14 +1,16 @@
 import { Button } from '@/components/ui/button';
+import { PanelRightClose } from 'lucide-react';
 import type { ProgressEvent } from '@/hooks/useServerEvents';
 
 interface ActivityPanelProps {
   logs: string[];
   onClear: () => void;
+  onToggle: () => void;
   progress?: ProgressEvent | null;
   connected?: boolean;
 }
 
-export function ActivityPanel({ logs, onClear, progress, connected = true }: ActivityPanelProps) {
+export function ActivityPanel({ logs, onClear, onToggle, progress, connected = true }: ActivityPanelProps) {
   const getStatusColor = (status: ProgressEvent['status']) => {
 
     switch (status) {
@@ -68,6 +70,9 @@ export function ActivityPanel({ logs, onClear, progress, connected = true }: Act
       {/* Header */}
       <div className="p-3 lg:p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" className="h-6 w-6 -ml-2 text-muted-foreground" onClick={onToggle}>
+                <PanelRightClose className="h-4 w-4" />
+            </Button>
           <div className={`w-2 h-2 rounded-full transition-colors duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
 
 

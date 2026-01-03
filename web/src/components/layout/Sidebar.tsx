@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { PanelLeftClose } from 'lucide-react';
 import type { ProjectSummary } from '@/lib/api';
 
 interface SidebarProps {
@@ -8,13 +9,14 @@ interface SidebarProps {
   selectedProject: string | null;
   onSelectProject: (name: string) => void;
   onNewProject: () => void;
+  onToggle: () => void;
 }
 
-export function Sidebar({ projects, selectedProject, onSelectProject, onNewProject }: SidebarProps) {
+export function Sidebar({ projects, selectedProject, onSelectProject, onNewProject, onToggle }: SidebarProps) {
   return (
     <aside className="w-72 h-screen flex flex-col border-r border-border bg-sidebar">
       {/* Logo */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center text-xl shrink-0">
             📚
@@ -24,6 +26,9 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
             <p className="text-xs text-muted-foreground truncate">AI 小说创作助手</p>
           </div>
         </div>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={onToggle}>
+            <PanelLeftClose className="h-4 w-4" />
+        </Button>
       </div>
 
       {/* New Project Button */}
