@@ -49,6 +49,9 @@ import {
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
+// Constants
+const MOBILE_BREAKPOINT = 1024;
+
 function App() {
   // URL routing
   const { projectName, tab = 'dashboard', episodeId } = useParams<{ projectName?: string; tab?: string; episodeId?: string }>();
@@ -84,9 +87,12 @@ function App() {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(true);
 
+  // Track if we're on mobile
+  const [isMobile, setIsMobile] = useState(false);
+
   // Toggle helpers
   const toggleSidebar = useCallback(() => {
-    if (window.innerWidth >= 1024) {
+    if (window.innerWidth >= MOBILE_BREAKPOINT) {
       setDesktopSidebarOpen(prev => !prev);
     } else {
       setMobileSidebarOpen(prev => !prev);
@@ -94,11 +100,35 @@ function App() {
   }, []);
 
   const toggleActivityPanel = useCallback(() => {
-    if (window.innerWidth >= 1024) {
+    if (window.innerWidth >= MOBILE_BREAKPOINT) {
       setDesktopActivityPanelOpen(prev => !prev);
     } else {
       setMobileActivityPanelOpen(prev => !prev);
     }
+  }, []);
+
+  // Initialize and update isMobile on window resize
+  useEffect(() => {
+    // Guard for SSR environments
+    if (typeof window === 'undefined') return;
+
+    // Initialize on mount
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+
+    // Debounced resize handler
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const handleResize = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+      }, 150);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
 
@@ -496,8 +526,8 @@ function App() {
           onSettings={() => setShowSettingsDialog(true)}
           onToggleSidebar={toggleSidebar}
           onToggleActivityPanel={toggleActivityPanel}
-          sidebarOpen={desktopSidebarOpen || mobileSidebarOpen}
-          activityPanelOpen={desktopActivityPanelOpen || mobileActivityPanelOpen}
+          sidebarOpen={isMobile ? mobileSidebarOpen : desktopSidebarOpen}
+          activityPanelOpen={isMobile ? mobileActivityPanelOpen : desktopActivityPanelOpen}
         />
 
         {/* Error banner */}
