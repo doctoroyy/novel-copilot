@@ -76,6 +76,9 @@ function App() {
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
 
+  // Mobile breakpoint constant
+  const MOBILE_BREAKPOINT = 1024;
+
   // Mobile state
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileActivityPanelOpen, setMobileActivityPanelOpen] = useState(false);
@@ -85,33 +88,45 @@ function App() {
   const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(true);
 
   // Track if we're on mobile
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Toggle helpers
   const toggleSidebar = useCallback(() => {
-    if (window.innerWidth >= 1024) {
+    if (window.innerWidth >= MOBILE_BREAKPOINT) {
       setDesktopSidebarOpen(prev => !prev);
     } else {
       setMobileSidebarOpen(prev => !prev);
     }
-  }, []);
+  }, [MOBILE_BREAKPOINT]);
 
   const toggleActivityPanel = useCallback(() => {
-    if (window.innerWidth >= 1024) {
+    if (window.innerWidth >= MOBILE_BREAKPOINT) {
       setDesktopActivityPanelOpen(prev => !prev);
     } else {
       setMobileActivityPanelOpen(prev => !prev);
     }
-  }, []);
+  }, [MOBILE_BREAKPOINT]);
 
-  // Update isMobile on window resize
+  // Initialize and update isMobile on window resize
   useEffect(() => {
+    // Initialize on mount
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+
+    // Debounced resize handler
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
-      setIsMobile(window.innerWidth < 1024);
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+      }, 150);
     };
+
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [MOBILE_BREAKPOINT]);
 
 
   // Outline form
