@@ -3,6 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 // import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents'; // Removed
 import { ServerEventsProvider, useServerEventsContext } from '@/contexts/ServerEventsContext';
 
+// Constants
+const MOBILE_BREAKPOINT = 1024;
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -76,9 +79,6 @@ function App() {
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
 
-  // Mobile breakpoint constant
-  const MOBILE_BREAKPOINT = 1024;
-
   // Mobile state
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileActivityPanelOpen, setMobileActivityPanelOpen] = useState(false);
@@ -97,7 +97,7 @@ function App() {
     } else {
       setMobileSidebarOpen(prev => !prev);
     }
-  }, [MOBILE_BREAKPOINT]);
+  }, []);
 
   const toggleActivityPanel = useCallback(() => {
     if (window.innerWidth >= MOBILE_BREAKPOINT) {
@@ -105,7 +105,7 @@ function App() {
     } else {
       setMobileActivityPanelOpen(prev => !prev);
     }
-  }, [MOBILE_BREAKPOINT]);
+  }, []);
 
   // Initialize and update isMobile on window resize
   useEffect(() => {
@@ -126,7 +126,7 @@ function App() {
       window.removeEventListener('resize', handleResize);
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [MOBILE_BREAKPOINT]);
+  }, []);
 
 
   // Outline form
