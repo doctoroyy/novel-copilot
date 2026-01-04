@@ -84,6 +84,9 @@ function App() {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(true);
 
+  // Track if we're on mobile
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
+
   // Toggle helpers
   const toggleSidebar = useCallback(() => {
     if (window.innerWidth >= 1024) {
@@ -99,6 +102,15 @@ function App() {
     } else {
       setMobileActivityPanelOpen(prev => !prev);
     }
+  }, []);
+
+  // Update isMobile on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
 
@@ -496,8 +508,8 @@ function App() {
           onSettings={() => setShowSettingsDialog(true)}
           onToggleSidebar={toggleSidebar}
           onToggleActivityPanel={toggleActivityPanel}
-          sidebarOpen={desktopSidebarOpen || mobileSidebarOpen}
-          activityPanelOpen={desktopActivityPanelOpen || mobileActivityPanelOpen}
+          sidebarOpen={isMobile ? mobileSidebarOpen : desktopSidebarOpen}
+          activityPanelOpen={isMobile ? mobileActivityPanelOpen : desktopActivityPanelOpen}
         />
 
         {/* Error banner */}
