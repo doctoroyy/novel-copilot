@@ -3,9 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 // import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents'; // Removed
 import { ServerEventsProvider, useServerEventsContext } from '@/contexts/ServerEventsContext';
 
-// Constants
-const MOBILE_BREAKPOINT = 1024;
-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -51,6 +48,9 @@ import {
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+
+// Constants
+const MOBILE_BREAKPOINT = 1024;
 
 function App() {
   // URL routing
