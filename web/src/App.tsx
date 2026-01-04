@@ -109,6 +109,9 @@ function App() {
 
   // Initialize and update isMobile on window resize
   useEffect(() => {
+    // Guard for SSR environments
+    if (typeof window === 'undefined') return;
+
     // Initialize on mount
     setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
 
