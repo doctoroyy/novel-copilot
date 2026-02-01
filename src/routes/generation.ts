@@ -100,45 +100,6 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
     issues.push(`章节总数不匹配: 实际${totalChaptersInOutline}章 vs 目标${targetChapters}章`);
   }
 
-  // ⚠️ 卷间逻辑连贯性检查
-  const volumes = outline.volumes || [];
-  for (let i = 1; i < volumes.length; i++) {
-    const prevVol = volumes[i - 1];
-    const currVol = volumes[i];
-    
-    // 检测重大状态变化关键词
-    const crownKeywords = ['称帝', '登基', '继位', '加冕', '建国', '即位'];
-    const hasCrowned = crownKeywords.some(k => 
-      prevVol.climax?.includes(k) || prevVol.goal?.includes(k) || prevVol.volumeEndState?.includes(k)
-    );
-    
-    if (hasCrowned) {
-      // 如果前卷已称帝，后续卷应体现帝王身份
-      const rulerKeywords = ['帝', '朕', '皇', '王', '治理', '朝政', '天下', '国', '江山'];
-      const continuesAsRuler = rulerKeywords.some(k => 
-        currVol.goal?.includes(k) || currVol.conflict?.includes(k) || currVol.title?.includes(k)
-      );
-      if (!continuesAsRuler) {
-        issues.push(`⚠️ 卷间逻辑警告：第${i}卷(${prevVol.title})主角已称帝，但第${i+1}卷(${currVol.title})的剧情似乎未延续帝王身份`);
-      }
-    }
-    
-    // 检测修仙境界跃升
-    const cultivationKeywords = ['元婴', '化神', '合体', '渡劫', '飞升', '仙人'];
-    const hasAdvanced = cultivationKeywords.some(k => 
-      prevVol.climax?.includes(k) || prevVol.volumeEndState?.includes(k)
-    );
-    
-    if (hasAdvanced) {
-      const lowerRealmKeywords = ['练气', '筑基', '金丹', '结丹'];
-      const hasRegressed = lowerRealmKeywords.some(k => 
-        currVol.goal?.includes(k) || currVol.conflict?.includes(k)
-      );
-      if (hasRegressed) {
-        issues.push(`⚠️ 卷间逻辑警告：第${i}卷主角已突破高境界，但第${i+1}卷剧情似乎回退到低境界`);
-      }
-    }
-  }
 
   return {
     valid: issues.length === 0,
