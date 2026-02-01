@@ -100,6 +100,46 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
     issues.push(`章节总数不匹配: 实际${totalChaptersInOutline}章 vs 目标${targetChapters}章`);
   }
 
+  // ⚠️ 卷间逻辑连贯性检查
+  const volumes = outline.volumes || [];
+  for (let i = 1; i < volumes.length; i++) {
+    const prevVol = volumes[i - 1];
+    const currVol = volumes[i];
+    
+    // 检测重大状态变化关键词
+    const crownKeywords = ['称帝', '登基', '继位', '加冕', '建国', '即位'];
+    const hasCrowned = crownKeywords.some(k => 
+      prevVol.climax?.includes(k) || prevVol.goal?.includes(k) || prevVol.volumeEndState?.includes(k)
+    );
+    
+    if (hasCrowned) {
+      // 如果前卷已称帝，后续卷应体现帝王身份
+      const rulerKeywords = ['帝', '朕', '皇', '王', '治理', '朝政', '天下', '国', '江山'];
+      const continuesAsRuler = rulerKeywords.some(k => 
+        currVol.goal?.includes(k) || currVol.conflict?.includes(k) || currVol.title?.includes(k)
+      );
+      if (!continuesAsRuler) {
+        issues.push(`⚠️ 卷间逻辑警告：第${i}卷(${prevVol.title})主角已称帝，但第${i+1}卷(${currVol.title})的剧情似乎未延续帝王身份`);
+      }
+    }
+    
+    // 检测修仙境界跃升
+    const cultivationKeywords = ['元婴', '化神', '合体', '渡劫', '飞升', '仙人'];
+    const hasAdvanced = cultivationKeywords.some(k => 
+      prevVol.climax?.includes(k) || prevVol.volumeEndState?.includes(k)
+    );
+    
+    if (hasAdvanced) {
+      const lowerRealmKeywords = ['练气', '筑基', '金丹', '结丹'];
+      const hasRegressed = lowerRealmKeywords.some(k => 
+        currVol.goal?.includes(k) || currVol.conflict?.includes(k)
+      );
+      if (hasRegressed) {
+        issues.push(`⚠️ 卷间逻辑警告：第${i}卷主角已突破高境界，但第${i+1}卷剧情似乎回退到低境界`);
+      }
+    }
+  }
+
   return {
     valid: issues.length === 0,
     issues: issues.slice(0, 20), // Limit to first 20 issues
@@ -143,8 +183,13 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
     const volumes = [];
     for (let i = 0; i < masterOutline.volumes.length; i++) {
       const vol = masterOutline.volumes[i];
+      // 获取前一卷的结局状态，确保剧情连贯
+      const previousVolumeEndState = i > 0 
+        ? masterOutline.volumes[i - 1].volumeEndState || 
+          `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
+        : null;
       console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${masterOutline.volumes.length} "${vol.title}"...`);
-      const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol);
+      const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol, previousVolumeEndState);
       volumes.push(normalizeVolume(vol, i, chapters));
     }
 
@@ -960,16 +1005,21 @@ async function generateMasterOutline(
 【硬性要求】
 1. 必须严格按照目标章数分配各卷章节，确保分卷章节数之和**恰好等于**目标总章数
 2. 每一卷必须有明确的"阶段性爽点"和"卷末高潮"设计
-3. volumes 数组中的每个卷必须包含: title, startChapter, endChapter, goal, conflict, climax
+3. volumes 数组中的每个卷必须包含: title, startChapter, endChapter, goal, conflict, climax, volumeEndState
 4. endChapter 必须紧接着下一卷的 startChapter（无重叠无间隙）
 5. 最后一卷的 endChapter 必须等于目标总章数
+
+【⚠️ 剧情连贯性 - 关键约束】
+6. **剧情单向递进原则**：主角的重大状态变化（如称帝、结婚、突破境界）一旦发生，后续所有卷必须以此为前提，绝不可回退
+7. **卷末状态延续**：每卷的 volumeEndState（卷末主角状态）必须成为下一卷的起始前提
+8. **里程碑时间顺序**：milestones 必须按照剧情发展顺序排列，不可出现逻辑冲突（如"第100章称帝"不可出现在"第200章起兵"之后）
 
 输出严格的 JSON 格式，不要有其他文字。
 
 JSON 结构:
 {
   "mainGoal": "全书核心目标",
-  "milestones": ["里程碑1", "里程碑2", ...],
+  "milestones": ["里程碑1（按时间顺序）", "里程碑2", ...],
   "volumes": [
     {
       "title": "第一卷 卷名",
@@ -977,7 +1027,8 @@ JSON 结构:
       "endChapter": 80,
       "goal": "本卷剧情目标",
       "conflict": "本卷核心冲突",
-      "climax": "本卷高潮/爽点"
+      "climax": "本卷高潮/爽点",
+      "volumeEndState": "本卷结束时主角的状态（身份、实力、处境等，下一卷必须从此状态开始）"
     },
     ...
   ]
@@ -1037,7 +1088,8 @@ async function generateVolumeChapters(
   aiConfig: AIConfig,
   bible: string,
   masterOutline: any,
-  volume: any
+  volume: any,
+  previousVolumeEndState: string | null = null
 ): Promise<any[]> {
   const startChapter = volume.startChapter;
   const endChapter = volume.endChapter;
@@ -1084,7 +1136,12 @@ JSON 结构:
     const prompt = `【Story Bible】
 ${bible.slice(0, 1500)}...
 
-【总目标】${masterOutline.mainGoal}
+【全书进度定位】
+- 总目标: ${masterOutline.mainGoal}
+${previousVolumeEndState 
+  ? `- 前卷结局状态: ${previousVolumeEndState}
+- ⚠️ 重要约束：本卷剧情必须从上述状态开始，主角身份/实力/处境不可回退！` 
+  : '- 这是第一卷，故事开端'}
 
 【本卷信息】
 - ${volume.title}
