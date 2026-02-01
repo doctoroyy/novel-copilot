@@ -327,6 +327,224 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
   }
 });
 
+// Streaming chapter generation with SSE
+generationRoutes.post('/projects/:name/generate-stream', async (c) => {
+  const name = c.req.param('name');
+  const aiConfig = getAIConfigFromHeaders(c);
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  const encoder = new TextEncoder();
+
+  // Create a readable stream for SSE
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Helper to send SSE event
+      const sendEvent = (type: string, data: any) => {
+        const payload = JSON.stringify({ type, ...data });
+        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      };
+
+      // Heartbeat to keep connection alive
+      const heartbeatInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      try {
+        const { chaptersToGenerate = 1 } = await c.req.json();
+
+        sendEvent('start', { total: chaptersToGenerate });
+
+        // Get project with state and outline
+        const project = await c.env.DB.prepare(`
+          SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+          FROM projects p
+          JOIN states s ON p.id = s.project_id
+          LEFT JOIN outlines o ON p.id = o.project_id
+          LEFT JOIN characters c ON p.id = c.project_id
+          WHERE p.name = ?
+        `).bind(name).first() as any;
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          controller.close();
+          clearInterval(heartbeatInterval);
+          return;
+        }
+
+        // Validate state
+        const maxChapterResult = await c.env.DB.prepare(`
+          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+        `).bind(project.id).first() as any;
+
+        const actualMaxChapter = maxChapterResult?.max_index || 0;
+        const expectedNextIndex = actualMaxChapter + 1;
+
+        if (project.next_chapter_index !== expectedNextIndex) {
+          project.next_chapter_index = expectedNextIndex;
+          await c.env.DB.prepare(`
+            UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+          `).bind(expectedNextIndex, project.id).run();
+        }
+
+        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+        const results: { chapter: number; title: string }[] = [];
+        const failedChapters: number[] = [];
+
+        const startingChapterIndex = project.next_chapter_index;
+
+        for (let i = 0; i < chaptersToGenerate; i++) {
+          const chapterIndex = startingChapterIndex + i;
+          if (chapterIndex > project.total_chapters) break;
+
+          sendEvent('progress', {
+            current: i + 1,
+            total: chaptersToGenerate,
+            chapterIndex,
+            status: 'preparing',
+            message: `准备生成第 ${chapterIndex} 章...`,
+          });
+
+          try {
+            // Get last 2 chapters
+            const { results: lastChapters } = await c.env.DB.prepare(`
+              SELECT content FROM chapters 
+              WHERE project_id = ? AND chapter_index >= ?
+              ORDER BY chapter_index DESC LIMIT 2
+            `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+
+            // Get chapter goal from outline
+            let chapterGoalHint: string | undefined;
+            let outlineTitle: string | undefined;
+            if (outline) {
+              for (const vol of outline.volumes) {
+                const ch = vol.chapters?.find((c: any) => c.index === chapterIndex);
+                if (ch) {
+                  outlineTitle = ch.title;
+                  chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+                  break;
+                }
+              }
+            }
+
+            sendEvent('progress', {
+              current: i + 1,
+              total: chaptersToGenerate,
+              chapterIndex,
+              status: 'generating',
+              message: `正在生成第 ${chapterIndex} 章: ${outlineTitle || '未命名'}...`,
+            });
+
+            // Generate chapter
+            const result = await writeOneChapter({
+              aiConfig,
+              bible: project.bible,
+              rollingSummary: project.rolling_summary || '',
+              openLoops: JSON.parse(project.open_loops || '[]'),
+              lastChapters: lastChapters.map((c: any) => c.content).reverse(),
+              chapterIndex,
+              totalChapters: project.total_chapters,
+              chapterGoalHint,
+              chapterTitle: outlineTitle,
+              characters,
+              onProgress: (message, status) => {
+                sendEvent('progress', {
+                  current: i + 1,
+                  total: chaptersToGenerate,
+                  chapterIndex,
+                  status: status || 'generating',
+                  message,
+                });
+              },
+            });
+
+            const chapterText = result.chapterText;
+
+            // Save chapter
+            await c.env.DB.prepare(`
+              INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+            `).bind(project.id, chapterIndex, chapterText).run();
+
+            // Extract title
+            const titleMatch = chapterText.match(/^第?\d*[章回节]?\s*[：:.]?\s*(.+)/m);
+            const title = titleMatch ? titleMatch[1] : (outlineTitle || `Chapter ${chapterIndex}`);
+
+            results.push({ chapter: chapterIndex, title });
+
+            // Update state
+            await c.env.DB.prepare(`
+              UPDATE states SET 
+                next_chapter_index = ?,
+                rolling_summary = ?,
+                open_loops = ?
+              WHERE project_id = ?
+            `).bind(
+              chapterIndex + 1,
+              result.updatedSummary,
+              JSON.stringify(result.updatedOpenLoops),
+              project.id
+            ).run();
+
+            // Update project object for next iteration
+            project.rolling_summary = result.updatedSummary;
+            project.open_loops = JSON.stringify(result.updatedOpenLoops);
+            project.next_chapter_index = chapterIndex + 1;
+
+            // Send chapter complete event with content snippet
+            sendEvent('chapter_complete', {
+              chapterIndex,
+              title,
+              preview: chapterText.slice(0, 200) + '...',
+              wordCount: chapterText.length,
+            });
+
+          } catch (chapterError) {
+            // Single chapter failed, log and continue
+            console.error(`Failed to generate chapter ${chapterIndex}:`, chapterError);
+            failedChapters.push(chapterIndex);
+            sendEvent('chapter_error', {
+              chapterIndex,
+              error: (chapterError as Error).message,
+            });
+            // Continue to next chapter instead of stopping
+          }
+        }
+
+        // Send completion event
+        sendEvent('done', {
+          success: true,
+          generated: results,
+          failedChapters,
+          totalGenerated: results.length,
+          totalFailed: failedChapters.length,
+        });
+
+      } catch (error) {
+        sendEvent('error', { error: (error as Error).message });
+      } finally {
+        clearInterval(heartbeatInterval);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
 // Enhanced chapter generation with full context engineering
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');

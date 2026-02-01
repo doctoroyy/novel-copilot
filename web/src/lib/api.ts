@@ -147,6 +147,162 @@ export async function generateChapters(
   return data.generated;
 }
 
+// Streaming generation event types
+export type GenerationEventType = 
+  | 'start' 
+  | 'progress' 
+  | 'chapter_complete' 
+  | 'chapter_error' 
+  | 'done' 
+  | 'error' 
+  | 'heartbeat';
+
+export type GenerationEvent = {
+  type: GenerationEventType;
+  // start event
+  total?: number;
+  // progress event
+  current?: number;
+  chapterIndex?: number;
+  status?: 'preparing' | 'generating' | 'analyzing' | 'planning' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary';
+  message?: string;
+  // chapter_complete event
+  title?: string;
+  preview?: string;
+  wordCount?: number;
+  // chapter_error event
+  error?: string;
+  // done event
+  success?: boolean;
+  generated?: { chapter: number; title: string }[];
+  failedChapters?: number[];
+  totalGenerated?: number;
+  totalFailed?: number;
+};
+
+/**
+ * Stream chapter generation with real-time updates
+ * Returns an AsyncGenerator that yields GenerationEvent objects
+ */
+export async function* generateChaptersStream(
+  name: string,
+  chaptersToGenerate: number,
+  aiHeaders?: Record<string, string>,
+  signal?: AbortSignal
+): AsyncGenerator<GenerationEvent, void, unknown> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate-stream`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ chaptersToGenerate }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr) {
+            try {
+              const event = JSON.parse(jsonStr) as GenerationEvent;
+              // Skip heartbeat events (but they keep connection alive)
+              if (event.type !== 'heartbeat') {
+                yield event;
+              }
+              // If done or error, we're finished
+              if (event.type === 'done' || event.type === 'error') {
+                return;
+              }
+            } catch {
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Convenient wrapper for streaming generation with callbacks
+ */
+export async function generateChaptersWithProgress(
+  name: string,
+  chaptersToGenerate: number,
+  callbacks: {
+    onStart?: (total: number) => void;
+    onProgress?: (event: GenerationEvent) => void;
+    onChapterComplete?: (chapterIndex: number, title: string, preview: string) => void;
+    onChapterError?: (chapterIndex: number, error: string) => void;
+    onDone?: (results: { chapter: number; title: string }[], failedChapters: number[]) => void;
+    onError?: (error: string) => void;
+  },
+  aiHeaders?: Record<string, string>,
+  signal?: AbortSignal
+): Promise<{ chapter: number; title: string }[]> {
+  const results: { chapter: number; title: string }[] = [];
+  
+  try {
+    for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
+      switch (event.type) {
+        case 'start':
+          callbacks.onStart?.(event.total || chaptersToGenerate);
+          break;
+        case 'progress':
+          callbacks.onProgress?.(event);
+          break;
+        case 'chapter_complete':
+          if (event.chapterIndex !== undefined && event.title) {
+            results.push({ chapter: event.chapterIndex, title: event.title });
+            callbacks.onChapterComplete?.(event.chapterIndex, event.title, event.preview || '');
+          }
+          break;
+        case 'chapter_error':
+          if (event.chapterIndex !== undefined) {
+            callbacks.onChapterError?.(event.chapterIndex, event.error || 'Unknown error');
+          }
+          break;
+        case 'done':
+          callbacks.onDone?.(event.generated || results, event.failedChapters || []);
+          break;
+        case 'error':
+          callbacks.onError?.(event.error || 'Unknown error');
+          throw new Error(event.error || 'Generation failed');
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      // User cancelled, don't throw
+      return results;
+    }
+    throw error;
+  }
+  
+  return results;
+}
+
 export async function fetchChapter(name: string, index: number): Promise<string> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`);
   const data = await res.json();
