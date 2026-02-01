@@ -442,28 +442,63 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
               message: `正在生成第 ${chapterIndex} 章: ${outlineTitle || '未命名'}...`,
             });
 
-            // Generate chapter
-            const result = await writeOneChapter({
-              aiConfig,
-              bible: project.bible,
-              rollingSummary: project.rolling_summary || '',
-              openLoops: JSON.parse(project.open_loops || '[]'),
-              lastChapters: lastChapters.map((c: any) => c.content).reverse(),
-              chapterIndex,
-              totalChapters: project.total_chapters,
-              chapterGoalHint,
-              chapterTitle: outlineTitle,
-              characters,
-              onProgress: (message, status) => {
-                sendEvent('progress', {
-                  current: i + 1,
-                  total: chaptersToGenerate,
+            // Generate chapter with per-chapter retry logic
+            const CHAPTER_MAX_RETRIES = 3;
+            let result;
+            let lastChapterError;
+            
+            for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
+              try {
+                if (retryAttempt > 0) {
+                  const retryDelay = 5000 * Math.pow(2, retryAttempt - 1); // 5s, 10s, 20s
+                  sendEvent('progress', {
+                    current: i + 1,
+                    total: chaptersToGenerate,
+                    chapterIndex,
+                    status: 'generating',
+                    message: `第 ${chapterIndex} 章生成失败，${retryDelay/1000}秒后重试 (${retryAttempt}/${CHAPTER_MAX_RETRIES})...`,
+                  });
+                  await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+                
+                result = await writeOneChapter({
+                  aiConfig,
+                  bible: project.bible,
+                  rollingSummary: project.rolling_summary || '',
+                  openLoops: JSON.parse(project.open_loops || '[]'),
+                  lastChapters: lastChapters.map((c: any) => c.content).reverse(),
                   chapterIndex,
-                  status: status || 'generating',
-                  message,
+                  totalChapters: project.total_chapters,
+                  chapterGoalHint,
+                  chapterTitle: outlineTitle,
+                  characters,
+                  onProgress: (message, status) => {
+                    sendEvent('progress', {
+                      current: i + 1,
+                      total: chaptersToGenerate,
+                      chapterIndex,
+                      status: status || 'generating',
+                      message,
+                    });
+                  },
                 });
-              },
-            });
+                
+                // Success, break out of retry loop
+                break;
+              } catch (retryError) {
+                lastChapterError = retryError;
+                console.warn(`Chapter ${chapterIndex} attempt ${retryAttempt + 1} failed:`, (retryError as Error).message);
+                
+                // If this is the last retry, throw to trigger the outer catch
+                if (retryAttempt === CHAPTER_MAX_RETRIES - 1) {
+                  throw lastChapterError;
+                }
+              }
+            }
+            
+            if (!result) {
+              throw lastChapterError || new Error('Unknown error during chapter generation');
+            }
 
             const chapterText = result.chapterText;
 
@@ -506,12 +541,13 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
             });
 
           } catch (chapterError) {
-            // Single chapter failed, log and continue
-            console.error(`Failed to generate chapter ${chapterIndex}:`, chapterError);
+            // Single chapter failed after all retries
+            console.error(`Failed to generate chapter ${chapterIndex} after all retries:`, chapterError);
             failedChapters.push(chapterIndex);
             sendEvent('chapter_error', {
               chapterIndex,
               error: (chapterError as Error).message,
+              retriesExhausted: true,
             });
             // Continue to next chapter instead of stopping
           }
