@@ -162,19 +162,29 @@ function isRetryableError(errorType: ErrorType): boolean {
 
 /**
  * Get delay for retry based on error type and attempt number
+ * Rate limit 错误使用更长的延迟
  */
 function getRetryDelay(errorType: ErrorType, attempt: number): number {
-  const baseDelay = errorType === 'rate_limit' ? 5000 : 1000;
-  return baseDelay * (attempt + 1);
+  // Rate limit errors need much longer delays (10s base, doubling each attempt)
+  if (errorType === 'rate_limit') {
+    return 10000 * Math.pow(2, attempt); // 10s, 20s, 40s, 80s...
+  }
+  // Server errors get moderate delays
+  if (errorType === 'server_error') {
+    return 3000 * (attempt + 1); // 3s, 6s, 9s...
+  }
+  // Other errors get shorter delays
+  return 2000 * (attempt + 1); // 2s, 4s, 6s...
 }
 
 /**
  * Generate text with retry logic
+ * 增加重试次数，添加更详细的日志
  */
 export async function generateTextWithRetry(
   config: AIConfig,
   args: Parameters<typeof generateText>[1],
-  maxRetries = 3
+  maxRetries = 5
 ): Promise<string> {
   let lastError: Error | undefined;
 
