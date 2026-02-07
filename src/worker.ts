@@ -44,9 +44,21 @@ app.route('/api/admin', adminRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects
-// SSE endpoint
+// SSE endpoint - supports token auth via query param (EventSource doesn't support headers)
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');
+  const { verifyToken } = await import('./middleware/authMiddleware.js');
+  
+  // Get token from query param (EventSource cannot send headers)
+  const token = c.req.query('token');
+  let userId: string | null = null;
+  
+  if (token) {
+    const payload = await verifyToken(token);
+    if (payload) {
+      userId = payload.userId;
+    }
+  }
   
   const stream = new ReadableStream({
     start(controller) {
@@ -75,6 +87,8 @@ app.get('/api/events', async (c) => {
           
           if (events.length > 0) {
              for (const event of events) {
+               // TODO: In a multi-user environment, filter events by userId
+               // For now, broadcast all events to all connected clients
                controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
              }
           } else {
