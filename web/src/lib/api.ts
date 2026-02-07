@@ -470,9 +470,11 @@ export type GenerationTask = {
 };
 
 // Get active generation task for a project
+// Get active generation task for a project
 export async function getActiveTask(name: string): Promise<GenerationTask | null> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-task`, {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-task?t=${Date.now()}`, {
     headers: defaultHeaders(),
+    cache: 'no-store',
   });
   const data = await res.json();
   if (!data.success) return null;
