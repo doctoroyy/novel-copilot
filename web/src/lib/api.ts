@@ -489,6 +489,14 @@ export async function cancelTask(name: string, taskId: number): Promise<void> {
   });
 }
 
+// Cancel/delete ALL active generation tasks for a project
+export async function cancelAllActiveTasks(name: string): Promise<void> {
+  await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-tasks`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  });
+}
+
 // Get all active generation tasks for the current user (global)
 export async function getAllActiveTasks(): Promise<GenerationTask[]> {
   const res = await fetch(`${API_BASE}/active-tasks`, {
