@@ -13,6 +13,8 @@ export type GenerationTask = {
   startChapter: number;
   completedChapters: number[];
   failedChapters: number[];
+  currentProgress: number;
+  currentMessage: string | null;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
   createdAt: string;
@@ -57,6 +59,8 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       startChapter: task.start_chapter,
       completedChapters: JSON.parse(task.completed_chapters || '[]'),
       failedChapters: JSON.parse(task.failed_chapters || '[]'),
+      currentProgress: task.current_progress || 0,
+      currentMessage: task.current_message || null,
       status: task.status,
       errorMessage: task.error_message,
       createdAt: task.created_at,
@@ -131,7 +135,8 @@ export async function updateTaskProgress(
   db: D1Database,
   taskId: number,
   completedChapter: number,
-  failed: boolean = false
+  failed: boolean = false,
+  message?: string
 ): Promise<void> {
   const task = await db.prepare(`
     SELECT completed_chapters, failed_chapters FROM generation_tasks WHERE id = ?
@@ -144,17 +149,17 @@ export async function updateTaskProgress(
     failedChapters.push(completedChapter);
     await db.prepare(`
       UPDATE generation_tasks 
-      SET failed_chapters = ?, updated_at = CURRENT_TIMESTAMP
+      SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(failedChapters), taskId).run();
+    `).bind(JSON.stringify(failedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
   } else {
     const completedChapters = JSON.parse(task.completed_chapters || '[]');
     completedChapters.push(completedChapter);
     await db.prepare(`
       UPDATE generation_tasks 
-      SET completed_chapters = ?, updated_at = CURRENT_TIMESTAMP
+      SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(completedChapters), taskId).run();
+    `).bind(JSON.stringify(completedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
 }
 
@@ -169,4 +174,36 @@ export async function completeTask(
     SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(success ? 'completed' : 'failed', errorMessage || null, taskId).run();
+}
+
+// Check if there's a recently active running task (within last 2 minutes)
+export async function checkRunningTask(
+  db: D1Database,
+  projectId: string
+): Promise<{ isRunning: boolean; taskId?: number }> {
+  const task = await db.prepare(`
+    SELECT id, updated_at FROM generation_tasks 
+    WHERE project_id = ? AND status = 'running'
+    AND updated_at > datetime('now', '-2 minutes')
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).bind(projectId).first() as { id: number; updated_at: string } | null;
+
+  if (task) {
+    return { isRunning: true, taskId: task.id };
+  }
+  return { isRunning: false };
+}
+
+// Update current progress message for live sync
+export async function updateTaskMessage(
+  db: D1Database,
+  taskId: number,
+  message: string
+): Promise<void> {
+  await db.prepare(`
+    UPDATE generation_tasks 
+    SET current_message = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(message, taskId).run();
 }
