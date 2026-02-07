@@ -440,6 +440,8 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           clearInterval(heartbeatInterval);
         }
       }, 5000);
+      
+      let dbHeartbeatInterval: ReturnType<typeof setInterval> | undefined;
 
       try {
         const { chaptersToGenerate = 1 } = await c.req.json();
@@ -501,6 +503,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           let lastProgress = existingTask.currentProgress;
           let lastCompletedCount = existingTask.completedChapters.length;
           let lastMessage = existingTask.currentMessage;
+          let lastUpdatedAt = existingTask.updatedAt;
           let consecutiveNoChange = 0;
           const MAX_NO_CHANGE = 36; // 3 minutes at 5s intervals
           
@@ -537,12 +540,14 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
               const currentCompletedCount = completedChapters.length;
               if (currentTask.current_progress !== lastProgress || 
                   currentCompletedCount !== lastCompletedCount ||
-                  currentTask.current_message !== lastMessage) {
+                  currentTask.current_message !== lastMessage ||
+                  currentTask.updated_at !== lastUpdatedAt) {
                 
                 consecutiveNoChange = 0;
                 lastProgress = currentTask.current_progress;
                 lastCompletedCount = currentCompletedCount;
                 lastMessage = currentTask.current_message;
+                lastUpdatedAt = currentTask.updated_at;
                 
                 // Send progress update
                 sendEvent('progress', {
@@ -594,6 +599,16 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           startingChapterIndex
         );
         sendEvent('task_created', { taskId });
+
+        // Start DB heartbeat to keep task alive during long generations
+        dbHeartbeatInterval = setInterval(async () => {
+          try {
+             await c.env.DB.prepare('UPDATE generation_tasks SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(taskId).run();
+          } catch (e) { 
+            console.warn('DB heartbeat failed', e); 
+          }
+        }, 10000); // 10s heartbeat
+
 
         for (let i = 0; i < chaptersToGenerate; i++) {
           const chapterIndex = startingChapterIndex + i;
@@ -783,6 +798,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       } catch (error) {
         sendEvent('error', { error: (error as Error).message });
       } finally {
+        clearInterval(dbHeartbeatInterval);
         clearInterval(heartbeatInterval);
         // Safely close controller (may already be closed if client disconnected)
         try {
