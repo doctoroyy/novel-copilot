@@ -682,9 +682,10 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
                       message,
                     });
                     // Also update DB heartbeat on certain progress events
-                    if (status === 'saving' || status === 'reviewing') {
-                      updateTaskMessage(c.env.DB, taskId, message, chapterIndex).catch(() => {});
-                    }
+                    // Also update DB heartbeat on all progress events for resumption support
+                    updateTaskMessage(c.env.DB, taskId, message, chapterIndex).catch(err => {
+                       console.warn('Failed to update task message', err);
+                    });
                   },
                 });
                 
