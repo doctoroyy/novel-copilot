@@ -723,12 +723,27 @@ function App() {
                   className="bg-muted/50 text-sm"
                 />
               </div>
-              <Textarea
-                placeholder="世界观、人物设定、主线目标..."
-                className="h-[200px] sm:h-[250px] max-h-[300px] font-mono text-xs sm:text-sm resize-none bg-muted/50"
-                value={newProjectBible}
-                onChange={(e) => setNewProjectBible(e.target.value)}
-              />
+              {/* Bible generation progress overlay */}
+              {generatingBible ? (
+                <div className="h-[200px] sm:h-[250px] max-h-[300px] bg-muted/50 rounded-md flex flex-col items-center justify-center gap-4 border border-dashed border-primary/30">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-full border-4 border-primary/20 animate-pulse"></div>
+                    <div className="absolute inset-0 w-16 h-16 rounded-full border-4 border-t-primary border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+                    <div className="absolute inset-0 flex items-center justify-center text-2xl">🤖</div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-primary animate-pulse">AI 正在想象...</p>
+                    <p className="text-xs text-muted-foreground mt-1">正在生成世界观、人物设定、主线目标</p>
+                  </div>
+                </div>
+              ) : (
+                <Textarea
+                  placeholder="世界观、人物设定、主线目标..."
+                  className="h-[200px] sm:h-[250px] max-h-[300px] font-mono text-xs sm:text-sm resize-none bg-muted/50"
+                  value={newProjectBible}
+                  onChange={(e) => setNewProjectBible(e.target.value)}
+                />
+              )}
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">

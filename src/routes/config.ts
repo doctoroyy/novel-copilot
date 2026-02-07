@@ -20,6 +20,18 @@ configRoutes.post('/test', async (c) => {
   }
 });
 
+// Normalize base URL to ensure consistent format
+function normalizeBaseUrl(url: string): string {
+  if (!url) return url;
+  // Remove trailing slash
+  let normalized = url.replace(/\/+$/, '');
+  // Common pattern: if URL ends with 'api.nvidia.com' or similar but no version, add /v1
+  if (normalized.includes('integrate.api.nvidia.com') && !normalized.includes('/v1')) {
+    normalized += '/v1';
+  }
+  return normalized;
+}
+
 // Helper function to test AI connection
 async function testAIConnection(config: {
   provider: string;
@@ -43,8 +55,13 @@ async function testAIConnection(config: {
       );
 
       if (!response.ok) {
-        const error = await response.json() as any;
-        return { success: false, message: `连接失败: ${error.error?.message || response.statusText}` };
+        const errorText = await response.text();
+        try {
+          const error = JSON.parse(errorText) as any;
+          return { success: false, message: `连接失败: ${error.error?.message || response.statusText}` };
+        } catch {
+          return { success: false, message: `连接失败: ${response.status} ${response.statusText}` };
+        }
       }
 
       const data = await response.json() as any;
@@ -52,10 +69,13 @@ async function testAIConnection(config: {
       return { success: true, message: `连接成功! 回复: "${text.trim()}"` };
     } else {
       // OpenAI-compatible API
-      const baseUrl = config.baseUrl || 
+      let baseUrl = config.baseUrl || 
         (config.provider === 'openai' ? 'https://api.openai.com/v1' : 
          config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 
          config.baseUrl);
+
+      // Normalize the base URL for common providers
+      baseUrl = normalizeBaseUrl(baseUrl || '');
 
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -70,19 +90,39 @@ async function testAIConnection(config: {
             { role: 'user', content: 'Say "Hello" in one word.' },
           ],
           temperature: 0,
+          max_tokens: 50, // Add max_tokens for NVIDIA API
         }),
       });
 
+      // Read response as text first to handle empty responses
+      const responseText = await response.text();
+      
       if (!response.ok) {
-        const error = await response.json();
-        return { success: false, message: `连接失败: ${(error as any).error?.message || response.statusText}` };
+        if (!responseText) {
+          return { success: false, message: `连接失败: ${response.status} ${response.statusText} (空响应)` };
+        }
+        try {
+          const error = JSON.parse(responseText);
+          return { success: false, message: `连接失败: ${(error as any).error?.message || (error as any).message || response.statusText}` };
+        } catch {
+          return { success: false, message: `连接失败: ${response.status} ${responseText.slice(0, 200)}` };
+        }
       }
 
-      const data = await response.json() as any;
-      const text = data.choices?.[0]?.message?.content || '';
-      return { success: true, message: `连接成功! 回复: "${text.trim()}"` };
+      if (!responseText) {
+        return { success: false, message: '连接失败: 服务器返回空响应' };
+      }
+
+      try {
+        const data = JSON.parse(responseText) as any;
+        const text = data.choices?.[0]?.message?.content || '';
+        return { success: true, message: `连接成功! 回复: "${text.trim()}"` };
+      } catch {
+        return { success: false, message: `连接失败: 无法解析响应 - ${responseText.slice(0, 100)}` };
+      }
     }
   } catch (error) {
     return { success: false, message: `连接失败: ${(error as Error).message}` };
   }
 }
+
