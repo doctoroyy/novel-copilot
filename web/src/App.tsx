@@ -21,7 +21,7 @@ import {
   fetchProject,
   createProject,
   generateOutline,
-  generateChapters,
+  generateChaptersWithProgress,
   fetchChapter,
   deleteProject,
   resetProject,
@@ -266,8 +266,31 @@ function App() {
       setLoading(true);
       const count = parseInt(generateCount, 10);
       log(`生成章节: ${selectedProject.name}, ${count} 章`);
-      // SSE will push real-time progress logs, no need to add logs here after completion
-      await generateChapters(selectedProject.name, count, getAIConfigHeaders(aiConfig));
+      
+      await generateChaptersWithProgress(
+        selectedProject.name,
+        count,
+        {
+          onStart: (total) => log(`📝 开始生成 ${total} 章...`),
+          onProgress: (event) => {
+            if (event.message) log(`📝 ${event.message}`);
+          },
+          onChapterComplete: (chapterIndex, title) => {
+            log(`✅ 第 ${chapterIndex} 章「${title}」完成`);
+          },
+          onChapterError: (chapterIndex, error) => {
+            log(`❌ 第 ${chapterIndex} 章失败: ${error}`);
+          },
+          onDone: (results, failedChapters) => {
+            log(`🎉 完成! 成功 ${results.length} 章, 失败 ${failedChapters.length} 章`);
+          },
+          onError: (error) => {
+            log(`❌ 生成失败: ${error}`);
+          },
+        },
+        getAIConfigHeaders(aiConfig)
+      );
+      
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
