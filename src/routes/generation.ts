@@ -121,7 +121,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id, bible FROM projects WHERE name = ?
+      SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -219,7 +219,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     // Validate state: check if nextChapterIndex matches actual chapter data
     const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
     `).bind(project.id).first() as any;
 
     const actualMaxChapter = maxChapterResult?.max_index || 0;
@@ -248,7 +248,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       // Get last 2 chapters
       const { results: lastChapters } = await c.env.DB.prepare(`
         SELECT content FROM chapters 
-        WHERE project_id = ? AND chapter_index >= ?
+        WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
         ORDER BY chapter_index DESC LIMIT 2
       `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
 
@@ -386,7 +386,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
         // Validate state
         const maxChapterResult = await c.env.DB.prepare(`
-          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
         `).bind(project.id).first() as any;
 
         const actualMaxChapter = maxChapterResult?.max_index || 0;
@@ -422,7 +422,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
             // Get last 2 chapters
             const { results: lastChapters } = await c.env.DB.prepare(`
               SELECT content FROM chapters 
-              WHERE project_id = ? AND chapter_index >= ?
+              WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
               ORDER BY chapter_index DESC LIMIT 2
             `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
 
@@ -626,7 +626,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
     // Validate state
     const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
     `).bind(project.id).first() as any;
 
     const actualMaxChapter = maxChapterResult?.max_index || 0;
@@ -694,7 +694,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
       // Get last 2 chapters
       const { results: lastChapters } = await c.env.DB.prepare(`
         SELECT content FROM chapters
-        WHERE project_id = ? AND chapter_index >= ?
+        WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
         ORDER BY chapter_index DESC LIMIT 2
       `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
 
