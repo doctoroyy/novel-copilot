@@ -1041,17 +1041,20 @@ function App() {
                   const remaining = activeTask.targetCount - activeTask.completedChapters.length;
                   setGenerateCount(String(remaining));
                   setShowResumeDialog(false);
+                  // Clean up old tasks first
+                  await cancelAllActiveTasks(selectedProject.name);
                   setActiveTask(null);
+                  
                   // Navigate to generate tab first
                   navigate(`/project/${encodeURIComponent(selectedProject.name)}/generate`);
-                  // Then trigger generation with a small delay to ensure navigation completes
+                  // Then trigger generation for remaining chapters
                   setTimeout(() => {
                     handleGenerateChapters({ count: remaining });
                   }, 100);
                 }
               }}
             >
-              继续生成
+              继续生成 (重新发起)
             </Button>
           </DialogFooter>
         </DialogContent>

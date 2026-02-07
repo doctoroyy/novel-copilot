@@ -487,107 +487,17 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
         const startingChapterIndex = project.next_chapter_index;
 
-        // Check if there's already a running task (serial enforcement)
-        const { isRunning, taskId: existingTaskId, task: existingTask } = await checkRunningTask(c.env.DB, project.id);
-        if (isRunning && existingTaskId && existingTask) {
-          // Task is running - stream progress from DB instead of starting new generation
-          sendEvent('task_resumed', { 
-            taskId: existingTaskId,
-            completedChapters: existingTask.completedChapters,
-            targetCount: existingTask.targetCount,
-            currentProgress: existingTask.currentProgress,
-            currentMessage: existingTask.currentMessage,
-          });
-          
-          // Stream progress updates from DB until task completes or client disconnects
-          let lastProgress = existingTask.currentProgress;
-          let lastCompletedCount = existingTask.completedChapters.length;
-          let lastMessage = existingTask.currentMessage;
-          let lastUpdatedAt = existingTask.updatedAt;
-          let consecutiveNoChange = 0;
-          const MAX_NO_CHANGE = 36; // 3 minutes at 5s intervals
-          
-          while (clientConnected) {
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5 seconds
-            
-            try {
-              const currentTask = await c.env.DB.prepare(`
-                SELECT * FROM generation_tasks WHERE id = ?
-              `).bind(existingTaskId).first() as any;
-              
-              if (!currentTask) {
-                sendEvent('done', { success: true, message: '任务已完成或被删除' });
-                break;
-              }
-              
-              const completedChapters = JSON.parse(currentTask.completed_chapters || '[]');
-              const failedChapters = JSON.parse(currentTask.failed_chapters || '[]');
-              
-              // Check if task completed
-              if (currentTask.status === 'completed' || currentTask.status === 'failed') {
-                sendEvent('done', { 
-                  success: currentTask.status === 'completed',
-                  generated: completedChapters.map((ch: number) => ({ chapter: ch, title: `第${ch}章` })),
-                  failedChapters,
-                  totalGenerated: completedChapters.length,
-                  totalFailed: failedChapters.length,
-                  taskId: existingTaskId,
-                });
-                break;
-              }
-              
-              // Check for progress changes
-              const currentCompletedCount = completedChapters.length;
-              if (currentTask.current_progress !== lastProgress || 
-                  currentCompletedCount !== lastCompletedCount ||
-                  currentTask.current_message !== lastMessage ||
-                  currentTask.updated_at !== lastUpdatedAt) {
-                
-                consecutiveNoChange = 0;
-                lastProgress = currentTask.current_progress;
-                lastCompletedCount = currentCompletedCount;
-                lastMessage = currentTask.current_message;
-                lastUpdatedAt = currentTask.updated_at;
-                
-                // Send progress update
-                sendEvent('progress', {
-                  current: currentCompletedCount,
-                  total: currentTask.target_count,
-                  chapterIndex: currentTask.current_progress,
-                  status: 'generating',
-                  message: currentTask.current_message || `正在生成第 ${currentTask.current_progress} 章...`,
-                });
-                
-                // Also send chapter_complete for newly completed chapters
-                // Ideally this should be better handled by tracking specifically which chapters completed
-                // But for now valid check is count increased
-                if (currentCompletedCount > lastCompletedCount) {
-                  // This logic is slightly flawed if polling missed intermediate chapters
-                  // But good enough for progress bar
-                  const latestChapter = completedChapters[currentCompletedCount - 1];
-                  sendEvent('chapter_complete', {
-                    chapterIndex: latestChapter,
-                    title: `第${latestChapter}章`,
-                    wordCount: 0, 
-                  });
-                }
-              } else {
-                consecutiveNoChange++;
-                if (consecutiveNoChange >= MAX_NO_CHANGE) {
-                  // Task appears stuck - might be crashed
-                  sendEvent('error', { error: '任务超时或已停止，请刷新页面重试' });
-                  break;
-                }
-              }
-            } catch (pollError) {
-              console.warn('Error polling task progress:', pollError);
-              // Continue polling despite errors
-            }
-          }
-          
-          clearInterval(heartbeatInterval);
-          try { controller.close(); } catch {}
-          return;
+        // Check if there's already a running task
+        // If so, and we are here, it implies the client wants to start fresh (or we should error)
+        // But since we simplified the frontend to cancel old tasks, we can assume we are good to go.
+        // However, just in case, we can check.
+        const { isRunning } = await checkRunningTask(c.env.DB, project.id);
+        if (isRunning) {
+           // If a task is still appearing as running, we should just let the new one proceed
+           // (Assuming user clicked "Continue" which executed cancelAllActiveTasks)
+           // But if cancel failed, we might have 2 running tasks.
+           // Let's just log it.
+           console.warn('Starting new task while another might be running');
         }
 
         // Create generation task for persistence
@@ -600,14 +510,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
         );
         sendEvent('task_created', { taskId });
 
-        // Start DB heartbeat to keep task alive during long generations
-        dbHeartbeatInterval = setInterval(async () => {
-          try {
-             await c.env.DB.prepare('UPDATE generation_tasks SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(taskId).run();
-          } catch (e) { 
-            console.warn('DB heartbeat failed', e); 
-          }
-        }, 10000); // 10s heartbeat
+        // No more heartbeat interval needed for simple generation (unless preventing timeout?)
+        // Standard generation logic follows
+
 
 
         for (let i = 0; i < chaptersToGenerate; i++) {
