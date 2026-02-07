@@ -340,7 +340,8 @@ function App() {
             if (event.message) log(`📝 ${event.message}`);
             setGenerationState(prev => ({
               ...prev,
-              current: event.current || prev.current,
+              // Don't update current here - only update in onChapterComplete
+              // Backend sends current=1 when starting first chapter, which would show 20% before any chapter is done
               currentChapter: event.chapterIndex,
               status: (event.status as 'preparing' | 'generating' | 'saving') || prev.status,
               message: event.message,
@@ -859,12 +860,36 @@ function App() {
             </DialogDescription>
           </DialogHeader>
           {activeTask && (
-            <div className="py-4 space-y-2 text-sm">
-              <p><span className="text-muted-foreground">目标章节：</span>{activeTask.targetCount} 章</p>
-              <p><span className="text-muted-foreground">已完成：</span>{activeTask.completedChapters.length} 章</p>
-              <p><span className="text-muted-foreground">剩余：</span>{activeTask.targetCount - activeTask.completedChapters.length} 章</p>
+            <div className="py-4 space-y-3 text-sm">
+              {/* Progress bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>进度</span>
+                  <span>{Math.round((activeTask.completedChapters.length / activeTask.targetCount) * 100)}%</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary rounded-full transition-all"
+                    style={{ width: `${(activeTask.completedChapters.length / activeTask.targetCount) * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 rounded bg-muted/50">
+                  <div className="text-lg font-semibold">{activeTask.targetCount}</div>
+                  <div className="text-xs text-muted-foreground">目标</div>
+                </div>
+                <div className="p-2 rounded bg-green-500/10">
+                  <div className="text-lg font-semibold text-green-500">{activeTask.completedChapters.length}</div>
+                  <div className="text-xs text-muted-foreground">已完成</div>
+                </div>
+                <div className="p-2 rounded bg-orange-500/10">
+                  <div className="text-lg font-semibold text-orange-500">{activeTask.targetCount - activeTask.completedChapters.length}</div>
+                  <div className="text-xs text-muted-foreground">剩余</div>
+                </div>
+              </div>
               {activeTask.failedChapters.length > 0 && (
-                <p className="text-destructive"><span className="text-muted-foreground">失败：</span>{activeTask.failedChapters.length} 章</p>
+                <p className="text-destructive text-center">⚠️ 失败：{activeTask.failedChapters.length} 章</p>
               )}
             </div>
           )}
@@ -883,13 +908,18 @@ function App() {
             </Button>
             <Button
               className="gradient-bg"
-              onClick={() => {
+              onClick={async () => {
                 if (activeTask && selectedProject) {
                   const remaining = activeTask.targetCount - activeTask.completedChapters.length;
                   setGenerateCount(String(remaining));
                   setShowResumeDialog(false);
-                  // Navigate to generate tab
+                  setActiveTask(null);
+                  // Navigate to generate tab first
                   navigate(`/project/${encodeURIComponent(selectedProject.name)}/generate`);
+                  // Then trigger generation with a small delay to ensure navigation completes
+                  setTimeout(() => {
+                    handleGenerateChapters();
+                  }, 100);
                 }
               }}
             >
