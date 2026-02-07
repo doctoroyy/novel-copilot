@@ -199,19 +199,16 @@ function App() {
     document.documentElement.classList.add('dark');
   }, [loadProjects]);
 
-  // Global task polling: Sync all active tasks regardless of project selection
-  // This ensures the FloatingProgressButton shows all tasks globally
+  // Global task check: Only run ONCE on mount to detect any running tasks
+  // After initial check, progress updates come via SSE (/api/events)
   useEffect(() => {
-    let pollInterval: ReturnType<typeof setInterval> | null = null;
-
-    const syncGlobalTasks = async () => {
+    const checkActiveTasksOnce = async () => {
       try {
         const tasks = await getAllActiveTasks();
         
         // Find any running task and sync its progress to generationState
         const runningTask = tasks.find(t => t.status === 'running');
         if (runningTask) {
-          // Calculate a reasonable start time
           const estimatedElapsedMs = runningTask.completedChapters.length * 60 * 1000;
           const updatedAtTime = new Date(runningTask.updatedAt).getTime();
           const estimatedStartTime = updatedAtTime - estimatedElapsedMs;
@@ -226,25 +223,13 @@ function App() {
             startTime: estimatedStartTime > 0 ? estimatedStartTime : Date.now(),
             projectName: runningTask.projectName,
           });
-        } else if (!generationState.isGenerating || 
-                   (generationState.status !== 'generating' && generationState.status !== 'preparing')) {
-          // No running task and not currently generating locally, reset state
-          // Only reset if we're not in the middle of local generation
         }
       } catch (err) {
-        console.warn('Failed to sync global tasks:', err);
+        console.warn('Failed to check active tasks:', err);
       }
     };
 
-    // Initial sync
-    syncGlobalTasks();
-
-    // Poll every 3 seconds
-    pollInterval = setInterval(syncGlobalTasks, 3000);
-
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
+    checkActiveTasksOnce();
   }, [setGenerationState]);
 
   // Load project when URL changes
