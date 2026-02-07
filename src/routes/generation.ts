@@ -9,7 +9,7 @@ import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
-import { createGenerationTask, updateTaskProgress, completeTask } from './tasks.js';
+import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTask, updateTaskMessage } from './tasks.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -491,6 +491,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
             status: 'preparing',
             message: `准备生成第 ${chapterIndex} 章...`,
           });
+
+          // Update task progress in DB for cross-device sync
+          await updateTaskMessage(c.env.DB, taskId, `正在生成第 ${chapterIndex} 章...`);
 
           try {
             // Get last 2 chapters

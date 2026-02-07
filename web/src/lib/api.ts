@@ -451,6 +451,8 @@ export type GenerationTask = {
   startChapter: number;
   completedChapters: number[];
   failedChapters: number[];
+  currentProgress: number;  // Current chapter being processed
+  currentMessage: string | null;  // Status message for sync
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
   createdAt: string;

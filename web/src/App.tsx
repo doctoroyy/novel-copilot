@@ -208,23 +208,80 @@ function App() {
   }, [projectName, selectedProject?.name, loadProject]);
 
   // Check for active generation tasks when project loads
+  // For running tasks: sync progress directly (same view on all devices)
+  // For paused tasks: show resume dialog
   useEffect(() => {
-    const checkActiveTask = async () => {
-      if (!selectedProject) return;
+    if (!selectedProject) return;
+    
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    
+    const syncTaskProgress = (task: GenerationTask) => {
+      setGenerationState({
+        isGenerating: true,
+        current: task.completedChapters.length,
+        total: task.targetCount,
+        currentChapter: task.currentProgress,
+        status: 'generating',
+        message: task.currentMessage || `正在生成第 ${task.currentProgress} 章...`,
+        startTime: new Date(task.createdAt).getTime(),
+        projectName: selectedProject.name,
+      });
+    };
+
+    const checkAndSync = async () => {
       try {
         const task = await getActiveTask(selectedProject.name);
-        if (task && (task.status === 'running' || task.status === 'paused')) {
-          setActiveTask(task);
-          setShowResumeDialog(true);
-        } else {
+        if (!task) {
           setActiveTask(null);
+          return;
+        }
+        
+        setActiveTask(task);
+        
+        if (task.status === 'running') {
+          // Running task: sync progress directly (like viewing same screen)
+          syncTaskProgress(task);
+          // Start polling if not already
+          if (!pollInterval) {
+            pollInterval = setInterval(async () => {
+              const updated = await getActiveTask(selectedProject.name);
+              if (updated && updated.status === 'running') {
+                syncTaskProgress(updated);
+              } else if (updated?.status === 'completed' || updated?.status === 'failed') {
+                // Task finished on other device
+                setGenerationState(prev => ({
+                  ...prev,
+                  isGenerating: false,
+                  status: updated.status === 'completed' ? 'done' : 'error',
+                  message: updated.status === 'completed' 
+                    ? `生成完成: ${updated.completedChapters.length} 章` 
+                    : updated.errorMessage || '生成失败',
+                }));
+                clearInterval(pollInterval!);
+                pollInterval = null;
+                await loadProject(selectedProject.name);
+              } else {
+                // Task paused or deleted
+                clearInterval(pollInterval!);
+                pollInterval = null;
+              }
+            }, 3000);
+          }
+        } else if (task.status === 'paused') {
+          // Paused task: show resume dialog
+          setShowResumeDialog(true);
         }
       } catch (err) {
         console.warn('Failed to check active task:', err);
       }
     };
-    checkActiveTask();
-  }, [selectedProject?.name]);
+
+    checkAndSync();
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [selectedProject?.name, loadProject, setGenerationState]);
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
