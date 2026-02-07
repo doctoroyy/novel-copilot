@@ -22,8 +22,8 @@ const ServerEventsContext = createContext<ServerEventsContextType | undefined>(u
 export function ServerEventsProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<string[]>([]);
   const [lastProgress, setLastProgress] = useState<ProgressEvent | null>(null);
-  // Default to enabled only in DEV mode
-  const [enabled, setEnabled] = useState(import.meta.env.DEV);
+  // Enable SSE by default for real-time progress updates
+  const [enabled, setEnabled] = useState(true);
 
   const { connected } = useServerEvents({
     enabled,

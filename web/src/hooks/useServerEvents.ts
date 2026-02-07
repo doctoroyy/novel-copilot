@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { getToken } from '@/lib/auth';
 
 
 export interface LogEvent {
@@ -43,7 +44,10 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
       eventSourceRef.current.close();
     }
 
-    const eventSource = new EventSource('/api/events');
+    // EventSource doesn't support custom headers, so pass token via query param
+    const token = getToken();
+    const url = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
+    const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
