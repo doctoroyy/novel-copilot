@@ -2,7 +2,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
 import type { ProjectDetail } from '@/lib/api';
-import { PanelLeftOpen, PanelRightOpen } from 'lucide-react';
+import { PanelLeftOpen, PanelRightOpen, LogOut } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
   project: ProjectDetail | null;
@@ -41,6 +42,8 @@ export function Header({
   sidebarOpen = true,
   activityPanelOpen = true
 }: HeaderProps) {
+  const { user, logout } = useAuth();
+
   if (!project) {
     return (
       <header className="h-16 border-b border-border flex items-center justify-between px-4 lg:px-6">
@@ -57,6 +60,18 @@ export function Header({
         )}
         <div className="text-muted-foreground text-sm lg:text-base">选择一个项目开始</div>
         <div className="flex items-center gap-1 lg:gap-2">
+          {user && (
+            <>
+              <span className="text-sm text-muted-foreground hidden sm:inline">
+                👤 {user.username}
+              </span>
+              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs lg:text-sm">
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline ml-1">退出</span>
+              </Button>
+              <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+            </>
+          )}
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
             <span className="hidden sm:inline">⚙️ 设置</span>
             <span className="sm:hidden">⚙️</span>
@@ -129,6 +144,19 @@ export function Header({
             <span className="hidden lg:inline">⚙️ 设置</span>
             <span className="lg:hidden">⚙️</span>
           </Button>
+          
+          {/* User info and logout */}
+          {user && (
+            <>
+              <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+              <span className="text-xs text-muted-foreground hidden md:inline">
+                👤 {user.username}
+              </span>
+              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </>
+          )}
           
           {/* Activity Panel Toggle (Only show if closed) */}
           {!activityPanelOpen && (
