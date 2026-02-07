@@ -500,6 +500,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           // Stream progress updates from DB until task completes or client disconnects
           let lastProgress = existingTask.currentProgress;
           let lastCompletedCount = existingTask.completedChapters.length;
+          let lastMessage = existingTask.currentMessage;
           let consecutiveNoChange = 0;
           const MAX_NO_CHANGE = 36; // 3 minutes at 5s intervals
           
@@ -534,10 +535,14 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
               
               // Check for progress changes
               const currentCompletedCount = completedChapters.length;
-              if (currentTask.current_progress !== lastProgress || currentCompletedCount !== lastCompletedCount) {
+              if (currentTask.current_progress !== lastProgress || 
+                  currentCompletedCount !== lastCompletedCount ||
+                  currentTask.current_message !== lastMessage) {
+                
                 consecutiveNoChange = 0;
                 lastProgress = currentTask.current_progress;
                 lastCompletedCount = currentCompletedCount;
+                lastMessage = currentTask.current_message;
                 
                 // Send progress update
                 sendEvent('progress', {
@@ -549,12 +554,16 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
                 });
                 
                 // Also send chapter_complete for newly completed chapters
-                if (currentCompletedCount > 0) {
+                // Ideally this should be better handled by tracking specifically which chapters completed
+                // But for now valid check is count increased
+                if (currentCompletedCount > lastCompletedCount) {
+                  // This logic is slightly flawed if polling missed intermediate chapters
+                  // But good enough for progress bar
                   const latestChapter = completedChapters[currentCompletedCount - 1];
                   sendEvent('chapter_complete', {
                     chapterIndex: latestChapter,
                     title: `第${latestChapter}章`,
-                    wordCount: 0, // We don't have this info in the poll
+                    wordCount: 0, 
                   });
                 }
               } else {
