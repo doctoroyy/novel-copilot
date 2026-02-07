@@ -2,20 +2,37 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 
 export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
+// Per-provider settings
+export interface ProviderSettings {
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
 export interface AIConfig {
   provider: AIProvider;
   model: string;
   apiKey: string;
   baseUrl?: string;
+  // Store settings per-provider for quick switching
+  providerSettings?: Partial<Record<AIProvider, ProviderSettings>>;
 }
 
 const STORAGE_KEY = 'novel-copilot-ai-config';
+
+const DEFAULT_PROVIDER_SETTINGS: Record<AIProvider, ProviderSettings> = {
+  gemini: { model: 'gemini-3-flash-preview', baseUrl: '' },
+  openai: { model: 'gpt-4o', baseUrl: '' },
+  deepseek: { model: 'deepseek-chat', baseUrl: '' },
+  custom: { model: '', baseUrl: '' },
+};
 
 const DEFAULT_CONFIG: AIConfig = {
   provider: 'gemini',
   model: 'gemini-3-flash-preview',
   apiKey: '',
   baseUrl: '',
+  providerSettings: { ...DEFAULT_PROVIDER_SETTINGS },
 };
 
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
@@ -55,6 +72,8 @@ interface AIConfigContextValue {
   config: AIConfig;
   loaded: boolean;
   saveConfig: (newConfig: Partial<AIConfig>) => AIConfig;
+  switchProvider: (provider: AIProvider) => void;
+  getProviderSettings: (provider: AIProvider) => ProviderSettings;
   maskedApiKey: string;
   isConfigured: boolean;
 }
@@ -71,7 +90,12 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as AIConfig;
-        setConfig({ ...DEFAULT_CONFIG, ...parsed });
+        // Merge with defaults to ensure all fields exist
+        const mergedProviderSettings = {
+          ...DEFAULT_PROVIDER_SETTINGS,
+          ...parsed.providerSettings,
+        };
+        setConfig({ ...DEFAULT_CONFIG, ...parsed, providerSettings: mergedProviderSettings });
       }
     } catch (err) {
       console.error('Failed to load AI config from localStorage:', err);
@@ -79,10 +103,22 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
     setLoaded(true);
   }, []);
 
-  // Save to localStorage
-  const saveConfig = useCallback((newConfig: Partial<AIConfig>) => {
+  // Get settings for a specific provider
+  const getProviderSettings = useCallback((provider: AIProvider): ProviderSettings => {
+    return config.providerSettings?.[provider] || DEFAULT_PROVIDER_SETTINGS[provider];
+  }, [config.providerSettings]);
+
+  // Switch to a different provider, restoring its saved settings
+  const switchProvider = useCallback((provider: AIProvider) => {
     setConfig(prevConfig => {
-      const updated = { ...prevConfig, ...newConfig };
+      const providerSettings = prevConfig.providerSettings?.[provider] || DEFAULT_PROVIDER_SETTINGS[provider];
+      const updated: AIConfig = {
+        ...prevConfig,
+        provider,
+        model: providerSettings.model,
+        baseUrl: providerSettings.baseUrl || '',
+        // Keep the API key - it's global, but we could also make it per-provider if needed
+      };
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch (err) {
@@ -90,9 +126,38 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
       }
       return updated;
     });
-    // Return the updated config (need to compute it here too)
-    const updated = { ...config, ...newConfig };
-    return updated;
+  }, []);
+
+  // Save to localStorage and update per-provider settings
+  const saveConfig = useCallback((newConfig: Partial<AIConfig>) => {
+    let finalConfig: AIConfig = config;
+    
+    setConfig(prevConfig => {
+      // Start with current config merged with new values
+      const updated = { ...prevConfig, ...newConfig };
+      
+      // If model or baseUrl changed, save to per-provider settings
+      const currentProvider = newConfig.provider || prevConfig.provider;
+      const updatedProviderSettings = {
+        ...prevConfig.providerSettings,
+        [currentProvider]: {
+          model: newConfig.model !== undefined ? newConfig.model : prevConfig.model,
+          baseUrl: newConfig.baseUrl !== undefined ? newConfig.baseUrl : prevConfig.baseUrl,
+        },
+      };
+      updated.providerSettings = updatedProviderSettings;
+      
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (err) {
+        console.error('Failed to save AI config to localStorage:', err);
+      }
+      
+      finalConfig = updated;
+      return updated;
+    });
+    
+    return finalConfig;
   }, [config]);
 
   // Get masked API key for display
@@ -104,7 +169,15 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
   const isConfigured = !!(config.apiKey && config.model);
 
   return (
-    <AIConfigContext.Provider value={{ config, loaded, saveConfig, maskedApiKey, isConfigured }}>
+    <AIConfigContext.Provider value={{ 
+      config, 
+      loaded, 
+      saveConfig, 
+      switchProvider,
+      getProviderSettings,
+      maskedApiKey, 
+      isConfigured 
+    }}>
       {children}
     </AIConfigContext.Provider>
   );
@@ -129,3 +202,4 @@ export function getAIConfigHeaders(config: AIConfig): Record<string, string> {
   
   return headers;
 }
+

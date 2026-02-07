@@ -26,7 +26,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { config, saveConfig, maskedApiKey, loaded } = useAIConfig();
+  const { config, saveConfig, getProviderSettings, maskedApiKey, loaded } = useAIConfig();
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   
@@ -120,9 +120,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <Select 
               value={provider} 
               onValueChange={(val) => {
-                setProvider(val as AIProvider);
-                const models = PROVIDER_MODELS[val as AIProvider] || [];
-                setModel(models[0] || '');
+                const newProvider = val as AIProvider;
+                setProvider(newProvider);
+                // Restore saved settings for this provider
+                const savedSettings = getProviderSettings(newProvider);
+                setModel(savedSettings.model || PROVIDER_MODELS[newProvider]?.[0] || '');
+                setBaseUrl(savedSettings.baseUrl || '');
               }}
             >
               <SelectTrigger className="bg-muted/50 text-sm">
