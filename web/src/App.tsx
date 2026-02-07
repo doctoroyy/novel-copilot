@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 // import { useServerEvents, type ProgressEvent } from '@/hooks/useServerEvents'; // Removed
 import { ServerEventsProvider, useServerEventsContext } from '@/contexts/ServerEventsContext';
@@ -192,6 +192,37 @@ function App() {
     }
   }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.name, loadProject]);
 
+  // Sync SSE progress to GenerationContext for FloatingProgressButton
+  useEffect(() => {
+    if (!generationProgress) return;
+    
+    // Only update if there's actual progress data
+    if (generationProgress.status === 'done' || generationProgress.status === 'error') {
+      // Task completed or failed - reset after a brief delay
+      setGenerationState(prev => ({
+        ...prev,
+        isGenerating: false,
+        status: generationProgress.status === 'done' ? 'done' : 'error',
+        message: generationProgress.message || (generationProgress.status === 'done' ? '生成完成' : '生成失败'),
+      }));
+      return;
+    }
+    
+    // Active generation progress
+    setGenerationState(prev => ({
+      ...prev,
+      isGenerating: true,
+      current: generationProgress.current,
+      total: generationProgress.total,
+      currentChapter: generationProgress.chapterIndex,
+      currentChapterTitle: generationProgress.chapterTitle,
+      status: generationProgress.status as any,
+      message: generationProgress.message || `正在生成第 ${generationProgress.chapterIndex} 章...`,
+      projectName: generationProgress.projectName,
+      startTime: prev.startTime || Date.now(),
+    }));
+  }, [generationProgress, setGenerationState]);
+
 
   useEffect(() => {
     loadProjects();
@@ -209,9 +240,19 @@ function App() {
         // Find any running task and sync its progress to generationState
         const runningTask = tasks.find(t => t.status === 'running');
         if (runningTask) {
+          // Check if task is healthy using Unix timestamp (3 minutes threshold)
+          const threeMinutesMs = 3 * 60 * 1000;
+          const isHealthy = runningTask.updatedAtMs && (Date.now() - runningTask.updatedAtMs < threeMinutesMs);
+          
+          if (!isHealthy) {
+            // Task is stale - show as needing attention, not actively generating
+            console.warn(`Task ${runningTask.id} appears stale (updatedAtMs: ${runningTask.updatedAtMs}, now: ${Date.now()}). Showing as paused.`);
+            // Don't set isGenerating - let the project-level check handle showing resume dialog
+            return;
+          }
+          
           const estimatedElapsedMs = runningTask.completedChapters.length * 60 * 1000;
-          const updatedAtTime = new Date(runningTask.updatedAt).getTime();
-          const estimatedStartTime = updatedAtTime - estimatedElapsedMs;
+          const estimatedStartTime = runningTask.updatedAtMs - estimatedElapsedMs;
 
           setGenerationState({
             isGenerating: true,
@@ -244,49 +285,8 @@ function App() {
   // Check for active generation tasks when project loads
   // For running tasks: sync progress once (real-time updates come via SSE)
   // For paused tasks: show resume dialog
-  useEffect(() => {
-    if (!selectedProject) return;
-    
-    const syncTaskProgress = (task: GenerationTask) => {
-      const estimatedElapsedMs = task.completedChapters.length * 60 * 1000;
-      const updatedAtTime = new Date(task.updatedAt).getTime();
-      const estimatedStartTime = updatedAtTime - estimatedElapsedMs;
-      
-      setGenerationState({
-        isGenerating: true,
-        current: task.completedChapters.length,
-        total: task.targetCount,
-        currentChapter: task.currentProgress,
-        status: 'generating',
-        message: task.currentMessage || `正在生成第 ${task.currentProgress} 章...`,
-        startTime: estimatedStartTime > 0 ? estimatedStartTime : Date.now(),
-        projectName: selectedProject.name,
-      });
-    };
+  const checkedProjectRef = useRef<string | null>(null);
 
-    const checkActiveTask = async () => {
-      try {
-        const task = await getActiveTask(selectedProject.name);
-        if (!task) {
-          setActiveTask(null);
-          return;
-        }
-        
-        setActiveTask(task);
-        
-        if (task.status === 'running') {
-          // Sync initial progress, real-time updates come via SSE
-          syncTaskProgress(task);
-        } else if (task.status === 'paused') {
-          setShowResumeDialog(true);
-        }
-      } catch (err) {
-        console.warn('Failed to check active task:', err);
-      }
-    };
-
-    checkActiveTask();
-  }, [selectedProject?.name, setGenerationState]);
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
@@ -367,25 +367,29 @@ function App() {
     }
   };
 
-  const handleGenerateChapters = async () => {
+  const handleGenerateChapters = useCallback(async (options?: { resumeTask?: GenerationTask }) => {
     if (!selectedProject) return;
     if (!isConfigured) {
       setError('请先在设置中配置 AI API Key');
       setShowSettingsDialog(true);
       return;
     }
+    
+    const resumeTask = options?.resumeTask;
+    
     // Prevent concurrent generation for the SAME project (serial enforcement)
-    if (generationState.isGenerating && generationState.projectName === selectedProject.name) {
+    // Only check if NOT resuming (resuming means we want to attach to the existing one)
+    if (!resumeTask && generationState.isGenerating && generationState.projectName === selectedProject.name) {
       setError('该小说已有生成任务正在进行中，请等待完成后再试');
       return;
     }
     try {
       setLoading(true);
-      const count = parseInt(generateCount, 10);
+      const count = resumeTask ? resumeTask.targetCount : parseInt(generateCount, 10);
       const startTime = Date.now();
-      log(`生成章节: ${selectedProject.name}, ${count} 章`);
+      log(resumeTask ? `恢复任务: ${selectedProject.name}, 目标 ${count} 章` : `生成章节: ${selectedProject.name}, ${count} 章`);
       
-      // Initialize generation state
+      // Initialize generation state - simple start, detailed state will come from events
       setGenerationState({
         isGenerating: true,
         current: 0,
@@ -393,6 +397,7 @@ function App() {
         status: 'preparing',
         message: '准备生成章节...',
         startTime,
+        projectName: selectedProject.name,
       });
       
       await generateChaptersWithProgress(
@@ -401,7 +406,20 @@ function App() {
         {
           onStart: (total) => {
             log(`📝 开始生成 ${total} 章...`);
-            setGenerationState(prev => ({ ...prev, total, status: 'generating' }));
+            setGenerationState(prev => ({ ...prev, current: 0, total, status: 'generating' }));
+          },
+          onTaskResumed: (event: any) => {
+             const completed = event.completedChapters?.length || 0;
+             const total = event.targetCount || count;
+             log(`🔄 恢复任务: 已完成 ${completed}/${total} 章`);
+             setGenerationState(prev => ({
+               ...prev,
+               current: completed,
+               total: total,
+               currentChapter: event.currentProgress || 0,
+               status: 'generating',
+               message: event.currentMessage || `恢复生成...`,
+             }));
           },
           onProgress: (event) => {
             if (event.message) log(`📝 ${event.message}`);
@@ -499,7 +517,50 @@ function App() {
         });
       }, 2000);
     }
-  };
+  }, [selectedProject, isConfigured, generationState, generateCount, aiConfig, loadProject, setGenerationState, log]);
+
+  // Check for active generation tasks when project loads
+  // For running tasks: actively resume stream
+  // For paused tasks: show resume dialog
+  useEffect(() => {
+    if (!selectedProject) return;
+    // Avoid duplicate checks for the same project
+    if (checkedProjectRef.current === selectedProject.name) return;
+    checkedProjectRef.current = selectedProject.name;
+    
+    const checkActiveTask = async () => {
+      try {
+        const task = await getActiveTask(selectedProject.name);
+        if (!task) {
+          setActiveTask(null);
+          return;
+        }
+        
+        setActiveTask(task);
+        
+        if (task.status === 'running') {
+          // Check if task is healthy (3 min threshold)
+          const threeMinutesMs = 3 * 60 * 1000;
+          const isHealthy = task.updatedAtMs && (Date.now() - task.updatedAtMs < threeMinutesMs);
+          
+          if (isHealthy) {
+            // Task is healthy - actively resume stream!
+            // This ensures we get real-time updates even after refresh
+            handleGenerateChapters({ resumeTask: task });
+          } else {
+            // Task is stale (likely crashed) - show resume dialog
+            setShowResumeDialog(true);
+          }
+        } else if (task.status === 'paused') {
+          setShowResumeDialog(true);
+        }
+      } catch (err) {
+        console.warn('Failed to check active task:', err);
+      }
+    };
+
+    checkActiveTask();
+  }, [selectedProject?.name, handleGenerateChapters, setGenerationState]);
 
   const handleViewChapter = async (index: number): Promise<string> => {
     if (!selectedProject) return '';

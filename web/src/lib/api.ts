@@ -242,12 +242,19 @@ export type GenerationEventType =
   | 'chapter_error' 
   | 'done' 
   | 'error' 
-  | 'heartbeat';
+  | 'heartbeat'
+  | 'task_resumed';
 
 export type GenerationEvent = {
   type: GenerationEventType;
   // start event
-  total?: number;
+  total?: number; // For start event
+  // task_resumed event
+  taskId?: number;
+  completedChapters?: number[];
+  targetCount?: number;
+  currentProgress?: number;
+  currentMessage?: string;
   // progress event
   current?: number;
   chapterIndex?: number;
@@ -316,7 +323,7 @@ export async function* generateChaptersStream(
               if (event.type !== 'heartbeat') {
                 yield event;
               }
-              // If done or error, we're finished
+              // If done or error, we're finished correctly
               if (event.type === 'done' || event.type === 'error') {
                 return;
               }
@@ -341,6 +348,7 @@ export async function generateChaptersWithProgress(
   chaptersToGenerate: number,
   callbacks: {
     onStart?: (total: number) => void;
+    onTaskResumed?: (event: GenerationEvent) => void;
     onProgress?: (event: GenerationEvent) => void;
     onChapterComplete?: (chapterIndex: number, title: string, preview: string) => void;
     onChapterError?: (chapterIndex: number, error: string) => void;
@@ -377,29 +385,30 @@ export async function generateChaptersWithProgress(
     try {
       // Check how many chapters we still need to generate
       // The backend will automatically resume from next_chapter_index
-      const task = await getActiveTask(name);
-      const completedCount = task?.completedChapters?.length || 0;
-      const remaining = task ? (task.targetCount - completedCount) : chaptersToGenerate;
       
-      if (remaining <= 0) {
-        // Task already completed
-        callbacks.onDone?.(results, []);
-        break;
-      }
-
-      for await (const event of generateChaptersStream(name, remaining, aiHeaders, signal)) {
+      // Only check remaining if NOT in resume mode yet (to avoid infinite loop if backend issue)
+      // But actually, we just rely on calling generate-stream. 
+      // If task is running, backend returns it.
+      
+      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
         switch (event.type) {
           case 'start':
             if (retryCount === 0) {
               callbacks.onStart?.(event.total || chaptersToGenerate);
             }
             break;
+          case 'task_resumed':
+            callbacks.onTaskResumed?.(event);
+            break;
           case 'progress':
             callbacks.onProgress?.(event);
             break;
           case 'chapter_complete':
             if (event.chapterIndex !== undefined && event.title) {
-              results.push({ chapter: event.chapterIndex, title: event.title });
+              // Avoid duplicates if we resume multiple times
+              if (!results.some(r => r.chapter === event.chapterIndex)) {
+                results.push({ chapter: event.chapterIndex, title: event.title });
+              }
               callbacks.onChapterComplete?.(event.chapterIndex, event.title, event.preview || '');
             }
             break;
@@ -457,6 +466,7 @@ export type GenerationTask = {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  updatedAtMs: number;  // Unix timestamp in ms for reliable health check
 };
 
 // Get active generation task for a project
