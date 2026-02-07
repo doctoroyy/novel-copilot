@@ -242,16 +242,12 @@ function App() {
   }, [projectName, selectedProject?.name, loadProject]);
 
   // Check for active generation tasks when project loads
-  // For running tasks: sync progress directly (same view on all devices)
+  // For running tasks: sync progress once (real-time updates come via SSE)
   // For paused tasks: show resume dialog
   useEffect(() => {
     if (!selectedProject) return;
     
-    let pollInterval: ReturnType<typeof setInterval> | null = null;
-    
     const syncTaskProgress = (task: GenerationTask) => {
-      // Calculate a reasonable start time based on task progress
-      // Use updatedAt minus estimated time for completed chapters (assume ~60s per chapter)
       const estimatedElapsedMs = task.completedChapters.length * 60 * 1000;
       const updatedAtTime = new Date(task.updatedAt).getTime();
       const estimatedStartTime = updatedAtTime - estimatedElapsedMs;
@@ -268,7 +264,7 @@ function App() {
       });
     };
 
-    const checkAndSync = async () => {
+    const checkActiveTask = async () => {
       try {
         const task = await getActiveTask(selectedProject.name);
         if (!task) {
@@ -279,36 +275,9 @@ function App() {
         setActiveTask(task);
         
         if (task.status === 'running') {
-          // Running task: sync progress directly (like viewing same screen)
+          // Sync initial progress, real-time updates come via SSE
           syncTaskProgress(task);
-          // Start polling if not already
-          if (!pollInterval) {
-            pollInterval = setInterval(async () => {
-              const updated = await getActiveTask(selectedProject.name);
-              if (updated && updated.status === 'running') {
-                syncTaskProgress(updated);
-              } else if (updated?.status === 'completed' || updated?.status === 'failed') {
-                // Task finished on other device
-                setGenerationState(prev => ({
-                  ...prev,
-                  isGenerating: false,
-                  status: updated.status === 'completed' ? 'done' : 'error',
-                  message: updated.status === 'completed' 
-                    ? `生成完成: ${updated.completedChapters.length} 章` 
-                    : updated.errorMessage || '生成失败',
-                }));
-                clearInterval(pollInterval!);
-                pollInterval = null;
-                await loadProject(selectedProject.name);
-              } else {
-                // Task paused or deleted
-                clearInterval(pollInterval!);
-                pollInterval = null;
-              }
-            }, 3000);
-          }
         } else if (task.status === 'paused') {
-          // Paused task: show resume dialog
           setShowResumeDialog(true);
         }
       } catch (err) {
@@ -316,12 +285,8 @@ function App() {
       }
     };
 
-    checkAndSync();
-
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
-  }, [selectedProject?.name, loadProject, setGenerationState]);
+    checkActiveTask();
+  }, [selectedProject?.name, setGenerationState]);
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
