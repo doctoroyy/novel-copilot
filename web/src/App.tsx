@@ -367,7 +367,7 @@ function App() {
     }
   };
 
-  const handleGenerateChapters = useCallback(async (options?: { resumeTask?: GenerationTask }) => {
+  const handleGenerateChapters = useCallback(async (options?: { resumeTask?: GenerationTask; count?: number }) => {
     if (!selectedProject) return;
     if (!isConfigured) {
       setError('请先在设置中配置 AI API Key');
@@ -385,7 +385,7 @@ function App() {
     }
     try {
       setLoading(true);
-      const count = resumeTask ? resumeTask.targetCount : parseInt(generateCount, 10);
+      const count = options?.count ?? (resumeTask ? resumeTask.targetCount : parseInt(generateCount, 10));
       const startTime = Date.now();
       log(resumeTask ? `恢复任务: ${selectedProject.name}, 目标 ${count} 章` : `生成章节: ${selectedProject.name}, ${count} 章`);
       
@@ -1046,7 +1046,7 @@ function App() {
                   navigate(`/project/${encodeURIComponent(selectedProject.name)}/generate`);
                   // Then trigger generation with a small delay to ensure navigation completes
                   setTimeout(() => {
-                    handleGenerateChapters();
+                    handleGenerateChapters({ count: remaining });
                   }, 100);
                 }
               }}
