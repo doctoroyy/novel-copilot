@@ -110,6 +110,7 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 // Generate outline (streaming SSE to avoid Workers timeout)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   const aiConfig = getAIConfigFromHeaders(c);
 
   if (!aiConfig) {
@@ -141,10 +142,10 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         sendEvent('start', { targetChapters, targetWordCount });
 
-        // Get project
+        // Get project (user-scoped)
         const project = await c.env.DB.prepare(`
-          SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL
-        `).bind(name).first();
+          SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+        `).bind(name, userId).first();
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });
@@ -254,8 +255,9 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 // Generate chapters
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   const aiConfig = getAIConfigFromHeaders(c);
-
+  
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
@@ -270,8 +272,8 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
       LEFT JOIN characters c ON p.id = c.project_id
-      WHERE p.name = ?
-    `).bind(name).first() as any;
+      WHERE p.name = ? AND p.user_id = ?
+    `).bind(name, userId).first() as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -396,6 +398,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 // Streaming chapter generation with SSE
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   const aiConfig = getAIConfigFromHeaders(c);
 
   if (!aiConfig) {
@@ -427,15 +430,15 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
         sendEvent('start', { total: chaptersToGenerate });
 
-        // Get project with state and outline
+        // Get project with state and outline (user-scoped)
         const project = await c.env.DB.prepare(`
           SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
           FROM projects p
           JOIN states s ON p.id = s.project_id
           LEFT JOIN outlines o ON p.id = o.project_id
           LEFT JOIN characters c ON p.id = c.project_id
-          WHERE p.name = ?
-        `).bind(name).first() as any;
+          WHERE p.name = ? AND p.user_id = ?
+        `).bind(name, userId).first() as any;
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });
@@ -650,6 +653,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 // Enhanced chapter generation with full context engineering
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   const aiConfig = getAIConfigFromHeaders(c);
 
   if (!aiConfig) {
@@ -664,7 +668,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
       enableAutoRepair = false,
     } = await c.req.json();
 
-    // Get project with state and outline
+    // Get project with state and outline (user-scoped)
     const project = await c.env.DB.prepare(`
       SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json,
              cs.registry_json as character_states_json, cs.last_updated_chapter as states_chapter,
@@ -677,8 +681,8 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
       LEFT JOIN character_states cs ON p.id = cs.project_id
       LEFT JOIN plot_graphs pg ON p.id = pg.project_id
       LEFT JOIN narrative_config nc ON p.id = nc.project_id
-      WHERE p.name = ?
-    `).bind(name).first() as any;
+      WHERE p.name = ? AND p.user_id = ?
+    `).bind(name, userId).first() as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -1238,6 +1242,7 @@ ${prevChaptersContext}
 // Refine outline (regenerate missing/incomplete volumes)
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   const aiConfig = getAIConfigFromHeaders(c);
 
   if (!aiConfig) {
@@ -1245,10 +1250,10 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   }
 
   try {
-    // Get project
+    // Get project (user-scoped)
     const project = await c.env.DB.prepare(`
-      SELECT id, bible FROM projects WHERE name = ?
-    `).bind(name).first();
+      SELECT id, bible FROM projects WHERE name = ? AND user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);

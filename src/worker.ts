@@ -6,6 +6,9 @@ import { generationRoutes } from './routes/generation.js';
 import { charactersRoutes } from './routes/characters.js';
 import { contextRoutes } from './routes/context.js';
 import { animeRoutes } from './routes/anime.js';
+import { authRoutes } from './routes/auth.js';
+import { adminRoutes } from './routes/admin.js';
+import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
   DB: D1Database;
@@ -17,6 +20,16 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', cors());
 
+// Auth routes (no auth required)
+app.route('/api/auth', authRoutes);
+
+// Protected routes (require authentication)
+app.use('/api/projects/*', authMiddleware());
+app.use('/api/characters/*', authMiddleware());
+app.use('/api/context/*', authMiddleware());
+app.use('/api/anime/*', authMiddleware());
+app.use('/api/admin/*', authMiddleware());
+
 // Mount routes
 app.route('/api/projects', projectsRoutes);
 app.route('/api/config', configRoutes);
@@ -24,6 +37,7 @@ app.route('/api', generationRoutes);
 app.route('/api/characters', charactersRoutes);
 app.route('/api/context', contextRoutes);
 app.route('/api/anime', animeRoutes);
+app.route('/api/admin', adminRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects
