@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   bible TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME DEFAULT NULL
 );
 
 -- State table (one per project)
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS chapters (
   chapter_index INTEGER NOT NULL,
   content TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME DEFAULT NULL,
   UNIQUE(project_id, chapter_index)
 );
 
@@ -39,6 +41,10 @@ CREATE TABLE IF NOT EXISTS outlines (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_project_index ON chapters(project_id, chapter_index);
+
+-- Indexes for soft delete queries
+CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_chapters_deleted ON chapters(project_id, deleted_at);
 
 -- Characters table (Character Relationship Graph)
 CREATE TABLE IF NOT EXISTS characters (

@@ -62,7 +62,7 @@ contextRoutes.get('/projects/:name/character-states', async (c) => {
       SELECT cs.registry_json, cs.last_updated_chapter
       FROM character_states cs
       JOIN projects p ON cs.project_id = p.id
-      WHERE p.name = ?
+      WHERE p.name = ? AND p.deleted_at IS NULL
     `).bind(name).first() as any;
 
     if (!result) {
@@ -96,7 +96,7 @@ contextRoutes.post('/projects/:name/character-states/initialize', async (c) => {
       SELECT p.id, c.characters_json
       FROM projects p
       LEFT JOIN characters c ON p.id = c.project_id
-      WHERE p.name = ?
+      WHERE p.name = ? AND p.deleted_at IS NULL
     `).bind(name).first() as any;
 
     if (!project) {
@@ -240,7 +240,7 @@ contextRoutes.post('/projects/:name/plot-graph/initialize', async (c) => {
 
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first() as any;
 
     if (!project) {

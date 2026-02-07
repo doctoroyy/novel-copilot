@@ -15,6 +15,7 @@ projectsRoutes.get('/', async (c) => {
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
+      WHERE p.deleted_at IS NULL
       ORDER BY p.created_at DESC
     `).all();
 
@@ -50,7 +51,7 @@ projectsRoutes.get('/:name', async (c) => {
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ?
+      WHERE p.name = ? AND p.deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -116,14 +117,15 @@ projectsRoutes.delete('/:name', async (c) => {
   
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind((project as any).id).run();
+    // Soft delete: set deleted_at timestamp
+    await c.env.DB.prepare(`UPDATE projects SET deleted_at = datetime('now') WHERE id = ?`).bind((project as any).id).run();
 
     return c.json({ success: true });
   } catch (error) {
@@ -154,7 +156,7 @@ projectsRoutes.put('/:name/reset', async (c) => {
   
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -173,7 +175,8 @@ projectsRoutes.put('/:name/reset', async (c) => {
       WHERE project_id = ?
     `).bind(id).run();
 
-    await c.env.DB.prepare(`DELETE FROM chapters WHERE project_id = ?`).bind(id).run();
+    // Soft delete all chapters
+    await c.env.DB.prepare(`UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND deleted_at IS NULL`).bind(id).run();
 
     return c.json({ success: true });
   } catch (error) {
@@ -190,7 +193,7 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
     const chapter = await c.env.DB.prepare(`
       SELECT c.content FROM chapters c
       JOIN projects p ON c.project_id = p.id
-      WHERE p.name = ? AND c.chapter_index = ?
+      WHERE p.name = ? AND c.chapter_index = ? AND c.deleted_at IS NULL AND p.deleted_at IS NULL
     `).bind(name, index).first();
 
     if (!chapter) {
@@ -211,7 +214,7 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
   try {
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -220,23 +223,23 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
 
     const projectId = (project as any).id;
 
-    // Check if chapter exists
+    // Check if chapter exists (and not deleted)
     const chapter = await c.env.DB.prepare(`
-      SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ?
+      SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
     `).bind(projectId, index).first();
 
     if (!chapter) {
       return c.json({ success: false, error: 'Chapter not found' }, 404);
     }
 
-    // Delete the chapter
+    // Soft delete the chapter
     await c.env.DB.prepare(`
-      DELETE FROM chapters WHERE project_id = ? AND chapter_index = ?
+      UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND chapter_index = ?
     `).bind(projectId, index).run();
 
-    // Recalculate nextChapterIndex based on remaining chapters
+    // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
     const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
     `).bind(projectId).first();
 
     const maxChapter = (maxChapterResult as any)?.max_index || 0;
@@ -270,7 +273,7 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -279,15 +282,15 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 
     const projectId = (project as any).id;
 
-    // Delete chapters in batch
+    // Soft delete chapters in batch
     const placeholders = indices.map(() => '?').join(', ');
     await c.env.DB.prepare(`
-      DELETE FROM chapters WHERE project_id = ? AND chapter_index IN (${placeholders})
+      UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND chapter_index IN (${placeholders}) AND deleted_at IS NULL
     `).bind(projectId, ...indices).run();
 
-    // Recalculate nextChapterIndex based on remaining chapters
+    // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
     const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ?
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
     `).bind(projectId).first();
 
     const maxChapter = (maxChapterResult as any)?.max_index || 0;
@@ -320,7 +323,7 @@ projectsRoutes.get('/:name/download', async (c) => {
       SELECT p.id, p.name, p.bible, o.outline_json
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ?
+      WHERE p.name = ? AND p.deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -332,10 +335,10 @@ projectsRoutes.get('/:name/download', async (c) => {
     const bibleContent = (project as any).bible;
     const outlineJson = (project as any).outline_json;
 
-    // 2. Fetch all chapters
+    // 2. Fetch all non-deleted chapters
     const { results: chapters } = await c.env.DB.prepare(`
       SELECT chapter_index, content FROM chapters 
-      WHERE project_id = ? 
+      WHERE project_id = ? AND deleted_at IS NULL
       ORDER BY chapter_index
     `).bind(projectId).all();
 

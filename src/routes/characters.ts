@@ -10,7 +10,7 @@ charactersRoutes.get('/:name', async (c) => {
   const name = c.req.param('name');
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -46,7 +46,7 @@ charactersRoutes.post('/:name/generate', async (c) => {
       SELECT p.id, p.bible, o.outline_json
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ?
+      WHERE p.name = ? AND p.deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
@@ -83,7 +83,7 @@ charactersRoutes.put('/:name', async (c) => {
 
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ?
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
     `).bind(name).first();
 
     if (!project) {
