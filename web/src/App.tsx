@@ -83,7 +83,7 @@ function App() {
   const [generatingOutline, setGeneratingOutline] = useState(false);
 
   // Generation progress state from context (persists across tab changes)
-  const { generationState, setGenerationState } = useGeneration();
+  const { generationState, setGenerationState, startTask, completeTask } = useGeneration();
 
   // Mobile state
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -240,8 +240,10 @@ function App() {
       setShowSettingsDialog(true);
       return;
     }
+    let taskId: string | undefined;
     try {
       setGeneratingOutline(true);
+      taskId = startTask('outline', `生成大纲: ${selectedProject.name}`, selectedProject.name);
       log(`生成大纲: ${selectedProject.name}`);
       const outline = await generateOutline(
         selectedProject.name,
@@ -252,10 +254,26 @@ function App() {
         (progressMsg) => log(`📝 ${progressMsg}`)
       );
       log(`✅ 大纲生成完成: ${outline.volumes.length} 卷, ${outline.totalChapters} 章`);
+      if (taskId) completeTask(taskId, true, `${outline.volumes.length} 卷, ${outline.totalChapters} 章`);
+      addTaskToHistory({
+        type: 'outline',
+        title: `大纲生成完成`,
+        status: 'success',
+        startTime: Date.now(),
+        details: `${outline.volumes.length} 卷, ${outline.totalChapters} 章`,
+      });
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
       log(`❌ 生成失败: ${(err as Error).message}`);
+      if (taskId) completeTask(taskId, false, (err as Error).message);
+      addTaskToHistory({
+        type: 'outline',
+        title: `大纲生成失败`,
+        status: 'error',
+        startTime: Date.now(),
+        details: (err as Error).message,
+      });
     } finally {
       setGeneratingOutline(false);
     }
@@ -492,11 +510,13 @@ function App() {
     }
     setGeneratingBible(true);
     const startTime = Date.now();
+    const taskId = startTask('bible', 'AI 正在想象 Story Bible...');
     try {
       log('🤖 AI 正在想象 Story Bible...');
       const bible = await generateBible(aiGenre, aiTheme, aiKeywords, getAIConfigHeaders(aiConfig));
       setNewProjectBible(bible);
       log('✅ Story Bible 生成完成');
+      completeTask(taskId, true);
       addTaskToHistory({
         type: 'bible',
         title: 'Story Bible 生成完成',
@@ -507,6 +527,7 @@ function App() {
     } catch (err) {
       setError((err as Error).message);
       log(`❌ 生成失败: ${(err as Error).message}`);
+      completeTask(taskId, false, (err as Error).message);
       addTaskToHistory({
         type: 'bible',
         title: 'Story Bible 生成失败',

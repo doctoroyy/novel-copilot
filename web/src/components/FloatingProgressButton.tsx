@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle } from 'lucide-react';
+import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useGeneration } from '@/contexts/GenerationContext';
+import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
 
 // Task history item type
 export interface TaskHistoryItem {
   id: string;
-  type: 'bible' | 'outline' | 'chapters' | 'other';
+  type: TaskType;
   title: string;
   status: 'success' | 'error' | 'cancelled';
   startTime: number;
@@ -24,8 +24,16 @@ export function addTaskToHistory(task: Omit<TaskHistoryItem, 'id'>) {
   window.dispatchEvent(new CustomEvent('taskHistoryUpdate'));
 }
 
+// Task type icons and labels
+const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = {
+  chapters: { icon: <BookOpen className="w-4 h-4" />, label: '章节生成' },
+  outline: { icon: <FileText className="w-4 h-4" />, label: '大纲生成' },
+  bible: { icon: <Sparkles className="w-4 h-4" />, label: 'Story Bible' },
+  other: { icon: <Activity className="w-4 h-4" />, label: '任务' },
+};
+
 export function FloatingProgressButton() {
-  const { generationState } = useGeneration();
+  const { generationState, activeTasks } = useGeneration();
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
@@ -37,22 +45,30 @@ export function FloatingProgressButton() {
     return () => window.removeEventListener('taskHistoryUpdate', handler);
   }, []);
 
-  // Current tasks from generation state
-  const currentTasks = generationState.isGenerating ? [{
-    id: 'current',
-    type: 'chapters' as const,
-    title: generationState.message || 'Generating...',
-    status: generationState.status,
-    current: generationState.current,
-    total: generationState.total,
-  }] : [];
+  // Combine legacy generation state with new active tasks
+  const allTasks: ActiveTask[] = [
+    ...activeTasks,
+    // Add legacy chapter generation if active
+    ...(generationState.isGenerating ? [{
+      id: 'legacy-chapters',
+      type: 'chapters' as TaskType,
+      title: generationState.message || '生成章节中...',
+      status: generationState.status || 'generating',
+      current: generationState.current,
+      total: generationState.total,
+      startTime: generationState.startTime || Date.now(),
+      projectName: generationState.projectName,
+    }] : []),
+  ];
 
-  const hasActiveTasks = currentTasks.length > 0;
+  const hasActiveTasks = allTasks.length > 0;
 
-  // Calculate progress percentage
-  const progressPercent = generationState.total > 0 
-    ? Math.round((generationState.current / generationState.total) * 100)
-    : 0;
+  // Auto-open when tasks start
+  useEffect(() => {
+    if (hasActiveTasks && !isOpen) {
+      setIsOpen(true);
+    }
+  }, [hasActiveTasks]);
 
   return (
     <>
@@ -64,7 +80,7 @@ export function FloatingProgressButton() {
           "flex items-center justify-center transition-all duration-300",
           "hover:scale-110 active:scale-95",
           hasActiveTasks 
-            ? "bg-primary text-primary-foreground animate-pulse" 
+            ? "bg-primary text-primary-foreground" 
             : "bg-card border border-border text-muted-foreground hover:text-foreground"
         )}
       >
@@ -72,7 +88,7 @@ export function FloatingProgressButton() {
           <div className="relative">
             <Loader2 className="w-6 h-6 animate-spin" />
             <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 text-[10px] rounded-full flex items-center justify-center text-white font-bold">
-              {currentTasks.length}
+              {allTasks.length}
             </span>
           </div>
         ) : (
@@ -99,38 +115,60 @@ export function FloatingProgressButton() {
 
           {/* Current Tasks */}
           <div className="p-3 border-b border-border">
-            <div className="text-xs text-muted-foreground mb-2 flex items-center justify-between">
-              <span>当前任务</span>
-              {hasActiveTasks && (
-                <span className="text-primary">{progressPercent}%</span>
-              )}
+            <div className="text-xs text-muted-foreground mb-2">
+              当前任务 ({allTasks.length})
             </div>
-            {currentTasks.length === 0 ? (
+            {allTasks.length === 0 ? (
               <div className="text-sm text-muted-foreground py-4 text-center">
                 暂无进行中的任务
               </div>
             ) : (
               <div className="space-y-2">
-                {currentTasks.map(task => (
-                  <div key={task.id} className="bg-muted/50 rounded-lg p-3">
-                    <div className="flex items-start gap-2">
-                      <Loader2 className="w-4 h-4 mt-0.5 animate-spin text-primary shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{task.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {task.current} / {task.total} 章
-                        </p>
+                {allTasks.map(task => {
+                  const config = TASK_CONFIG[task.type];
+                  const progressPercent = task.total && task.total > 0 
+                    ? Math.round(((task.current || 0) / task.total) * 100)
+                    : null;
+                  
+                  return (
+                    <div key={task.id} className="bg-muted/50 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <div className="mt-0.5 text-primary shrink-0 animate-pulse">
+                          {config.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{task.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {config.label}
+                            {task.projectName && ` · ${task.projectName}`}
+                            {progressPercent !== null && ` · ${progressPercent}%`}
+                          </p>
+                        </div>
+                        <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
                       </div>
+                      {/* Progress bar for tasks with progress */}
+                      {progressPercent !== null && (
+                        <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-primary transition-all duration-300"
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                      )}
+                      {/* Indeterminate progress for tasks without specific progress */}
+                      {progressPercent === null && (
+                        <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden relative">
+                          <div 
+                            className="absolute h-full w-1/3 bg-primary rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]"
+                            style={{
+                              animation: 'indeterminate 1.5s ease-in-out infinite',
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
-                    {/* Progress bar */}
-                    <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-primary transition-all duration-300"
-                        style={{ width: `${progressPercent}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -174,6 +212,14 @@ export function FloatingProgressButton() {
           </div>
         </div>
       )}
+
+      {/* CSS for indeterminate animation */}
+      <style>{`
+        @keyframes indeterminate {
+          0% { left: -33%; }
+          100% { left: 100%; }
+        }
+      `}</style>
     </>
   );
 }
