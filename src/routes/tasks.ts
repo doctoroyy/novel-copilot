@@ -199,11 +199,20 @@ export async function checkRunningTask(
 export async function updateTaskMessage(
   db: D1Database,
   taskId: number,
-  message: string
+  message: string,
+  currentChapter?: number
 ): Promise<void> {
-  await db.prepare(`
-    UPDATE generation_tasks 
-    SET current_message = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).bind(message, taskId).run();
+  if (currentChapter !== undefined) {
+    await db.prepare(`
+      UPDATE generation_tasks 
+      SET current_message = ?, current_progress = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(message, currentChapter, taskId).run();
+  } else {
+    await db.prepare(`
+      UPDATE generation_tasks 
+      SET current_message = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(message, taskId).run();
+  }
 }
