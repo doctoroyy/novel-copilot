@@ -470,6 +470,15 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
         const startingChapterIndex = project.next_chapter_index;
 
+        // Check if there's already a running task (serial enforcement)
+        const { isRunning } = await checkRunningTask(c.env.DB, project.id);
+        if (isRunning) {
+          sendEvent('error', { error: '已有生成任务正在进行中，请等待完成或取消后再试' });
+          controller.close();
+          clearInterval(heartbeatInterval);
+          return;
+        }
+
         // Create generation task for persistence
         const taskId = await createGenerationTask(
           c.env.DB,
