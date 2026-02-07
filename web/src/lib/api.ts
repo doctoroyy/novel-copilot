@@ -477,6 +477,16 @@ export async function cancelTask(name: string, taskId: number): Promise<void> {
   });
 }
 
+// Get all active generation tasks for the current user (global)
+export async function getAllActiveTasks(): Promise<GenerationTask[]> {
+  const res = await fetch(`${API_BASE}/active-tasks`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) return [];
+  return data.tasks;
+}
+
 export async function fetchChapter(name: string, index: number): Promise<string> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
     headers: defaultHeaders(),

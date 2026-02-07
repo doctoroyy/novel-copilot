@@ -3,6 +3,42 @@ import type { Env } from '../worker.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
+// Get all active tasks for the current user (global endpoint)
+tasksRoutes.get('/active-tasks', async (c) => {
+  const userId = c.get('userId');
+
+  try {
+    const { results: tasks } = await c.env.DB.prepare(`
+      SELECT t.*, p.name as project_name
+      FROM generation_tasks t
+      JOIN projects p ON t.project_id = p.id
+      WHERE t.user_id = ? AND t.status IN ('running', 'paused')
+      ORDER BY t.created_at DESC
+    `).bind(userId).all();
+
+    const formatted = (tasks as any[]).map(task => ({
+      id: task.id,
+      projectId: task.project_id,
+      projectName: task.project_name,
+      userId: task.user_id,
+      targetCount: task.target_count,
+      startChapter: task.start_chapter,
+      completedChapters: JSON.parse(task.completed_chapters || '[]'),
+      failedChapters: JSON.parse(task.failed_chapters || '[]'),
+      currentProgress: task.current_progress || 0,
+      currentMessage: task.current_message || null,
+      status: task.status,
+      errorMessage: task.error_message,
+      createdAt: task.created_at,
+      updatedAt: task.updated_at,
+    }));
+
+    return c.json({ success: true, tasks: formatted });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Types
 export type GenerationTask = {
   id: number;

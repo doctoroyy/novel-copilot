@@ -22,6 +22,7 @@ interface GenerationState {
   status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
   message?: string;
   startTime?: number;
+  projectName?: string;
 }
 
 interface GenerateViewProps {
@@ -63,8 +64,8 @@ export function GenerateView({
 }: GenerateViewProps) {
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
-      {/* Generation Progress Overlay */}
-      {generationState?.isGenerating && (
+      {/* Generation Progress Overlay - only show if the progress belongs to THIS project */}
+      {generationState?.isGenerating && generationState?.projectName === project.name && (
         <GenerationProgress
           isGenerating={generationState.isGenerating}
           current={generationState.current}
