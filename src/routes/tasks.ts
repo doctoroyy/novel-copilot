@@ -31,6 +31,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
       errorMessage: task.error_message,
       createdAt: task.created_at,
       updatedAt: task.updated_at,
+      updatedAtMs: new Date(task.updated_at + 'Z').getTime(), // UTC timestamp in ms
     }));
 
     return c.json({ success: true, tasks: formatted });
@@ -55,6 +56,7 @@ export type GenerationTask = {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  updatedAtMs: number; // Unix timestamp in ms for reliable health check
 };
 
 // Get active task for a project
@@ -101,6 +103,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       errorMessage: task.error_message,
       createdAt: task.created_at,
       updatedAt: task.updated_at,
+      updatedAtMs: new Date(task.updated_at + 'Z').getTime(), // UTC timestamp in ms
     };
 
     return c.json({ success: true, task: result });
@@ -216,17 +219,29 @@ export async function completeTask(
 export async function checkRunningTask(
   db: D1Database,
   projectId: string
-): Promise<{ isRunning: boolean; taskId?: number }> {
+): Promise<{ isRunning: boolean; taskId?: number; task?: any }> {
   const task = await db.prepare(`
-    SELECT id, updated_at FROM generation_tasks 
+    SELECT * FROM generation_tasks 
     WHERE project_id = ? AND status = 'running'
     AND updated_at > datetime('now', '-2 minutes')
     ORDER BY updated_at DESC
     LIMIT 1
-  `).bind(projectId).first() as { id: number; updated_at: string } | null;
+  `).bind(projectId).first() as any;
 
   if (task) {
-    return { isRunning: true, taskId: task.id };
+    return { 
+      isRunning: true, 
+      taskId: task.id,
+      task: {
+        ...task,
+        completedChapters: JSON.parse(task.completed_chapters || '[]'),
+        failedChapters: JSON.parse(task.failed_chapters || '[]'),
+        targetCount: task.target_count,
+        currentProgress: task.current_progress,
+        currentMessage: task.current_message,
+        startChapter: task.start_chapter
+      }
+    };
   }
   return { isRunning: false };
 }

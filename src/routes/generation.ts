@@ -486,11 +486,93 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
         const startingChapterIndex = project.next_chapter_index;
 
         // Check if there's already a running task (serial enforcement)
-        const { isRunning } = await checkRunningTask(c.env.DB, project.id);
-        if (isRunning) {
-          sendEvent('error', { error: '已有生成任务正在进行中，请等待完成或取消后再试' });
-          controller.close();
+        const { isRunning, taskId: existingTaskId, task: existingTask } = await checkRunningTask(c.env.DB, project.id);
+        if (isRunning && existingTaskId && existingTask) {
+          // Task is running - stream progress from DB instead of starting new generation
+          sendEvent('task_resumed', { 
+            taskId: existingTaskId,
+            completedChapters: existingTask.completedChapters,
+            targetCount: existingTask.targetCount,
+            currentProgress: existingTask.currentProgress,
+            currentMessage: existingTask.currentMessage,
+          });
+          
+          // Stream progress updates from DB until task completes or client disconnects
+          let lastProgress = existingTask.currentProgress;
+          let lastCompletedCount = existingTask.completedChapters.length;
+          let consecutiveNoChange = 0;
+          const MAX_NO_CHANGE = 36; // 3 minutes at 5s intervals
+          
+          while (clientConnected) {
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5 seconds
+            
+            try {
+              const currentTask = await c.env.DB.prepare(`
+                SELECT * FROM generation_tasks WHERE id = ?
+              `).bind(existingTaskId).first() as any;
+              
+              if (!currentTask) {
+                sendEvent('done', { success: true, message: '任务已完成或被删除' });
+                break;
+              }
+              
+              const completedChapters = JSON.parse(currentTask.completed_chapters || '[]');
+              const failedChapters = JSON.parse(currentTask.failed_chapters || '[]');
+              
+              // Check if task completed
+              if (currentTask.status === 'completed' || currentTask.status === 'failed') {
+                sendEvent('done', { 
+                  success: currentTask.status === 'completed',
+                  generated: completedChapters.map((ch: number) => ({ chapter: ch, title: `第${ch}章` })),
+                  failedChapters,
+                  totalGenerated: completedChapters.length,
+                  totalFailed: failedChapters.length,
+                  taskId: existingTaskId,
+                });
+                break;
+              }
+              
+              // Check for progress changes
+              const currentCompletedCount = completedChapters.length;
+              if (currentTask.current_progress !== lastProgress || currentCompletedCount !== lastCompletedCount) {
+                consecutiveNoChange = 0;
+                lastProgress = currentTask.current_progress;
+                lastCompletedCount = currentCompletedCount;
+                
+                // Send progress update
+                sendEvent('progress', {
+                  current: currentCompletedCount,
+                  total: currentTask.target_count,
+                  chapterIndex: currentTask.current_progress,
+                  status: 'generating',
+                  message: currentTask.current_message || `正在生成第 ${currentTask.current_progress} 章...`,
+                });
+                
+                // Also send chapter_complete for newly completed chapters
+                if (currentCompletedCount > 0) {
+                  const latestChapter = completedChapters[currentCompletedCount - 1];
+                  sendEvent('chapter_complete', {
+                    chapterIndex: latestChapter,
+                    title: `第${latestChapter}章`,
+                    wordCount: 0, // We don't have this info in the poll
+                  });
+                }
+              } else {
+                consecutiveNoChange++;
+                if (consecutiveNoChange >= MAX_NO_CHANGE) {
+                  // Task appears stuck - might be crashed
+                  sendEvent('error', { error: '任务超时或已停止，请刷新页面重试' });
+                  break;
+                }
+              }
+            } catch (pollError) {
+              console.warn('Error polling task progress:', pollError);
+              // Continue polling despite errors
+            }
+          }
+          
           clearInterval(heartbeatInterval);
+          try { controller.close(); } catch {}
           return;
         }
 
@@ -568,6 +650,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
                   await new Promise(resolve => setTimeout(resolve, retryDelay));
                 }
                 
+                // Heartbeat before AI call
+                await updateTaskMessage(c.env.DB, taskId, `正在调用 AI 生成第 ${chapterIndex} 章...`, chapterIndex);
+                
                 result = await writeOneChapter({
                   aiConfig,
                   bible: project.bible,
@@ -587,8 +672,15 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
                       status: status || 'generating',
                       message,
                     });
+                    // Also update DB heartbeat on certain progress events
+                    if (status === 'saving' || status === 'reviewing') {
+                      updateTaskMessage(c.env.DB, taskId, message, chapterIndex).catch(() => {});
+                    }
                   },
                 });
+                
+                // Heartbeat after AI call completes
+                await updateTaskMessage(c.env.DB, taskId, `第 ${chapterIndex} 章 AI 生成完成，正在保存...`, chapterIndex);
                 
                 // Success, break out of retry loop
                 break;
