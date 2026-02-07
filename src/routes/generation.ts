@@ -493,7 +493,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           });
 
           // Update task progress in DB for cross-device sync
-          await updateTaskMessage(c.env.DB, taskId, `正在生成第 ${chapterIndex} 章...`);
+          await updateTaskMessage(c.env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
 
           try {
             // Get last 2 chapters

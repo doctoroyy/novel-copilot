@@ -216,6 +216,12 @@ function App() {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     
     const syncTaskProgress = (task: GenerationTask) => {
+      // Calculate a reasonable start time based on task progress
+      // Use updatedAt minus estimated time for completed chapters (assume ~60s per chapter)
+      const estimatedElapsedMs = task.completedChapters.length * 60 * 1000;
+      const updatedAtTime = new Date(task.updatedAt).getTime();
+      const estimatedStartTime = updatedAtTime - estimatedElapsedMs;
+      
       setGenerationState({
         isGenerating: true,
         current: task.completedChapters.length,
@@ -223,7 +229,7 @@ function App() {
         currentChapter: task.currentProgress,
         status: 'generating',
         message: task.currentMessage || `正在生成第 ${task.currentProgress} 章...`,
-        startTime: new Date(task.createdAt).getTime(),
+        startTime: estimatedStartTime > 0 ? estimatedStartTime : Date.now(),
         projectName: selectedProject.name,
       });
     };
