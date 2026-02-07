@@ -411,17 +411,32 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
-      // Helper to send SSE event
+      // Track if client is still connected
+      let clientConnected = true;
+
+      // Helper to send SSE event - silently fails if client disconnected
       const sendEvent = (type: string, data: any) => {
-        const payload = JSON.stringify({ type, ...data });
-        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        if (!clientConnected) return; // Skip if already disconnected
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch {
+          // Client disconnected, mark as disconnected but continue generation
+          clientConnected = false;
+          console.log(`Client disconnected, continuing generation in background...`);
+        }
       };
 
       // Heartbeat to keep connection alive
       const heartbeatInterval = setInterval(() => {
+        if (!clientConnected) {
+          clearInterval(heartbeatInterval);
+          return;
+        }
         try {
           controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
         } catch {
+          clientConnected = false;
           clearInterval(heartbeatInterval);
         }
       }, 5000);
@@ -667,7 +682,12 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
         sendEvent('error', { error: (error as Error).message });
       } finally {
         clearInterval(heartbeatInterval);
-        controller.close();
+        // Safely close controller (may already be closed if client disconnected)
+        try {
+          controller.close();
+        } catch {
+          // Already closed, ignore
+        }
       }
     },
   });
