@@ -8,6 +8,7 @@ import { contextRoutes } from './routes/context.js';
 import { animeRoutes } from './routes/anime.js';
 import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
+import { tasksRoutes } from './routes/tasks.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
@@ -34,6 +35,7 @@ app.use('/api/admin/*', authMiddleware());
 app.route('/api/projects', projectsRoutes);
 app.route('/api/config', configRoutes);
 app.route('/api', generationRoutes);
+app.route('/api', tasksRoutes);
 app.route('/api/characters', charactersRoutes);
 app.route('/api/context', contextRoutes);
 app.route('/api/anime', animeRoutes);
