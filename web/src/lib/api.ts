@@ -2,6 +2,7 @@
 const API_BASE = '/api';
 
 import type { CharacterRelationGraph } from '../types/characters';
+import { getAuthHeaders } from './auth';
 
 export type ProjectSummary = {
   name: string;
@@ -60,21 +61,30 @@ export type ProjectDetail = {
   chapters: string[];
 };
 
-// Helper to merge headers
-function mergeHeaders(base: Record<string, string>, aiHeaders?: Record<string, string>): Record<string, string> {
-  return { ...base, ...aiHeaders };
+// Helper to merge headers with auth
+function mergeHeaders(base: Record<string, string>, extra?: Record<string, string>): Record<string, string> {
+  return { ...getAuthHeaders(), ...base, ...extra };
+}
+
+// Helper to get default headers with auth
+function defaultHeaders(): Record<string, string> {
+  return getAuthHeaders();
 }
 
 // API functions
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(`${API_BASE}/projects`);
+  const res = await fetch(`${API_BASE}/projects`, {
+    headers: defaultHeaders(),
+  });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.projects;
 }
 
 export async function fetchProject(name: string): Promise<ProjectDetail> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`);
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
+    headers: defaultHeaders(),
+  });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.project;
@@ -83,7 +93,7 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
 export async function createProject(name: string, bible: string, totalChapters: number): Promise<void> {
   const res = await fetch(`${API_BASE}/projects`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name, bible, totalChapters }),
   });
   const data = await res.json();
@@ -93,7 +103,7 @@ export async function createProject(name: string, bible: string, totalChapters: 
 export async function updateBible(name: string, bible: string): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/bible`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ bible }),
   });
   const data = await res.json();
@@ -381,7 +391,9 @@ export async function generateChaptersWithProgress(
 }
 
 export async function fetchChapter(name: string, index: number): Promise<string> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`);
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
+    headers: defaultHeaders(),
+  });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.content;
@@ -390,6 +402,7 @@ export async function fetchChapter(name: string, index: number): Promise<string>
 export async function deleteProject(name: string): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+    headers: defaultHeaders(),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
@@ -398,6 +411,7 @@ export async function deleteProject(name: string): Promise<void> {
 export async function resetProject(name: string): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/reset`, {
     method: 'PUT',
+    headers: defaultHeaders(),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
@@ -406,6 +420,7 @@ export async function resetProject(name: string): Promise<void> {
 export async function deleteChapter(name: string, index: number): Promise<{ newNextChapterIndex: number }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
     method: 'DELETE',
+    headers: defaultHeaders(),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
@@ -415,7 +430,7 @@ export async function deleteChapter(name: string, index: number): Promise<{ newN
 export async function batchDeleteChapters(name: string, indices: number[]): Promise<{ deletedIndices: number[]; newNextChapterIndex: number }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/batch-delete`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ indices }),
   });
   const data = await res.json();
@@ -447,7 +462,7 @@ export async function testAIConnection(config: {
 }): Promise<{ success: boolean; message: string }> {
   const res = await fetch(`${API_BASE}/config/test`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(config),
   });
   const data = await res.json();
@@ -455,7 +470,9 @@ export async function testAIConnection(config: {
 }
 // Character API
 export async function fetchCharacters(name: string): Promise<CharacterRelationGraph | null> {
-  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}`);
+  const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}`, {
+    headers: defaultHeaders(),
+  });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.characters;
@@ -477,7 +494,7 @@ export async function generateCharacters(
 export async function updateCharacters(name: string, characters: CharacterRelationGraph): Promise<void> {
   const res = await fetch(`${API_BASE}/characters/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ characters }),
   });
   const data = await res.json();
