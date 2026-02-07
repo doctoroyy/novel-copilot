@@ -10,11 +10,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { GenerationProgress } from '@/components/GenerationProgress';
 import type { ProjectDetail } from '@/lib/api';
+
+interface GenerationState {
+  isGenerating: boolean;
+  current: number;
+  total: number;
+  currentChapter?: number;
+  currentChapterTitle?: string;
+  status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
+  message?: string;
+  startTime?: number;
+}
 
 interface GenerateViewProps {
   project: ProjectDetail;
   loading: boolean;
+  generationState?: GenerationState;
   // Outline generation
   outlineChapters: string;
   outlineWordCount: string;
@@ -33,6 +46,7 @@ interface GenerateViewProps {
 export function GenerateView({
   project,
   loading,
+  generationState,
   outlineChapters,
   outlineWordCount,
   outlineCustomPrompt,
@@ -46,7 +60,22 @@ export function GenerateView({
   onResetState,
 }: GenerateViewProps) {
   return (
-    <div className="p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+    <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+      {/* Generation Progress Overlay */}
+      {generationState?.isGenerating && (
+        <GenerationProgress
+          isGenerating={generationState.isGenerating}
+          current={generationState.current}
+          total={generationState.total}
+          currentChapter={generationState.currentChapter}
+          currentChapterTitle={generationState.currentChapterTitle}
+          status={generationState.status}
+          message={generationState.message}
+          startTime={generationState.startTime}
+        />
+      )}
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
       {/* Outline Generation */}
       <Card className="glass-card">
         <CardHeader>
@@ -188,6 +217,7 @@ export function GenerateView({
           </div>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
