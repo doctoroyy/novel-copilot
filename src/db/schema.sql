@@ -1,10 +1,30 @@
 -- Novel Copilot D1 Database Schema
 
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_login_at DATETIME DEFAULT NULL
+);
+
+-- Invitation codes table
+CREATE TABLE IF NOT EXISTS invitation_codes (
+  code TEXT PRIMARY KEY,
+  created_by TEXT REFERENCES users(id),
+  used_by TEXT REFERENCES users(id) DEFAULT NULL,
+  used_at DATETIME DEFAULT NULL,
+  expires_at DATETIME DEFAULT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Projects table
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   bible TEXT NOT NULL,
+  user_id TEXT REFERENCES users(id),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   deleted_at DATETIME DEFAULT NULL
 );

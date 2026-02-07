@@ -79,6 +79,22 @@ function App() {
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
 
+  // Generation progress state
+  const [generationState, setGenerationState] = useState<{
+    isGenerating: boolean;
+    current: number;
+    total: number;
+    currentChapter?: number;
+    currentChapterTitle?: string;
+    status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
+    message?: string;
+    startTime?: number;
+  }>({
+    isGenerating: false,
+    current: 0,
+    total: 0,
+  });
+
   // Mobile state
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileActivityPanelOpen, setMobileActivityPanelOpen] = useState(false);
@@ -265,27 +281,72 @@ function App() {
     try {
       setLoading(true);
       const count = parseInt(generateCount, 10);
+      const startTime = Date.now();
       log(`生成章节: ${selectedProject.name}, ${count} 章`);
+      
+      // Initialize generation state
+      setGenerationState({
+        isGenerating: true,
+        current: 0,
+        total: count,
+        status: 'preparing',
+        message: '准备生成章节...',
+        startTime,
+      });
       
       await generateChaptersWithProgress(
         selectedProject.name,
         count,
         {
-          onStart: (total) => log(`📝 开始生成 ${total} 章...`),
+          onStart: (total) => {
+            log(`📝 开始生成 ${total} 章...`);
+            setGenerationState(prev => ({ ...prev, total, status: 'generating' }));
+          },
           onProgress: (event) => {
             if (event.message) log(`📝 ${event.message}`);
+            setGenerationState(prev => ({
+              ...prev,
+              current: event.current || prev.current,
+              currentChapter: event.chapterIndex,
+              status: (event.status as 'preparing' | 'generating' | 'saving') || prev.status,
+              message: event.message,
+            }));
           },
           onChapterComplete: (chapterIndex, title) => {
             log(`✅ 第 ${chapterIndex} 章「${title}」完成`);
+            setGenerationState(prev => ({
+              ...prev,
+              current: prev.current + 1,
+              currentChapterTitle: title,
+              status: 'generating',
+              message: `完成第 ${chapterIndex} 章: ${title}`,
+            }));
           },
           onChapterError: (chapterIndex, error) => {
             log(`❌ 第 ${chapterIndex} 章失败: ${error}`);
+            setGenerationState(prev => ({
+              ...prev,
+              status: 'error',
+              message: `第 ${chapterIndex} 章失败: ${error}`,
+            }));
           },
           onDone: (results, failedChapters) => {
             log(`🎉 完成! 成功 ${results.length} 章, 失败 ${failedChapters.length} 章`);
+            setGenerationState(prev => ({
+              ...prev,
+              isGenerating: false,
+              status: 'done',
+              message: `完成! 成功 ${results.length} 章`,
+            }));
           },
           onError: (error) => {
             log(`❌ 生成失败: ${error}`);
+            setGenerationState(prev => ({
+              ...prev,
+              isGenerating: false,
+              status: 'error',
+              message: error,
+            }));
           },
         },
         getAIConfigHeaders(aiConfig)
@@ -297,6 +358,14 @@ function App() {
       log(`❌ 生成失败: ${(err as Error).message}`);
     } finally {
       setLoading(false);
+      // Reset generation state after a brief delay to show completion
+      setTimeout(() => {
+        setGenerationState({
+          isGenerating: false,
+          current: 0,
+          total: 0,
+        });
+      }, 2000);
     }
   };
 
@@ -457,6 +526,7 @@ function App() {
           <GenerateView
             project={selectedProject}
             loading={loading}
+            generationState={generationState}
             outlineChapters={outlineChapters}
             outlineWordCount={outlineWordCount}
             outlineCustomPrompt={outlineCustomPrompt}

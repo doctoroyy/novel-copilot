@@ -3,8 +3,10 @@ import type { Env } from '../worker.js';
 
 export const projectsRoutes = new Hono<{ Bindings: Env }>();
 
-// List all projects
+// List all projects for current user
 projectsRoutes.get('/', async (c) => {
+  const userId = c.get('userId');
+  
   try {
     const { results } = await c.env.DB.prepare(`
       SELECT 
@@ -15,9 +17,9 @@ projectsRoutes.get('/', async (c) => {
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY p.created_at DESC
-    `).all();
+    `).bind(userId).all();
 
     const projects = results.map((row: any) => ({
       name: row.name,
@@ -41,9 +43,10 @@ projectsRoutes.get('/', async (c) => {
   }
 });
 
-// Get single project
+// Get single project (user-scoped)
 projectsRoutes.get('/:name', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     const project = await c.env.DB.prepare(`
@@ -51,8 +54,8 @@ projectsRoutes.get('/:name', async (c) => {
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ? AND p.deleted_at IS NULL
-    `).bind(name).first();
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -86,8 +89,10 @@ projectsRoutes.get('/:name', async (c) => {
   }
 });
 
-// Create project
+// Create project (owned by current user)
 projectsRoutes.post('/', async (c) => {
+  const userId = c.get('userId');
+  
   try {
     const { name, bible, totalChapters = 100 } = await c.req.json();
     
@@ -98,8 +103,8 @@ projectsRoutes.post('/', async (c) => {
     const id = crypto.randomUUID();
 
     await c.env.DB.prepare(`
-      INSERT INTO projects (id, name, bible) VALUES (?, ?, ?)
-    `).bind(id, name, bible).run();
+      INSERT INTO projects (id, name, bible, user_id) VALUES (?, ?, ?, ?)
+    `).bind(id, name, bible, userId).run();
 
     await c.env.DB.prepare(`
       INSERT INTO states (project_id, book_title, total_chapters) VALUES (?, ?, ?)
@@ -111,14 +116,15 @@ projectsRoutes.post('/', async (c) => {
   }
 });
 
-// Delete project
+// Delete project (user-scoped)
 projectsRoutes.delete('/:name', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -133,16 +139,17 @@ projectsRoutes.delete('/:name', async (c) => {
   }
 });
 
-// Update bible
+// Update bible (user-scoped)
 projectsRoutes.put('/:name/bible', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     const { bible } = await c.req.json();
     
     await c.env.DB.prepare(`
-      UPDATE projects SET bible = ? WHERE name = ?
-    `).bind(bible, name).run();
+      UPDATE projects SET bible = ? WHERE name = ? AND user_id = ?
+    `).bind(bible, name, userId).run();
 
     return c.json({ success: true });
   } catch (error) {
@@ -150,14 +157,15 @@ projectsRoutes.put('/:name/bible', async (c) => {
   }
 });
 
-// Reset project state
+// Reset project state (user-scoped)
 projectsRoutes.put('/:name/reset', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -184,17 +192,18 @@ projectsRoutes.put('/:name/reset', async (c) => {
   }
 });
 
-// Get chapter content
+// Get chapter content (user-scoped)
 projectsRoutes.get('/:name/chapters/:index', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
   
   try {
     const chapter = await c.env.DB.prepare(`
       SELECT c.content FROM chapters c
       JOIN projects p ON c.project_id = p.id
-      WHERE p.name = ? AND c.chapter_index = ? AND c.deleted_at IS NULL AND p.deleted_at IS NULL
-    `).bind(name, index).first();
+      WHERE p.name = ? AND c.chapter_index = ? AND c.deleted_at IS NULL AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, index, userId).first();
 
     if (!chapter) {
       return c.json({ success: false, error: 'Chapter not found' }, 404);
@@ -206,16 +215,17 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
   }
 });
 
-// Delete chapter
+// Delete chapter (user-scoped)
 projectsRoutes.delete('/:name/chapters/:index', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
   
   try {
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -260,9 +270,10 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
   }
 });
 
-// Batch delete chapters
+// Batch delete chapters (user-scoped)
 projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     const { indices } = await c.req.json();
@@ -273,8 +284,8 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -313,9 +324,10 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 });
 
 // Download all chapters as a ZIP file
-// Download all chapters as a ZIP file
+// Download all chapters as a ZIP file (user-scoped)
 projectsRoutes.get('/:name/download', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId');
   
   try {
     // 1. Fetch project details, bible, and outline
@@ -323,8 +335,8 @@ projectsRoutes.get('/:name/download', async (c) => {
       SELECT p.id, p.name, p.bible, o.outline_json
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ? AND p.deleted_at IS NULL
-    `).bind(name).first();
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
