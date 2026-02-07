@@ -146,6 +146,32 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
   }
 });
 
+// Cancel/delete ALL active tasks for a project (cleanup)
+tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+
+  try {
+    // Get project ID first
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ? AND user_id = ?
+    `).bind(name, userId).first() as { id: string } | null;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    await c.env.DB.prepare(`
+      DELETE FROM generation_tasks 
+      WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused')
+    `).bind(project.id, userId).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Helper functions for use in generation.ts
 export async function createGenerationTask(
   db: D1Database,

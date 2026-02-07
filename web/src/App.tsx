@@ -30,7 +30,7 @@ import {
   batchDeleteChapters,
   getActiveTask,
   getAllActiveTasks,
-  cancelTask,
+  cancelAllActiveTasks,
   type ProjectSummary,
   type ProjectDetail,
   type GenerationTask,
@@ -1026,7 +1026,7 @@ function App() {
               variant="outline"
               onClick={async () => {
                 if (activeTask && selectedProject) {
-                  await cancelTask(selectedProject.name, activeTask.id);
+                  await cancelAllActiveTasks(selectedProject.name);
                   setActiveTask(null);
                 }
                 setShowResumeDialog(false);
