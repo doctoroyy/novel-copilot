@@ -47,6 +47,7 @@ import {
   AnimeEpisodeDetail
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
+import { FloatingProgressButton, addTaskToHistory } from '@/components/FloatingProgressButton';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { useGeneration } from '@/contexts/GenerationContext';
 
@@ -339,6 +340,15 @@ function App() {
               status: 'done',
               message: `完成! 成功 ${results.length} 章`,
             }));
+            // Track in history
+            addTaskToHistory({
+              type: 'chapters',
+              title: `生成 ${results.length} 章完成`,
+              status: 'success',
+              startTime: generationState.startTime || Date.now(),
+              endTime: Date.now(),
+              details: selectedProject?.name,
+            });
           },
           onError: (error) => {
             log(`❌ 生成失败: ${error}`);
@@ -348,6 +358,15 @@ function App() {
               status: 'error',
               message: error,
             }));
+            // Track in history
+            addTaskToHistory({
+              type: 'chapters',
+              title: `章节生成失败`,
+              status: 'error',
+              startTime: generationState.startTime || Date.now(),
+              endTime: Date.now(),
+              details: error,
+            });
           },
         },
         getAIConfigHeaders(aiConfig)
@@ -472,14 +491,30 @@ function App() {
       return;
     }
     setGeneratingBible(true);
+    const startTime = Date.now();
     try {
       log('🤖 AI 正在想象 Story Bible...');
       const bible = await generateBible(aiGenre, aiTheme, aiKeywords, getAIConfigHeaders(aiConfig));
       setNewProjectBible(bible);
       log('✅ Story Bible 生成完成');
+      addTaskToHistory({
+        type: 'bible',
+        title: 'Story Bible 生成完成',
+        status: 'success',
+        startTime,
+        endTime: Date.now(),
+      });
     } catch (err) {
       setError((err as Error).message);
       log(`❌ 生成失败: ${(err as Error).message}`);
+      addTaskToHistory({
+        type: 'bible',
+        title: 'Story Bible 生成失败',
+        status: 'error',
+        startTime,
+        endTime: Date.now(),
+        details: (err as Error).message,
+      });
     } finally {
       setGeneratingBible(false);
     }
@@ -766,6 +801,9 @@ function App() {
         open={showSettingsDialog} 
         onOpenChange={setShowSettingsDialog} 
       />
+
+      {/* Floating Progress Button */}
+      <FloatingProgressButton />
     </div>
   );
 }
