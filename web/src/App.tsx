@@ -375,6 +375,11 @@ function App() {
       setShowSettingsDialog(true);
       return;
     }
+    // Prevent concurrent generation (serial enforcement)
+    if (generationState.isGenerating) {
+      setError('已有生成任务正在进行中，请等待完成后再试');
+      return;
+    }
     try {
       setLoading(true);
       const count = parseInt(generateCount, 10);
