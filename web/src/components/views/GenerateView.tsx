@@ -27,6 +27,7 @@ interface GenerationState {
 interface GenerateViewProps {
   project: ProjectDetail;
   loading: boolean;
+  generatingOutline?: boolean;
   generationState?: GenerationState;
   // Outline generation
   outlineChapters: string;
@@ -46,6 +47,7 @@ interface GenerateViewProps {
 export function GenerateView({
   project,
   loading,
+  generatingOutline,
   generationState,
   outlineChapters,
   outlineWordCount,
@@ -119,10 +121,10 @@ export function GenerateView({
           </div>
           <Button 
             onClick={onGenerateOutline} 
-            disabled={loading} 
+            disabled={loading || generatingOutline} 
             className="w-full gradient-bg hover:opacity-90 text-sm lg:text-base"
           >
-            {loading ? '⏳ 生成中...' : '🚀 生成大纲'}
+            {generatingOutline ? '⏳ 生成大纲中...' : '🚀 生成大纲'}
           </Button>
 
           {project.outline && (

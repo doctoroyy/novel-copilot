@@ -48,6 +48,7 @@ import {
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 // Constants
 const MOBILE_BREAKPOINT = 1024;
@@ -78,22 +79,10 @@ function App() {
   const [aiTheme, setAiTheme] = useState('');
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
+  const [generatingOutline, setGeneratingOutline] = useState(false);
 
-  // Generation progress state
-  const [generationState, setGenerationState] = useState<{
-    isGenerating: boolean;
-    current: number;
-    total: number;
-    currentChapter?: number;
-    currentChapterTitle?: string;
-    status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
-    message?: string;
-    startTime?: number;
-  }>({
-    isGenerating: false,
-    current: 0,
-    total: 0,
-  });
+  // Generation progress state from context (persists across tab changes)
+  const { generationState, setGenerationState } = useGeneration();
 
   // Mobile state
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -101,7 +90,7 @@ function App() {
   
   // Desktop state (default open)
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
-  const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(true);
+  const [desktopActivityPanelOpen, setDesktopActivityPanelOpen] = useState(false);
 
   // Track if we're on mobile
   const [isMobile, setIsMobile] = useState(false);
@@ -251,7 +240,7 @@ function App() {
       return;
     }
     try {
-      setLoading(true);
+      setGeneratingOutline(true);
       log(`生成大纲: ${selectedProject.name}`);
       const outline = await generateOutline(
         selectedProject.name,
@@ -267,7 +256,7 @@ function App() {
       setError((err as Error).message);
       log(`❌ 生成失败: ${(err as Error).message}`);
     } finally {
-      setLoading(false);
+      setGeneratingOutline(false);
     }
   };
 
@@ -321,6 +310,18 @@ function App() {
               status: 'generating',
               message: `完成第 ${chapterIndex} 章: ${title}`,
             }));
+            // Optimistically update project state for immediate UI feedback
+            setSelectedProject(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                state: {
+                  ...prev.state,
+                  nextChapterIndex: Math.max(prev.state.nextChapterIndex, chapterIndex + 1),
+                },
+                chapters: [...prev.chapters, title],
+              };
+            });
           },
           onChapterError: (chapterIndex, error) => {
             log(`❌ 第 ${chapterIndex} 章失败: ${error}`);
@@ -526,6 +527,7 @@ function App() {
           <GenerateView
             project={selectedProject}
             loading={loading}
+            generatingOutline={generatingOutline}
             generationState={generationState}
             outlineChapters={outlineChapters}
             outlineWordCount={outlineWordCount}

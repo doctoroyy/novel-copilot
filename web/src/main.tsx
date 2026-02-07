@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AIConfigProvider } from './contexts/AIConfigContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { GenerationProvider } from './contexts/GenerationContext'
 import './index.css'
 import App from './App.tsx'
 import AnimePage from './pages/AnimePage.tsx'
@@ -90,19 +91,23 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
       <AIConfigProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<LoginRoute />} />
-            <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
-            <Route path="/" element={<ProtectedRoute><App /></ProtectedRoute>} />
-            <Route path="/project/:projectName" element={<ProtectedRoute><App /></ProtectedRoute>} />
-            <Route path="/project/:projectName/:tab" element={<ProtectedRoute><App /></ProtectedRoute>} />
-            <Route path="/project/:projectName/anime/episode/:episodeId" element={<ProtectedRoute><App /></ProtectedRoute>} />
-            <Route path="/anime" element={<ProtectedRoute><AnimePage /></ProtectedRoute>} />
-          </Routes>
-        </BrowserRouter>
+        <GenerationProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<LoginRoute />} />
+              <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+              <Route path="/" element={<ProtectedRoute><App /></ProtectedRoute>} />
+              <Route path="/project/:projectName" element={<ProtectedRoute><App /></ProtectedRoute>} />
+              <Route path="/project/:projectName/:tab" element={<ProtectedRoute><App /></ProtectedRoute>} />
+              <Route path="/project/:projectName/anime/episode/:episodeId" element={<ProtectedRoute><App /></ProtectedRoute>} />
+              <Route path="/anime" element={<ProtectedRoute><AnimePage /></ProtectedRoute>} />
+            </Routes>
+          </BrowserRouter>
+        </GenerationProvider>
       </AIConfigProvider>
     </AuthProvider>
   </StrictMode>,
 )
+
+
 
