@@ -30,6 +30,7 @@ app.use('/api/characters/*', authMiddleware());
 app.use('/api/context/*', authMiddleware());
 app.use('/api/anime/*', authMiddleware());
 app.use('/api/admin/*', authMiddleware());
+app.use('/api/active-tasks', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
