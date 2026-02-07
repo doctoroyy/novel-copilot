@@ -334,6 +334,7 @@ export async function* generateChaptersStream(
 
 /**
  * Convenient wrapper for streaming generation with callbacks
+ * Includes auto-reconnect logic for network failures
  */
 export async function generateChaptersWithProgress(
   name: string,
@@ -345,49 +346,133 @@ export async function generateChaptersWithProgress(
     onChapterError?: (chapterIndex: number, error: string) => void;
     onDone?: (results: { chapter: number; title: string }[], failedChapters: number[]) => void;
     onError?: (error: string) => void;
+    onReconnecting?: (attempt: number, maxAttempts: number) => void;
   },
   aiHeaders?: Record<string, string>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: {
+    maxRetries?: number;
+    retryDelayMs?: number;
+  }
 ): Promise<{ chapter: number; title: string }[]> {
+  const { maxRetries = 5, retryDelayMs = 3000 } = options || {};
   const results: { chapter: number; title: string }[] = [];
+  let retryCount = 0;
   
-  try {
-    for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
-      switch (event.type) {
-        case 'start':
-          callbacks.onStart?.(event.total || chaptersToGenerate);
-          break;
-        case 'progress':
-          callbacks.onProgress?.(event);
-          break;
-        case 'chapter_complete':
-          if (event.chapterIndex !== undefined && event.title) {
-            results.push({ chapter: event.chapterIndex, title: event.title });
-            callbacks.onChapterComplete?.(event.chapterIndex, event.title, event.preview || '');
-          }
-          break;
-        case 'chapter_error':
-          if (event.chapterIndex !== undefined) {
-            callbacks.onChapterError?.(event.chapterIndex, event.error || 'Unknown error');
-          }
-          break;
-        case 'done':
-          callbacks.onDone?.(event.generated || results, event.failedChapters || []);
-          break;
-        case 'error':
-          callbacks.onError?.(event.error || 'Unknown error');
-          throw new Error(event.error || 'Generation failed');
+  const isNetworkError = (error: unknown): boolean => {
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase();
+      return msg.includes('network') || 
+             msg.includes('fetch') || 
+             msg.includes('connection') ||
+             msg.includes('net::err') ||
+             msg.includes('aborted');
+    }
+    return false;
+  };
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // Check how many chapters we still need to generate
+      // The backend will automatically resume from next_chapter_index
+      const task = await getActiveTask(name);
+      const completedCount = task?.completedChapters?.length || 0;
+      const remaining = task ? (task.targetCount - completedCount) : chaptersToGenerate;
+      
+      if (remaining <= 0) {
+        // Task already completed
+        callbacks.onDone?.(results, []);
+        break;
       }
+
+      for await (const event of generateChaptersStream(name, remaining, aiHeaders, signal)) {
+        switch (event.type) {
+          case 'start':
+            if (retryCount === 0) {
+              callbacks.onStart?.(event.total || chaptersToGenerate);
+            }
+            break;
+          case 'progress':
+            callbacks.onProgress?.(event);
+            break;
+          case 'chapter_complete':
+            if (event.chapterIndex !== undefined && event.title) {
+              results.push({ chapter: event.chapterIndex, title: event.title });
+              callbacks.onChapterComplete?.(event.chapterIndex, event.title, event.preview || '');
+            }
+            break;
+          case 'chapter_error':
+            if (event.chapterIndex !== undefined) {
+              callbacks.onChapterError?.(event.chapterIndex, event.error || 'Unknown error');
+            }
+            break;
+          case 'done':
+            callbacks.onDone?.(event.generated || results, event.failedChapters || []);
+            return results;
+          case 'error':
+            callbacks.onError?.(event.error || 'Unknown error');
+            throw new Error(event.error || 'Generation failed');
+        }
+      }
+      
+      // Stream ended normally
+      break;
+      
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        // User cancelled, don't retry
+        return results;
+      }
+      
+      if (isNetworkError(error) && retryCount < maxRetries) {
+        retryCount++;
+        callbacks.onReconnecting?.(retryCount, maxRetries);
+        await sleep(retryDelayMs * retryCount);
+        continue; // Retry - backend will resume from where it left off
+      }
+      
+      // Non-network error or max retries exceeded
+      throw error;
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      // User cancelled, don't throw
-      return results;
-    }
-    throw error;
   }
   
   return results;
+}
+
+// Generation Task type
+export type GenerationTask = {
+  id: number;
+  projectId: string;
+  projectName: string;
+  userId: string;
+  targetCount: number;
+  startChapter: number;
+  completedChapters: number[];
+  failedChapters: number[];
+  status: 'running' | 'paused' | 'completed' | 'failed';
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Get active generation task for a project
+export async function getActiveTask(name: string): Promise<GenerationTask | null> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-task`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) return null;
+  return data.task;
+}
+
+// Cancel/delete a generation task
+export async function cancelTask(name: string, taskId: number): Promise<void> {
+  await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/tasks/${taskId}`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  });
 }
 
 export async function fetchChapter(name: string, index: number): Promise<string> {

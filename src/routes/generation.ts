@@ -9,6 +9,7 @@ import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
+import { createGenerationTask, updateTaskProgress, completeTask } from './tasks.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -469,6 +470,16 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
         const startingChapterIndex = project.next_chapter_index;
 
+        // Create generation task for persistence
+        const taskId = await createGenerationTask(
+          c.env.DB,
+          project.id,
+          userId!,
+          chaptersToGenerate,
+          startingChapterIndex
+        );
+        sendEvent('task_created', { taskId });
+
         for (let i = 0; i < chaptersToGenerate; i++) {
           const chapterIndex = startingChapterIndex + i;
           if (chapterIndex > project.total_chapters) break;
@@ -601,6 +612,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
             project.open_loops = JSON.stringify(result.updatedOpenLoops);
             project.next_chapter_index = chapterIndex + 1;
 
+            // Update task progress
+            await updateTaskProgress(c.env.DB, taskId, chapterIndex, false);
+
             // Send chapter complete event with content snippet
             sendEvent('chapter_complete', {
               chapterIndex,
@@ -613,6 +627,8 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
             // Single chapter failed after all retries
             console.error(`Failed to generate chapter ${chapterIndex} after all retries:`, chapterError);
             failedChapters.push(chapterIndex);
+            // Update task with failed chapter
+            await updateTaskProgress(c.env.DB, taskId, chapterIndex, true);
             sendEvent('chapter_error', {
               chapterIndex,
               error: (chapterError as Error).message,
@@ -622,6 +638,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           }
         }
 
+        // Mark task as completed
+        await completeTask(c.env.DB, taskId, true);
+
         // Send completion event
         sendEvent('done', {
           success: true,
@@ -629,6 +648,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           failedChapters,
           totalGenerated: results.length,
           totalFailed: failedChapters.length,
+          taskId,
         });
 
       } catch (error) {

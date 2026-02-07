@@ -132,3 +132,23 @@ CREATE TABLE IF NOT EXISTS chapter_qc (
 -- Indexes for new tables
 CREATE INDEX IF NOT EXISTS idx_chapter_qc_project ON chapter_qc(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapter_qc_score ON chapter_qc(project_id, score);
+
+-- =====================================================
+-- Generation Tasks (for persistence and resume)
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS generation_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  target_count INTEGER NOT NULL,
+  start_chapter INTEGER NOT NULL,
+  completed_chapters TEXT DEFAULT '[]',
+  failed_chapters TEXT DEFAULT '[]',
+  status TEXT DEFAULT 'running' CHECK(status IN ('running', 'paused', 'completed', 'failed')),
+  error_message TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON generation_tasks(project_id, status);

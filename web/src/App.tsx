@@ -28,8 +28,11 @@ import {
   generateBible,
   deleteChapter,
   batchDeleteChapters,
+  getActiveTask,
+  cancelTask,
   type ProjectSummary,
   type ProjectDetail,
+  type GenerationTask,
 } from '@/lib/api';
 
 // Layout components
@@ -81,6 +84,10 @@ function App() {
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
   const [generatingOutline, setGeneratingOutline] = useState(false);
+
+  // Active task recovery state
+  const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
 
   // Generation progress state from context (persists across tab changes)
   const { generationState, setGenerationState, startTask, completeTask } = useGeneration();
@@ -199,6 +206,25 @@ function App() {
       setSelectedProject(null);
     }
   }, [projectName, selectedProject?.name, loadProject]);
+
+  // Check for active generation tasks when project loads
+  useEffect(() => {
+    const checkActiveTask = async () => {
+      if (!selectedProject) return;
+      try {
+        const task = await getActiveTask(selectedProject.name);
+        if (task && (task.status === 'running' || task.status === 'paused')) {
+          setActiveTask(task);
+          setShowResumeDialog(true);
+        } else {
+          setActiveTask(null);
+        }
+      } catch (err) {
+        console.warn('Failed to check active task:', err);
+      }
+    };
+    checkActiveTask();
+  }, [selectedProject?.name]);
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
@@ -822,6 +848,56 @@ function App() {
         open={showSettingsDialog} 
         onOpenChange={setShowSettingsDialog} 
       />
+
+      {/* Resume Task Dialog */}
+      <Dialog open={showResumeDialog} onOpenChange={setShowResumeDialog}>
+        <DialogContent className="glass-card">
+          <DialogHeader>
+            <DialogTitle className="gradient-text">📝 检测到未完成的任务</DialogTitle>
+            <DialogDescription>
+              发现之前的章节生成任务尚未完成，是否继续？
+            </DialogDescription>
+          </DialogHeader>
+          {activeTask && (
+            <div className="py-4 space-y-2 text-sm">
+              <p><span className="text-muted-foreground">目标章节：</span>{activeTask.targetCount} 章</p>
+              <p><span className="text-muted-foreground">已完成：</span>{activeTask.completedChapters.length} 章</p>
+              <p><span className="text-muted-foreground">剩余：</span>{activeTask.targetCount - activeTask.completedChapters.length} 章</p>
+              {activeTask.failedChapters.length > 0 && (
+                <p className="text-destructive"><span className="text-muted-foreground">失败：</span>{activeTask.failedChapters.length} 章</p>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (activeTask && selectedProject) {
+                  await cancelTask(selectedProject.name, activeTask.id);
+                  setActiveTask(null);
+                }
+                setShowResumeDialog(false);
+              }}
+            >
+              放弃任务
+            </Button>
+            <Button
+              className="gradient-bg"
+              onClick={() => {
+                if (activeTask && selectedProject) {
+                  const remaining = activeTask.targetCount - activeTask.completedChapters.length;
+                  setGenerateCount(String(remaining));
+                  setShowResumeDialog(false);
+                  // Navigate to generate tab
+                  navigate(`/project/${encodeURIComponent(selectedProject.name)}/generate`);
+                }
+              }}
+            >
+              继续生成
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Floating Progress Button */}
       <FloatingProgressButton />
