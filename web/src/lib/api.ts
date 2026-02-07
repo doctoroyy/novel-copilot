@@ -105,16 +105,93 @@ export async function generateOutline(
   targetChapters: number,
   targetWordCount: number,
   customPrompt?: string,
-  aiHeaders?: Record<string, string>
+  aiHeaders?: Record<string, string>,
+  onProgress?: (message: string) => void
 ): Promise<NovelOutline> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
   });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.outline;
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let outline: NovelOutline | null = null;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr) {
+            try {
+              const event = JSON.parse(jsonStr);
+              
+              // Skip heartbeat events
+              if (event.type === 'heartbeat') continue;
+              
+              // Handle progress events
+              if (event.type === 'progress' && event.message && onProgress) {
+                onProgress(event.message);
+              }
+              
+              // Handle volume complete
+              if (event.type === 'volume_complete' && onProgress) {
+                onProgress(`第 ${event.volumeIndex}/${event.totalVolumes} 卷「${event.volumeTitle}」完成 (${event.chapterCount} 章)`);
+              }
+              
+              // Handle master outline
+              if (event.type === 'master_outline' && onProgress) {
+                onProgress(`总体大纲生成完成: ${event.totalVolumes} 卷`);
+              }
+              
+              // Handle done event
+              if (event.type === 'done') {
+                if (!event.success) {
+                  throw new Error(event.error || 'Generation failed');
+                }
+                reader.releaseLock();
+                return event.outline as NovelOutline;
+              }
+              
+              // Handle error event
+              if (event.type === 'error') {
+                throw new Error(event.error || 'Unknown error');
+              }
+            } catch (e) {
+              if (e instanceof SyntaxError) continue; // Skip malformed JSON
+              throw e;
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!outline) {
+    throw new Error('No outline received');
+  }
+
+  return outline;
 }
 
 export async function refineOutline(

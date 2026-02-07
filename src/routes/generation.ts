@@ -107,7 +107,7 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
   };
 }
 
-// Generate outline
+// Generate outline (streaming SSE to avoid Workers timeout)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
   const aiConfig = getAIConfigFromHeaders(c);
@@ -116,79 +116,139 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  try {
-    const { targetChapters = 400, targetWordCount = 100, customPrompt } = await c.req.json();
+  const encoder = new TextEncoder();
 
-    // Get project
-    const project = await c.env.DB.prepare(`
-      SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+  // Create a readable stream for SSE
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Helper to send SSE event
+      const sendEvent = (type: string, data: any) => {
+        const payload = JSON.stringify({ type, ...data });
+        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      };
 
-    if (!project) {
-      return c.json({ success: false, error: 'Project not found' }, 404);
+      // Heartbeat to keep connection alive
+      const heartbeatInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      try {
+        const { targetChapters = 400, targetWordCount = 100, customPrompt } = await c.req.json();
+
+        sendEvent('start', { targetChapters, targetWordCount });
+
+        // Get project
+        const project = await c.env.DB.prepare(`
+          SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL
+        `).bind(name).first();
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          controller.close();
+          clearInterval(heartbeatInterval);
+          return;
+        }
+
+        let bible = (project as any).bible;
+        if (customPrompt) {
+          bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
+        }
+
+        console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字`);
+
+        // Phase 1: Generate master outline
+        sendEvent('progress', { phase: 1, message: '正在生成总体大纲...' });
+        console.log('Phase 1: Generating master outline...');
+        const masterOutline = await generateMasterOutline(aiConfig, bible, targetChapters, targetWordCount);
+        const totalVolumes = masterOutline.volumes?.length || 0;
+        console.log(`Master outline generated: ${totalVolumes} volumes`);
+        sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
+
+        // Phase 2: Generate volume chapters
+        const volumes = [];
+        for (let i = 0; i < masterOutline.volumes.length; i++) {
+          const vol = masterOutline.volumes[i];
+          const previousVolumeEndState = i > 0 
+            ? masterOutline.volumes[i - 1].volumeEndState || 
+              `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
+            : null;
+          
+          sendEvent('progress', { 
+            phase: 2, 
+            volumeIndex: i + 1, 
+            totalVolumes, 
+            volumeTitle: vol.title,
+            message: `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...` 
+          });
+          console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
+          
+          const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol, previousVolumeEndState);
+          const normalizedVolume = normalizeVolume(vol, i, chapters);
+          volumes.push(normalizedVolume);
+          
+          sendEvent('volume_complete', { 
+            volumeIndex: i + 1, 
+            totalVolumes, 
+            volumeTitle: normalizedVolume.title,
+            chapterCount: normalizedVolume.chapters?.length || 0
+          });
+        }
+
+        const outline = {
+          totalChapters: targetChapters,
+          targetWordCount,
+          volumes,
+          mainGoal: masterOutline.mainGoal || '',
+          milestones: normalizeMilestones(masterOutline.milestones || []),
+        };
+
+        // Phase 3: Validate
+        sendEvent('progress', { phase: 3, message: '正在验证大纲...' });
+        console.log('Phase 3: Validating outline...');
+        const validation = validateOutline(outline, targetChapters);
+        if (!validation.valid) {
+          console.warn('Outline validation issues:', validation.issues);
+        }
+
+        // Save outline
+        await c.env.DB.prepare(`
+          INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
+        `).bind((project as any).id, JSON.stringify(outline)).run();
+
+        // Update state
+        await c.env.DB.prepare(`
+          UPDATE states SET total_chapters = ? WHERE project_id = ?
+        `).bind(targetChapters, (project as any).id).run();
+
+        console.log(`Outline generation complete for ${name}!`);
+
+        sendEvent('done', { 
+          success: true, 
+          outline,
+          validation: validation.valid ? undefined : validation 
+        });
+
+        clearInterval(heartbeatInterval);
+        controller.close();
+      } catch (error) {
+        sendEvent('error', { error: (error as Error).message });
+        clearInterval(heartbeatInterval);
+        controller.close();
+      }
     }
+  });
 
-    let bible = (project as any).bible;
-    if (customPrompt) {
-      bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
-    }
-
-    console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字`);
-
-    // Generate master outline
-    console.log('Phase 1: Generating master outline...');
-    const masterOutline = await generateMasterOutline(aiConfig, bible, targetChapters, targetWordCount);
-    console.log(`Master outline generated: ${masterOutline.volumes?.length || 0} volumes`);
-
-    // Generate volume chapters and normalize
-    const volumes = [];
-    for (let i = 0; i < masterOutline.volumes.length; i++) {
-      const vol = masterOutline.volumes[i];
-      // 获取前一卷的结局状态，确保剧情连贯
-      const previousVolumeEndState = i > 0 
-        ? masterOutline.volumes[i - 1].volumeEndState || 
-          `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
-        : null;
-      console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${masterOutline.volumes.length} "${vol.title}"...`);
-      const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol, previousVolumeEndState);
-      volumes.push(normalizeVolume(vol, i, chapters));
-    }
-
-    const outline = {
-      totalChapters: targetChapters,
-      targetWordCount,
-      volumes,
-      mainGoal: masterOutline.mainGoal || '',
-      milestones: normalizeMilestones(masterOutline.milestones || []),
-    };
-
-    // Final validation
-    console.log('Phase 3: Validating outline...');
-    const validation = validateOutline(outline, targetChapters);
-    if (!validation.valid) {
-      console.warn('Outline validation issues:', validation.issues);
-    }
-
-    // Save outline
-    await c.env.DB.prepare(`
-      INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
-    `).bind((project as any).id, JSON.stringify(outline)).run();
-
-    // Update state
-    await c.env.DB.prepare(`
-      UPDATE states SET total_chapters = ? WHERE project_id = ?
-    `).bind(targetChapters, (project as any).id).run();
-
-    console.log(`Outline generation complete for ${name}!`);
-
-    return c.json({
-      success: true,
-      outline,
-      validation: validation.valid ? undefined : validation,
-    });
-  } catch (error) {
-    return c.json({ success: false, error: (error as Error).message }, 500);
-  }
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 });
 
 // Generate chapters

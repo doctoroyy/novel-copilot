@@ -242,7 +242,8 @@ function App() {
         parseInt(outlineChapters, 10),
         parseInt(outlineWordCount, 10),
         outlineCustomPrompt || undefined,
-        getAIConfigHeaders(aiConfig)
+        getAIConfigHeaders(aiConfig),
+        (progressMsg) => log(`📝 ${progressMsg}`)
       );
       log(`✅ 大纲生成完成: ${outline.volumes.length} 卷, ${outline.totalChapters} 章`);
       await loadProject(selectedProject.name);
