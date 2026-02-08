@@ -28,7 +28,16 @@ app.route('/api/auth', authRoutes);
 app.use('/api/projects/*', authMiddleware());
 app.use('/api/characters/*', authMiddleware());
 app.use('/api/context/*', authMiddleware());
-app.use('/api/anime/*', authMiddleware());
+app.use('/api/anime/*', async (c, next) => {
+  const path = c.req.path;
+  // Exempt image/video/audio assets from strict auth
+  if (path.endsWith('.png') || path.endsWith('/video') || path.endsWith('/audio')) {
+    // Optional: still try to set user context if token is present, but don't error
+    return optionalAuthMiddleware()(c, next);
+  }
+  // Enforce auth for all other anime routes
+  return authMiddleware()(c, next);
+});
 app.use('/api/admin/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 
