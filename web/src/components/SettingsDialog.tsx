@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useAIConfig, PROVIDER_MODELS, type AIProvider } from '@/hooks/useAIConfig';
+import { useAuth } from '@/contexts/AuthContext';
 import { testAIConnection } from '@/lib/api';
 
 interface SettingsDialogProps {
@@ -27,6 +29,8 @@ interface SettingsDialogProps {
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { config, saveConfig, getProviderSettings, loaded } = useAIConfig();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   
@@ -214,6 +218,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="flex-1 bg-muted/50 text-sm"
+                list="api-key-history"
               />
               <Button
                 variant="outline"
@@ -239,6 +244,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </div>
 
         <DialogFooter className="flex-col sm:flex-row gap-2">
+          {user?.role === 'admin' && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                navigate('/admin');
+                onOpenChange(false);
+              }}
+              className="w-full sm:w-auto text-sm mr-auto"
+            >
+              🛡️ 管理后台
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handleTest}
