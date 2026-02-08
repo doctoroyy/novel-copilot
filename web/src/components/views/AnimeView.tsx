@@ -13,6 +13,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import { getAuthHeaders } from '@/lib/auth';
 
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import type { ProjectDetail } from '@/lib/api';
@@ -74,7 +75,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
   // Load voices on mount
   useEffect(() => {
-    fetch('/api/anime/voices', { headers: getAIConfigHeaders(aiConfig) })
+    fetch('/api/anime/voices', { headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) } })
         .then(res => res.json())
         .then(data => {
             if (data.success) setVoices(data.voices);
@@ -96,7 +97,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
     if (!episode.script || !episode.storyboard) {
       try {
-        const res = await fetch(`/api/anime/projects/${animeProject!.id}/episodes/${episode.episode_num}`);
+        const res = await fetch(`/api/anime/projects/${animeProject!.id}/episodes/${episode.episode_num}`, {
+          headers: getAuthHeaders()
+        });
         const data = await res.json();
         if (data.success && data.episode) {
           setSelectedEpisode(prev => ({ ...prev, ...data.episode }));
@@ -114,7 +117,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
     try {
       // setLoading(true); // Don't trigger full loading spinner on refresh
       
-      const res = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`);
+      const res = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`, {
+        headers: getAuthHeaders()
+      });
       const data = await res.json();
       
       if (data.success && data.projects.length > 0) {
@@ -124,9 +129,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
           // Parallel fetch of resources
           const [episodesRes, scriptRes, charsRes] = await Promise.all([
-             fetch(`/api/anime/projects/${anime.id}`),
-             fetch(`/api/anime/projects/${anime.id}/script`),
-             fetch(`/api/anime/projects/${anime.id}/characters`)
+             fetch(`/api/anime/projects/${anime.id}`, { headers: getAuthHeaders() }),
+             fetch(`/api/anime/projects/${anime.id}/script`, { headers: getAuthHeaders() }),
+             fetch(`/api/anime/projects/${anime.id}/characters`, { headers: getAuthHeaders() })
           ]);
 
           const episodesData = await episodesRes.json();
@@ -226,7 +231,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
       const chaptersContent: string[] = [];
       for (const chapterFile of project.chapters) {
         const index = parseInt(chapterFile.replace('.md', ''), 10);
-        const res = await fetch(`/api/projects/${encodeURIComponent(project.name)}/chapters/${index}`);
+        const res = await fetch(`/api/projects/${encodeURIComponent(project.name)}/chapters/${index}`, {
+          headers: getAuthHeaders()
+        });
         const data = await res.json();
         if (data.success) {
           chaptersContent.push(data.content);
@@ -237,7 +244,10 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
       const res = await fetch('/api/anime/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
           name: `anime-${project.name}`,
           novelText,
@@ -270,6 +280,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
           ...getAIConfigHeaders(aiConfig),
         },
         body: JSON.stringify({}),
@@ -297,6 +308,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
           ...getAIConfigHeaders(aiConfig),
         },
         body: JSON.stringify({
@@ -493,7 +505,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                             try {
                                 await fetch(`/api/anime/projects/${animeProject.id}/script`, {
                                     method: 'POST',
-                                    headers: getAIConfigHeaders(aiConfig)
+                                    headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
                                 });
                                 await fetchAnimeProject();
                             } finally {
@@ -534,7 +546,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                         try {
                             await fetch(`/api/anime/projects/${animeProject.id}/characters/generate`, {
                                 method: 'POST',
-                                headers: getAIConfigHeaders(aiConfig)
+                                headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
                             });
                             await fetchAnimeProject();
                         } finally {
@@ -610,7 +622,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                               try {
                                                   await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}/image`, {
                                                       method: 'POST',
-                                                      headers: getAIConfigHeaders(aiConfig)
+                                                      headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
                                                   });
                                                   await fetchAnimeProject();
                                               } finally {
@@ -644,7 +656,10 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                             
                                             await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}`, {
                                                 method: 'PATCH',
-                                                headers: { 'Content-Type': 'application/json' },
+                                                headers: { 
+                                                  'Content-Type': 'application/json',
+                                                  ...getAuthHeaders()
+                                                },
                                                 body: JSON.stringify({ voiceId })
                                             });
                                         }}

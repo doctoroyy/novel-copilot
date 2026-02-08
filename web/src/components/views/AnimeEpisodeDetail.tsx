@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import { getAuthHeaders } from '@/lib/auth';
 import { Film, Loader2, ArrowLeft, RefreshCw, FileText, Layout, PauseCircle, Trash2, Sparkles } from 'lucide-react';
 
 interface AnimeEpisodeDetailProps {
@@ -29,14 +30,18 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
     const loadData = async () => {
       try {
         setLoading(true);
-        const projectsRes = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`);
+        const projectsRes = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`, {
+            headers: getAuthHeaders()
+        });
         const projectsData = await projectsRes.json();
         const anime = projectsData.projects?.find((p: any) => p.name === `anime-${project.name}`);
         
         if (anime) {
             setAnimeProject(anime);
             const epNum = parseInt(episodeId); 
-            const epRes = await fetch(`/api/anime/projects/${anime.id}/episodes/${epNum}`);
+            const epRes = await fetch(`/api/anime/projects/${anime.id}/episodes/${epNum}`, {
+                headers: getAuthHeaders()
+            });
             const epData = await epRes.json();
             
             if (epData.success && epData.episode) {
@@ -55,7 +60,9 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
   // Reload episode data
   const reloadEpisode = async () => {
       if(!animeProject || !episode) return;
-      const res = await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}`);
+      const res = await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}`, {
+          headers: getAuthHeaders()
+      });
       const data = await res.json();
       if(data.success) setEpisode(data.episode);
       return data.episode?.status;
@@ -78,7 +85,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
       try {
           await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/generate/script`, {
               method: 'POST',
-              headers: getAIConfigHeaders(aiConfig)
+              headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
           });
           pollUntilComplete(setGeneratingScript);
       } catch (e) {
@@ -94,7 +101,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
       try {
           await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/generate/storyboard`, {
               method: 'POST',
-              headers: getAIConfigHeaders(aiConfig)
+              headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
           });
           pollUntilComplete(setGeneratingStoryboard);
       } catch (e) {
@@ -110,7 +117,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
       try {
           await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/generate/video`, {
               method: 'POST',
-              headers: getAIConfigHeaders(aiConfig)
+              headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
           });
           pollUntilComplete(setGeneratingVideo);
       } catch (e) {
@@ -123,7 +130,8 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
   const handleCancel = async () => {
       if (!animeProject || !episode) return;
       await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/cancel`, {
-          method: 'POST'
+          method: 'POST',
+          headers: getAuthHeaders()
       });
       reloadEpisode();
       setGeneratingScript(false);
@@ -136,7 +144,8 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
       if (!animeProject || !episode) return;
       if(!confirm('确认删除该集所有生成内容？')) return;
       await fetch(`/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}/content`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: getAuthHeaders()
       });
       reloadEpisode();
   };
@@ -390,7 +399,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
                                                             try {
                                                                 await fetch(`/api/anime/projects/${animeProject?.id}/episodes/${episode.episode_num}/shots/${shot.shot_id}/regenerate`, {
                                                                     method: 'POST',
-                                                                    headers: getAIConfigHeaders(aiConfig)
+                                                                    headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
                                                                 });
                                                                 reloadEpisode();
                                                             } catch (e) {
