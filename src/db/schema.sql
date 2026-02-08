@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS invitation_codes (
   used_by TEXT REFERENCES users(id) DEFAULT NULL,
   used_at DATETIME DEFAULT NULL,
   expires_at DATETIME DEFAULT NULL,
+  max_uses INTEGER DEFAULT 1,
+  used_count INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
