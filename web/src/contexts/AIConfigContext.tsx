@@ -117,8 +117,9 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
         provider,
         model: providerSettings.model,
         baseUrl: providerSettings.baseUrl || '',
-        // Keep the API key - it's global, but we could also make it per-provider if needed
+        apiKey: providerSettings.apiKey || '', // Restore API key for this provider
       };
+      
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch (err) {
@@ -136,15 +137,20 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
       // Start with current config merged with new values
       const updated = { ...prevConfig, ...newConfig };
       
-      // If model or baseUrl changed, save to per-provider settings
-      const currentProvider = newConfig.provider || prevConfig.provider;
+      // If model, baseUrl, OR apiKey changed, save to per-provider settings
+      const currentProvider = updated.provider; // Use updated provider
+      const currentProviderSettings = prevConfig.providerSettings?.[currentProvider] || DEFAULT_PROVIDER_SETTINGS[currentProvider];
+      
       const updatedProviderSettings = {
         ...prevConfig.providerSettings,
         [currentProvider]: {
-          model: newConfig.model !== undefined ? newConfig.model : prevConfig.model,
-          baseUrl: newConfig.baseUrl !== undefined ? newConfig.baseUrl : prevConfig.baseUrl,
+          ...currentProviderSettings,
+          model: updated.model,
+          baseUrl: updated.baseUrl,
+          apiKey: updated.apiKey, // Persist API key per provider
         },
       };
+
       updated.providerSettings = updatedProviderSettings;
       
       try {

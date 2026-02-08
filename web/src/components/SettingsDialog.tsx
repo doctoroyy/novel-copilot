@@ -26,7 +26,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { config, saveConfig, getProviderSettings, maskedApiKey, loaded } = useAIConfig();
+  const { config, saveConfig, getProviderSettings, loaded } = useAIConfig();
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   
@@ -43,15 +43,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setProvider(config.provider);
       setModel(config.model);
       setBaseUrl(config.baseUrl || '');
-      setApiKey(''); // Don't show actual key, user enters new one or leaves empty to keep existing
+      setApiKey(config.apiKey || ''); // Pre-fill with current key
       setTestResult(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, loaded]); // Removed config dependency - we only want to load on dialog open
 
   const handleSave = () => {
-    // If user didn't enter a new API key, keep the existing one
-    const keyToSave = apiKey.trim() || config.apiKey;
+    // Save the key exactly as entered/shown
+    const keyToSave = apiKey.trim();
     
     if (!keyToSave) {
       setTestResult({ success: false, message: '请输入 API Key' });
@@ -66,7 +66,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     };
     saveConfig(newConfig);
     setTestResult({ success: true, message: '配置已保存到本地' });
-    setApiKey(''); // Clear input field (key is saved in config)
     // Auto-close the dialog after successful save
     setTimeout(() => onOpenChange(false), 500);
   };
@@ -76,7 +75,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setTesting(true);
       setTestResult(null);
       
-      const testApiKey = apiKey.trim() || config.apiKey;
+      const testApiKey = apiKey.trim();
       
       if (!testApiKey) {
         setTestResult({ success: false, message: '请先输入 API Key' });
@@ -126,6 +125,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 const savedSettings = getProviderSettings(newProvider);
                 setModel(savedSettings.model || PROVIDER_MODELS[newProvider]?.[0] || '');
                 setBaseUrl(savedSettings.baseUrl || '');
+                setApiKey(savedSettings.apiKey || ''); // Restore API key
               }}
             >
               <SelectTrigger className="bg-muted/50 text-sm">
@@ -206,16 +206,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-sm">API Key</Label>
-              {maskedApiKey && (
-                <span className="text-xs text-muted-foreground">
-                  当前: {maskedApiKey}
-                </span>
-              )}
             </div>
             <div className="flex gap-2">
               <Input
                 type={showApiKey ? 'text' : 'password'}
-                placeholder={maskedApiKey ? `当前: ${maskedApiKey}` : '请输入 API Key'}
+                placeholder="请输入 API Key"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="flex-1 bg-muted/50 text-sm"
