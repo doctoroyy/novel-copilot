@@ -32,6 +32,8 @@ export type VolumeOutline = {
   conflict: string;
   /** 本卷高潮 */
   climax: string;
+  /** 卷末状态（用于下一卷衔接） */
+  volumeEndState?: string;
   /** 章节大纲 */
   chapters: ChapterOutline[];
 };
@@ -50,7 +52,7 @@ export type ChapterOutline = {
 /**
  * 生成总大纲
  */
-async function generateMasterOutline(
+export async function generateMasterOutline(
   aiConfig: AIConfig,
   args: {
     bible: string;
@@ -110,7 +112,7 @@ ${bible}
 /**
  * 生成单卷的章节大纲
  */
-async function generateVolumeChapters(
+export async function generateVolumeChapters(
   aiConfig: AIConfig,
   args: {
     bible: string;

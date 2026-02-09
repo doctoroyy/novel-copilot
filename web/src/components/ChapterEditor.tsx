@@ -12,7 +12,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { updateChapter, refineChapterText } from '@/lib/api';
+import { updateChapter, refineChapterText, createChapter } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/contexts/AIConfigContext';
 import { 
   Sparkles, 
@@ -24,16 +24,16 @@ import {
 
 interface ChapterEditorProps {
   projectName: string;
-  chapterIndex: number;
-  initialContent: string;
+  chapterIndex?: number; // undefined for new chapter
+  initialContent?: string;
   onClose: () => void;
-  onSaved?: () => void;
+  onSaved?: (chapterIndex: number) => void;
 }
 
 export function ChapterEditor({ 
   projectName, 
   chapterIndex, 
-  initialContent, 
+  initialContent = '', 
   onClose,
   onSaved,
 }: ChapterEditorProps) {
@@ -44,9 +44,10 @@ export function ChapterEditor({
   const [instruction, setInstruction] = useState('');
   const [selectedText, setSelectedText] = useState('');
   const [selectionContext, setSelectionContext] = useState('');
-  const [hasChanges, setHasChanges] = useState(false);
+  const [hasChanges, setHasChanges] = useState(chapterIndex === undefined); // New chapters always have "changes"
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showBubbleMenu, setShowBubbleMenu] = useState(false);
+  const [savedChapterIndex, setSavedChapterIndex] = useState<number | undefined>(chapterIndex);
 
   // Initialize tiptap editor
   const editor = useEditor({
@@ -103,9 +104,13 @@ export function ChapterEditor({
     setShowInstructionDialog(true);
   }, [editor]);
 
-  // Submit refinement request
+  // Submit refinement request (only for existing chapters)
   const handleRefineSubmit = useCallback(async () => {
     if (!editor || !selectedText || !instruction.trim()) return;
+    if (savedChapterIndex === undefined) {
+      alert('请先保存章节后再使用 AI 优化功能');
+      return;
+    }
     
     setIsRefining(true);
     
@@ -113,7 +118,7 @@ export function ChapterEditor({
       const aiHeaders = getAIConfigHeaders(config);
       const result = await refineChapterText(
         projectName,
-        chapterIndex,
+        savedChapterIndex,
         selectedText,
         instruction,
         selectionContext,
@@ -140,7 +145,7 @@ export function ChapterEditor({
     } finally {
       setIsRefining(false);
     }
-  }, [editor, projectName, chapterIndex, selectedText, instruction, selectionContext, config]);
+  }, [editor, projectName, savedChapterIndex, selectedText, instruction, selectionContext, config]);
 
   // Save chapter content
   const handleSave = useCallback(async () => {
@@ -152,15 +157,22 @@ export function ChapterEditor({
       // Get plain text content (strip HTML tags and highlights)
       const content = editor.getText();
       
-      await updateChapter(projectName, chapterIndex, content);
+      if (savedChapterIndex === undefined) {
+        // Create new chapter
+        const result = await createChapter(projectName, content);
+        setSavedChapterIndex(result.chapterIndex);
+        onSaved?.(result.chapterIndex);
+      } else {
+        // Update existing chapter
+        await updateChapter(projectName, savedChapterIndex, content);
+        onSaved?.(savedChapterIndex);
+      }
       
       setHasChanges(false);
       setSaveSuccess(true);
       
       // Clear highlights after save
       editor.chain().focus().unsetHighlight().run();
-      
-      onSaved?.();
       
       // Show success briefly
       setTimeout(() => setSaveSuccess(false), 2000);
@@ -170,7 +182,7 @@ export function ChapterEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [editor, projectName, chapterIndex, onSaved]);
+  }, [editor, projectName, savedChapterIndex, onSaved]);
 
   // Confirm before closing with unsaved changes
   const handleClose = useCallback(() => {
@@ -208,7 +220,9 @@ export function ChapterEditor({
           <Button variant="ghost" size="icon" onClick={handleClose}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h2 className="text-lg font-medium">第 {chapterIndex} 章</h2>
+          <h2 className="text-lg font-medium">
+            {savedChapterIndex !== undefined ? `第 ${savedChapterIndex} 章` : '新建章节'}
+          </h2>
           {hasChanges && (
             <span className="text-xs text-muted-foreground">(未保存)</span>
           )}
