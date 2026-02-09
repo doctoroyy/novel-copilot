@@ -617,3 +617,32 @@ export async function updateCharacters(name: string, characters: CharacterRelati
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
 }
+
+// Chapter editing APIs
+export async function updateChapter(name: string, index: number, content: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ content }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function refineChapterText(
+  name: string,
+  index: number,
+  selectedText: string,
+  instruction: string,
+  context?: string,
+  aiHeaders?: Record<string, string>
+): Promise<{ originalText: string; refinedText: string }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/refine`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ selectedText, instruction, context }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { originalText: data.originalText, refinedText: data.refinedText };
+}

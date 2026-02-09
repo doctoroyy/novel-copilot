@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen } from 'lucide-react';
+import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen, Edit } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
+import { ChapterEditor } from '@/components/ChapterEditor';
 
 // Cross-platform clipboard copy with fallback for mobile browsers
 // The fallback is needed because clipboard API may fail when called after async operations
@@ -64,6 +65,7 @@ interface ChapterListViewProps {
 
 export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters }: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ index: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
@@ -375,6 +377,20 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => {
+                    if (viewingChapter) {
+                      setEditingChapter({ index: viewingChapter.index, content: viewingChapter.content });
+                      setViewingChapter(null);
+                    }
+                  }}
+                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
+                >
+                  <Edit className="h-4 w-4" />
+                  <span className="hidden sm:inline">编辑</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={async () => {
                     if (!viewingChapter) return;
                     const nextIndex = viewingChapter.index + 1;
@@ -465,6 +481,19 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Chapter Editor (Full-screen overlay) */}
+      {editingChapter && (
+        <ChapterEditor
+          projectName={project.name}
+          chapterIndex={editingChapter.index}
+          initialContent={editingChapter.content}
+          onClose={() => setEditingChapter(null)}
+          onSaved={() => {
+            // Optionally refresh chapter list after save
+          }}
+        />
+      )}
     </div>
   );
 }
