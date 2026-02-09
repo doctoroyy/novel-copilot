@@ -140,7 +140,7 @@ function ProjectLayoutInner() {
           activityPanelOpen={activityPanelOpen}
         />
 
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-auto">
           {/* Page content via nested routes */}
           <Outlet />
         </main>
