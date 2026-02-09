@@ -200,7 +200,7 @@ export function Header({
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
             className={`
-              px-2 lg:px-4 py-2 lg:py-2.5 text-xs lg:text-sm font-medium rounded-t-lg transition-all whitespace-nowrap
+              flex items-center justify-center px-2 lg:px-4 py-2 lg:py-2.5 text-xs lg:text-sm font-medium rounded-t-lg transition-all whitespace-nowrap
               ${activeTab === tab.id
                 ? 'bg-card text-foreground border-t border-x border-border -mb-px'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
