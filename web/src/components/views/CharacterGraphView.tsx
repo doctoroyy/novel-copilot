@@ -221,7 +221,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
 
   if (!data) {
     return (
-      <div className="flex flex-col items-center justify-center h-full space-y-6 bg-slate-950 text-slate-100">
+      <div className="flex flex-col items-center justify-center h-full space-y-6 bg-slate-950 text-slate-100 text-center">
         <div className="relative">
             <div className="absolute inset-0 bg-blue-500 blur-3xl opacity-20 animate-pulse"></div>
             <div className="text-8xl relative z-10">🕸️</div>
