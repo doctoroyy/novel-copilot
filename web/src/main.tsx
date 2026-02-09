@@ -23,7 +23,7 @@ import { LoginPage } from './pages/LoginPage.tsx'
 import { AdminPage } from './pages/AdminPage.tsx'
 import { LandingPage } from './pages/LandingPage.tsx'
 
-// Protected route wrapper
+// Protected route wrapper - show landing page if not logged in
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, loading } = useAuth();
 
@@ -39,7 +39,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!isLoggedIn) {
-    return <Navigate to="/welcome" replace />;
+    return <LandingPage />;
   }
 
   return <>{children}</>;
@@ -108,7 +108,6 @@ createRoot(document.getElementById('root')!).render(
           <ServerEventsProvider>
             <BrowserRouter>
               <Routes>
-                <Route path="/welcome" element={<LandingPage />} />
                 <Route path="/login" element={<LoginRoute />} />
                 <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
                 
