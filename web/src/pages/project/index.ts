@@ -1,0 +1,7 @@
+export { default as DashboardPage } from './DashboardPage';
+export { default as GeneratePage } from './GeneratePage';
+export { default as ChaptersPage } from './ChaptersPage';
+export { default as OutlinePage } from './OutlinePage';
+export { default as BiblePage } from './BiblePage';
+export { default as CharactersPage } from './CharactersPage';
+export { default as AnimePage } from './AnimePage';
