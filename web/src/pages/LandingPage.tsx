@@ -259,7 +259,7 @@ export function LandingPage() {
               <span className="font-semibold gradient-text">Novel Copilot</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              © 2024 Novel Copilot. 让每个人都能成为小说家。
+              © 2026 Novel Copilot. 让每个人都能成为小说家。
             </p>
           </div>
         </div>
