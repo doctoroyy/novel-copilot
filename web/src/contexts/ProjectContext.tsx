@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
@@ -99,8 +99,20 @@ export function useProject() {
 }
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
-  const { projectName, tab = 'dashboard' } = useParams<{ projectName?: string; tab?: string }>();
+  const { projectName } = useParams<{ projectName?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Derive active tab from URL pathname
+  const tab = useMemo(() => {
+    const pathParts = location.pathname.split('/');
+    // URL pattern: /project/:projectName/:tab
+    // pathParts: ['', 'project', 'projectName', 'tab', ...]
+    if (pathParts.length >= 4 && pathParts[1] === 'project') {
+      return pathParts[3] || 'dashboard';
+    }
+    return 'dashboard';
+  }, [location.pathname]);
 
   // Projects state
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
