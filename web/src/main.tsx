@@ -21,6 +21,7 @@ import {
 } from './pages/project'
 import { LoginPage } from './pages/LoginPage.tsx'
 import { AdminPage } from './pages/AdminPage.tsx'
+import { LandingPage } from './pages/LandingPage.tsx'
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -38,7 +39,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!isLoggedIn) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/welcome" replace />;
   }
 
   return <>{children}</>;
@@ -107,6 +108,7 @@ createRoot(document.getElementById('root')!).render(
           <ServerEventsProvider>
             <BrowserRouter>
               <Routes>
+                <Route path="/welcome" element={<LandingPage />} />
                 <Route path="/login" element={<LoginRoute />} />
                 <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
                 
