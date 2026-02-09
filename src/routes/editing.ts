@@ -256,3 +256,135 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+// AI Suggest (Ghost Text)
+editingRoutes.post('/projects/:name/chapters/:index/suggest', async (c) => {
+  const name = c.req.param('name');
+  const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
+  const aiConfig = getAIConfigFromHeaders(c);
+  
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+  
+  try {
+    const { contextBefore } = await c.req.json();
+    
+    if (!contextBefore) {
+      return c.json({ success: false, error: 'contextBefore is required' }, 400);
+    }
+
+    // Get project bible for context
+    const project = await c.env.DB.prepare(`
+      SELECT p.bible FROM projects p
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const bible = (project as any).bible || '';
+
+    const systemPrompt = `你是一位小说续写助手。
+任务：根据给定的上文，续写 1-2 句话。
+要求：
+1. 风格一致，逻辑通顺。
+2. 只要续写内容，不要重复上文，不要任何解释。
+3. 简短有力，用于 Ghost Text 补全。
+4. 如果上文完整，则开始新的一句；如果上文中断，则补全句子。
+
+背景设定：
+${bible.substring(0, 1000)}`;
+
+    const userPrompt = `请续写以下内容（只输出续写部分）：
+
+${contextBefore.slice(-1000)}`;
+
+    const suggestion = await generateText(aiConfig, {
+      system: systemPrompt,
+      prompt: userPrompt,
+      temperature: 0.7,
+      maxTokens: 100, // Limit output length
+    });
+
+    return c.json({ 
+      success: true, 
+      suggestion: suggestion.trim(),
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// AI Chat (Context Aware)
+editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
+  const name = c.req.param('name');
+  const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
+  const aiConfig = getAIConfigFromHeaders(c);
+  
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+  
+  try {
+    const { messages, context } = await c.req.json(); // context includes current chapter content
+    
+    if (!messages || !Array.isArray(messages)) {
+      return c.json({ success: false, error: 'messages array is required' }, 400);
+    }
+
+    // Get project details
+    const project = await c.env.DB.prepare(`
+      SELECT p.bible, p.background, p.role_settings FROM projects p
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const bible = (project as any).bible || '';
+    
+    // Construct system prompt
+    const systemPrompt = `你是一位专业的小说创作助手。
+你拥有当前小说的完整背景设定和当前章节的上下文。
+
+【小说设定】
+${bible.substring(0, 2000)}
+
+【当前章节上下文】
+${context ? context.substring(0, 3000) : '（无上下文）'}
+
+你的任务是协助作者创作，包括解答疑问、提供灵感、润色段落等。
+请保持回复简洁、专业、富有启发性。`;
+
+    // Convert messages to format expected by AI client (if needed)
+    // For now, we assume AI client handles standard role/content messages
+    // actually generateText uses prompt/system.
+    // If we want chat history, we might need to concat them or use a chat-specific API if generateText supports it.
+    // My generateText (in aiClient.ts) supports `messages`? 
+    // Let's check aiClient.ts later. For now, I'll concatenate history into prompt.
+    
+    let prompt = '';
+    for (const msg of messages) {
+       prompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n\n`;
+    }
+    prompt += `Assistant: `;
+
+    const response = await generateText(aiConfig, {
+      system: systemPrompt,
+      prompt: prompt,
+      temperature: 0.8,
+    });
+
+    return c.json({ 
+      success: true, 
+      response: response.trim(),
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
