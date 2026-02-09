@@ -657,6 +657,39 @@ export async function refineChapterText(
   return { originalText: data.originalText, refinedText: data.refinedText };
 }
 
+export async function getChapterSuggestion(
+  name: string,
+  index: number,
+  contextBefore: string,
+  aiHeaders?: Record<string, string>
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/suggest`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ contextBefore }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.suggestion;
+}
+
+export async function chatWithChapter(
+  name: string,
+  index: number,
+  messages: { role: string; content: string }[],
+  context: string,
+  aiHeaders?: Record<string, string>
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/chat`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ messages, context }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.response;
+}
+
 export async function generateSingleChapter(
   name: string,
   index: number,

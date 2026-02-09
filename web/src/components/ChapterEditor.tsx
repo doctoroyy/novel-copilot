@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
+import { AiAutocomplete } from './extensions/AiAutocomplete';
+import { ChapterChatSidebar } from './ChapterChatSidebar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { 
@@ -12,7 +14,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { updateChapter, refineChapterText, createChapter } from '@/lib/api';
+import { updateChapter, refineChapterText, createChapter, getChapterSuggestion } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/contexts/AIConfigContext';
 import { 
   Sparkles, 
@@ -20,6 +22,8 @@ import {
   Loader2,
   CheckCircle,
   ArrowLeft,
+  Bot,
+  MessageSquare,
 } from 'lucide-react';
 
 interface ChapterEditorProps {
@@ -37,9 +41,11 @@ export function ChapterEditor({
   onClose,
   onSaved,
 }: ChapterEditorProps) {
-  const { config } = useAIConfig();
+  const { config, isConfigured } = useAIConfig();
   const [isSaving, setIsSaving] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [showInstructionDialog, setShowInstructionDialog] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [selectedText, setSelectedText] = useState('');
@@ -48,6 +54,10 @@ export function ChapterEditor({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showBubbleMenu, setShowBubbleMenu] = useState(false);
   const [savedChapterIndex, setSavedChapterIndex] = useState<number | undefined>(chapterIndex);
+  const [wordCount, setWordCount] = useState(0);
+
+  // Debounce ref for ghost text
+  const lastTypeTime = useRef<number>(Date.now());
 
   // Initialize tiptap editor
   const editor = useEditor({
@@ -66,16 +76,28 @@ export function ChapterEditor({
           class: 'ai-highlight',
         },
       }),
+      AiAutocomplete.configure({
+        suggestionClassName: 'after:content-[attr(data-suggestion)] after:text-gray-400 after:italic after:pointer-events-none',
+      }),
     ],
     content: `<p>${initialContent.split('\n').join('</p><p>')}</p>`,
     editorProps: {
       attributes: {
-        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[400px] p-4',
+        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[calc(100vh-200px)] p-4 pb-32',
       },
     },
-    onUpdate: () => {
+    onUpdate: ({ editor }) => {
       setHasChanges(true);
       setSaveSuccess(false);
+      lastTypeTime.current = Date.now();
+      
+      // Update word count
+      const text = editor.getText();
+      setWordCount(text.replace(/\s/g, '').length);
+    },
+    onCreate: ({ editor }) => {
+       const text = editor.getText();
+       setWordCount(text.replace(/\s/g, '').length);
     },
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection;
@@ -104,7 +126,7 @@ export function ChapterEditor({
     setShowInstructionDialog(true);
   }, [editor]);
 
-  // Submit refinement request (only for existing chapters)
+  // Submit refinement request
   const handleRefineSubmit = useCallback(async () => {
     if (!editor || !selectedText || !instruction.trim()) return;
     if (savedChapterIndex === undefined) {
@@ -125,7 +147,6 @@ export function ChapterEditor({
         aiHeaders
       );
       
-      // Replace selected text with refined version and highlight it
       const { from, to } = editor.state.selection;
       
       editor
@@ -154,31 +175,23 @@ export function ChapterEditor({
     setIsSaving(true);
     
     try {
-      // Get plain text content (strip HTML tags and highlights)
       const content = editor.getText();
       
       if (savedChapterIndex === undefined) {
-        // Create new chapter
         const result = await createChapter(projectName, content);
         setSavedChapterIndex(result.chapterIndex);
         onSaved?.(result.chapterIndex);
       } else {
-        // Update existing chapter
         await updateChapter(projectName, savedChapterIndex, content);
         onSaved?.(savedChapterIndex);
       }
       
       setHasChanges(false);
       setSaveSuccess(true);
-      
-      // Clear highlights after save
       editor.chain().focus().unsetHighlight().run();
-      
-      // Show success briefly
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
       console.error('Save error:', error);
-      alert(`保存失败: ${(error as Error).message}`);
     } finally {
       setIsSaving(false);
     }
@@ -208,6 +221,58 @@ export function ChapterEditor({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
+  // Auto-save effect
+  useEffect(() => {
+    if (!hasChanges || isSaving || !editor) return;
+
+    const timer = setTimeout(() => {
+      handleSave();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [hasChanges, isSaving, editor, handleSave]);
+
+  // Ghost Text (AI Autocomplete) Effect
+  useEffect(() => {
+    if (!editor || !isConfigured || savedChapterIndex === undefined || isSuggesting) return;
+
+    const checkGhostText = async () => {
+      const now = Date.now();
+      const timeSinceType = now - lastTypeTime.current;
+      
+      if (timeSinceType > 1000 && editor.isFocused) {
+        const { to } = editor.state.selection;
+        const docSize = editor.state.doc.content.size;
+        
+        if (to === docSize - 1 || to === docSize) { // -1 because doc has block close
+             // @ts-ignore
+             if (editor.storage.aiAutocomplete.suggestion) return;
+
+             try {
+                setIsSuggesting(true);
+                const text = editor.getText();
+                const contextBefore = text.slice(-1000);
+                if (contextBefore.length < 10) { setIsSuggesting(false); return; }
+
+                const aiHeaders = getAIConfigHeaders(config);
+                const suggestion = await getChapterSuggestion(projectName, savedChapterIndex, contextBefore, aiHeaders);
+                
+                if (suggestion && editor.isFocused) {
+                   editor.commands.setAiSuggestion(suggestion);
+                }
+             } catch (err) {
+               console.error("Ghost text error", err);
+             } finally {
+               setIsSuggesting(false);
+             }
+        }
+      }
+    };
+
+    const timer = setInterval(checkGhostText, 1000);
+    return () => clearInterval(timer);
+  }, [editor, isConfigured, savedChapterIndex, projectName, config, isSuggesting]);
+
   if (!editor) {
     return null;
   }
@@ -215,67 +280,107 @@ export function ChapterEditor({
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-card">
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-card shadow-sm shrink-0">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={handleClose}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h2 className="text-lg font-medium">
-            {savedChapterIndex !== undefined ? `第 ${savedChapterIndex} 章` : '新建章节'}
-          </h2>
-          {hasChanges && (
-            <span className="text-xs text-muted-foreground">(未保存)</span>
-          )}
+          <div>
+             <h2 className="text-lg font-medium">
+              {savedChapterIndex !== undefined ? `第 ${savedChapterIndex} 章` : '新建章节'}
+            </h2>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{wordCount} 字</span>
+              {hasChanges ? (
+                <span className="text-yellow-600">● 未保存</span>
+              ) : (
+                <span className="text-green-600">● 已保存</span>
+              )}
+              {isSuggesting && (
+                 <span className="text-orange-500 flex items-center gap-1 animate-pulse">
+                   <Bot className="h-3 w-3" />
+                   思考中...
+                 </span>
+              )}
+            </div>
+          </div>
         </div>
         
         <div className="flex items-center gap-2">
           {saveSuccess && (
-            <span className="flex items-center gap-1 text-sm text-green-600">
+            <span className="flex items-center gap-1 text-sm text-green-600 animate-in fade-in slide-in-from-bottom-1">
               <CheckCircle className="h-4 w-4" />
-              已保存
+              已自动保存
             </span>
           )}
+          
+          <Button
+            variant={isChatOpen ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setIsChatOpen(!isChatOpen)}
+            className="flex items-center gap-1"
+          >
+            <MessageSquare className="h-4 w-4" />
+            AI 助手
+          </Button>
+
           <Button 
             onClick={handleSave} 
             disabled={isSaving || !hasChanges}
             size="sm"
+            variant="outline"
           >
             {isSaving ? (
               <Loader2 className="h-4 w-4 animate-spin mr-1" />
             ) : (
               <Save className="h-4 w-4 mr-1" />
             )}
-            保存 (⌘S)
+            保存
           </Button>
         </div>
       </div>
 
-      {/* Editor */}
-      <div className="flex-1 overflow-auto">
-        <div className="max-w-4xl mx-auto py-8 px-4 relative">
-          {/* Custom Bubble Menu - appears when text is selected */}
-          {showBubbleMenu && editor.state.selection.from !== editor.state.selection.to && (
-            <div 
-              className="absolute bg-popover border rounded-lg shadow-lg p-1 z-10"
-              style={{
-                top: 'var(--bubble-top, 0)',
-                left: 'var(--bubble-left, 0)',
-              }}
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRefineClick}
-                className="flex items-center gap-1"
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Editor */}
+        <div className="flex-1 overflow-auto bg-background/50">
+          <div className="max-w-4xl mx-auto py-8 px-4 relative h-full">
+            {/* Custom Bubble Menu - appears when text is selected */}
+            {showBubbleMenu && editor.state.selection.from !== editor.state.selection.to && (
+              <div 
+                className="absolute bg-popover border rounded-lg shadow-lg p-1 z-10"
+                style={{
+                  top: 'var(--bubble-top, 0)',
+                  left: 'var(--bubble-left, 0)',
+                }}
               >
-                <Sparkles className="h-4 w-4 text-orange-500" />
-                AI 优化
-              </Button>
-            </div>
-          )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefineClick}
+                  className="flex items-center gap-1"
+                >
+                  <Sparkles className="h-4 w-4 text-orange-500" />
+                  AI 优化
+                </Button>
+              </div>
+            )}
 
-          <EditorContent editor={editor} />
+            <EditorContent editor={editor} />
+          </div>
         </div>
+
+        {/* Chat Sidebar */}
+        {isChatOpen && (
+          <div className="w-80 shrink-0 border-l h-full">
+            <ChapterChatSidebar 
+              projectName={projectName}
+              chapterIndex={savedChapterIndex}
+              currentContent={editor.getText()}
+              onClose={() => setIsChatOpen(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Floating AI Button - always visible when text selected */}
@@ -363,6 +468,12 @@ export function ChapterEditor({
         
         .dark .ai-highlight {
           background-color: rgba(249, 115, 22, 0.3);
+        }
+
+        .ai-autocomplete-suggestion {
+          color: #9ca3af;
+          pointer-events: none;
+          font-style: italic;
         }
         
         .ProseMirror {
