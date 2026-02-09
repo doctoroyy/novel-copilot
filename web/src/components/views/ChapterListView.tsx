@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen, Edit } from 'lucide-react';
+import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen, Edit, Sparkles, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
+import { generateSingleChapter } from '@/lib/api';
 import { ChapterEditor } from '@/components/ChapterEditor';
 
 // Cross-platform clipboard copy with fallback for mobile browsers
@@ -65,7 +66,7 @@ interface ChapterListViewProps {
 
 export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters }: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
-  const [editingChapter, setEditingChapter] = useState<{ index: number; content: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
@@ -73,6 +74,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const [copyError, setCopyError] = useState<number | null>(null);
   const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
+  const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
 
   // Selection mode for batch delete
   const [selectionMode, setSelectionMode] = useState(false);
@@ -144,6 +146,46 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     } finally {
       setDeletingChapter(null);
       setChapterToDelete(null);
+    }
+  };
+
+  const handleGenerateNext = async () => {
+    const allIndices = project.chapters.map(ch => parseInt(ch.replace('.md', ''), 10));
+    const maxIndex = allIndices.length > 0 ? Math.max(...allIndices) : 0;
+    const nextIndex = maxIndex + 1;
+
+    setGeneratingChapter(nextIndex);
+    try {
+      await generateSingleChapter(project.name, nextIndex, false, undefined, (msg) => {
+        if (msg.type === 'done') {
+           // Reload page to reflect changes (or use a callback to refresh project)
+           window.location.reload(); 
+        }
+      });
+    } catch (err) {
+      console.error('Generation failed:', err);
+      alert('Generation failed: ' + (err as Error).message);
+    } finally {
+      setGeneratingChapter(null);
+    }
+  };
+
+  const handleRegenerate = async (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`确定要重新生成第 ${index} 章吗？现有内容将被覆盖。`)) return;
+
+    setGeneratingChapter(index);
+    try {
+      await generateSingleChapter(project.name, index, true, undefined, (msg) => {
+        if (msg.type === 'done') {
+           window.location.reload(); 
+        }
+      });
+    } catch (err) {
+      console.error('Regeneration failed:', err);
+      alert('Regeneration failed: ' + (err as Error).message);
+    } finally {
+      setGeneratingChapter(null);
     }
   };
 
@@ -223,13 +265,34 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                     </Button>
                   </>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
                     <Trash2 className="h-3.5 w-3.5" />
                     批量删除
                   </Button>
                 )}
               </div>
             )}
+            <Button 
+              size="sm" 
+              className="text-xs h-7 ml-auto"
+              onClick={() => setEditingChapter({ content: '' })}
+            >
+              <Edit className="h-3.5 w-3.5 mr-1" />
+              新建章节
+            </Button>
+            <Button 
+              size="sm" 
+              className="text-xs h-7 ml-2"
+              onClick={handleGenerateNext}
+              disabled={generatingChapter !== null}
+            >
+              {generatingChapter && !project.chapters.some(ch => parseInt(ch.replace('.md', ''), 10) === generatingChapter) ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5 mr-1" />
+              )}
+              生成下一章
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -277,6 +340,15 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                   title="复制章节内容"
                                 >
                                   {copyingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === chapterIndex ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === chapterIndex ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
+                                </button>
+                                <button
+                                  onClick={(e) => handleRegenerate(chapterIndex, e)}
+                                  disabled={generatingChapter === chapterIndex}
+                                  className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                                  title="重新生成"
+                                >
+                                  {generatingChapter === chapterIndex ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                                  重写
                                 </button>
                                 {onDeleteChapter && (
                                   <button
@@ -328,6 +400,15 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                           title="复制章节内容"
                         >
                           {copyingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === index ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === index ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
+                        </button>
+                        <button
+                          onClick={(e) => handleRegenerate(index, e)}
+                          disabled={generatingChapter === index}
+                          className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                          title="重新生成"
+                        >
+                          {generatingChapter === index ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                          重写
                         </button>
                         {onDeleteChapter && (
                           <button
@@ -490,7 +571,11 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
           initialContent={editingChapter.content}
           onClose={() => setEditingChapter(null)}
           onSaved={() => {
-            // Optionally refresh chapter list after save
+            // Refresh logic needs to be implemented in parent or via context
+            // For now just close the editor
+            // setEditingChapter(null);
+            // In a real app we'd reload the project data here
+            window.location.reload(); 
           }}
         />
       )}

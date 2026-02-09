@@ -646,3 +646,64 @@ export async function refineChapterText(
   if (!data.success) throw new Error(data.error);
   return { originalText: data.originalText, refinedText: data.refinedText };
 }
+
+export async function generateSingleChapter(
+  name: string,
+  index: number,
+  regenerate: boolean = false,
+  aiHeaders?: Record<string, string>,
+  onMessage?: (msg: any) => void
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/generate`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ regenerate }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || 'Failed to start generation');
+  }
+
+  if (!res.body) throw new Error('No response body');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        try {
+          const parsed = JSON.parse(data);
+          onMessage?.(parsed);
+        } catch (e) {
+          console.error('Failed to parse SSE message:', e);
+        }
+      }
+    }
+  }
+}
+
+export async function createChapter(
+  name: string,
+  content: string,
+  insertAfter?: number
+): Promise<{ chapterIndex: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ content, insertAfter }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { chapterIndex: data.chapterIndex };
+}

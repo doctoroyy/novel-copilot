@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, type AIConfig } from '../services/aiClient.js';
 import { writeOneChapter } from '../generateChapter.js';
+import { generateMasterOutline, generateVolumeChapters } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
 import type { CharacterStateRegistry } from '../types/characterState.js';
 import type { PlotGraph } from '../types/plotGraph.js';
@@ -165,7 +166,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         // Phase 1: Generate master outline
         sendEvent('progress', { phase: 1, message: '正在生成总体大纲...' });
         console.log('Phase 1: Generating master outline...');
-        const masterOutline = await generateMasterOutline(aiConfig, bible, targetChapters, targetWordCount);
+        const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
         const totalVolumes = masterOutline.volumes?.length || 0;
         console.log(`Master outline generated: ${totalVolumes} volumes`);
         sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
@@ -188,7 +189,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
           });
           console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
           
-          const chapters = await generateVolumeChapters(aiConfig, bible, masterOutline, vol, previousVolumeEndState);
+          const chapters = await generateVolumeChapters(aiConfig, { bible, masterOutline, volume: vol, previousVolumeSummary: previousVolumeEndState || undefined });
           const normalizedVolume = normalizeVolume(vol, i, chapters);
           volumes.push(normalizedVolume);
           
@@ -242,6 +243,160 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         controller.close();
       }
     }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
+
+// Generate single chapter (with order validation)
+generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
+  const name = c.req.param('name');
+  const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
+  const aiConfig = getAIConfigFromHeaders(c);
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  const encoder = new TextEncoder();
+
+  // Create a readable stream for SSE
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Helper to send SSE event
+      const sendEvent = (type: string, data: any) => {
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch (e) {
+          console.error('Error sending event', e);
+        }
+      };
+
+      try {
+        const { regenerate = false } = await c.req.json().catch(() => ({}));
+
+        // Get project with state and outline
+        const project = await c.env.DB.prepare(`
+          SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+          FROM projects p
+          JOIN states s ON p.id = s.project_id
+          LEFT JOIN outlines o ON p.id = o.project_id
+          LEFT JOIN characters c ON p.id = c.project_id
+          WHERE p.name = ? AND p.user_id = ?
+        `).bind(name, userId).first() as any;
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          controller.close();
+          return;
+        }
+
+        // Validate chapter order
+        const maxChapterResult = await c.env.DB.prepare(`
+          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
+        `).bind(project.id).first() as any;
+
+        const maxIndex = maxChapterResult?.max_index || 0;
+
+        if (index > maxIndex + 1) {
+          sendEvent('error', { error: `无法跳过生成。当前最大章节为第 ${maxIndex} 章，必须先生成第 ${maxIndex + 1} 章。` });
+          controller.close();
+          return;
+        }
+
+        // Check if chapter already exists when not regenerating
+        if (index <= maxIndex && !regenerate) {
+           sendEvent('error', { error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` });
+           controller.close();
+           return;
+        }
+
+        // Prepare prompt context
+        // If regenerating a middle chapter, we use the content of the PREVIOUS chapter as 'lastChapters' logic
+        const { results: lastChapters } = await c.env.DB.prepare(`
+          SELECT content FROM chapters 
+          WHERE project_id = ? AND chapter_index < ? AND deleted_at IS NULL
+          ORDER BY chapter_index DESC LIMIT 2
+        `).bind(project.id, index).all();
+
+        // Get chapter goal from outline
+        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+        
+        let chapterGoalHint: string | undefined;
+        let outlineTitle: string | undefined;
+        if (outline) {
+          for (const vol of outline.volumes) {
+            const ch = vol.chapters?.find((c: any) => c.index === index);
+            if (ch) {
+              outlineTitle = ch.title;
+              chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+              break;
+            }
+          }
+        }
+
+        sendEvent('start', { index, title: outlineTitle });
+        sendEvent('progress', { message: '正在调用 AI 生成...' });
+
+        // Generate chapter
+        const result = await writeOneChapter({
+          aiConfig,
+          bible: project.bible,
+          rollingSummary: project.rolling_summary || '', // Use current summary (might be slightly off for mid-chapter regen, but acceptable)
+          openLoops: JSON.parse(project.open_loops || '[]'),
+          lastChapters: lastChapters.map((c: any) => c.content).reverse(),
+          chapterIndex: index,
+          totalChapters: project.total_chapters,
+          chapterGoalHint,
+          chapterTitle: outlineTitle,
+          characters,
+          onProgress: (message, status) => {
+            sendEvent('progress', { message, status });
+          },
+        });
+
+        const chapterText = result.chapterText;
+
+        // Save chapter
+        await c.env.DB.prepare(`
+          INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+        `).bind(project.id, index, chapterText).run();
+
+        // ONLY update state if we are appending a new chapter (not regenerating old ones)
+        // Updating state for old chapters is dangerous as it invalidates future summaries
+        if (index === maxIndex + 1) {
+          await c.env.DB.prepare(`
+            UPDATE states SET 
+              next_chapter_index = ?,
+              rolling_summary = ?,
+              open_loops = ?
+            WHERE project_id = ?
+          `).bind(
+            index + 1,
+            result.updatedSummary,
+            JSON.stringify(result.updatedOpenLoops),
+            project.id
+          ).run();
+        }
+
+        sendEvent('done', { success: true, index, content: chapterText });
+        controller.close();
+
+      } catch (error) {
+        console.error('Generation error:', error);
+        sendEvent('error', { error: (error as Error).message });
+        controller.close();
+      }
+    },
   });
 
   return new Response(stream, {
@@ -1091,225 +1246,7 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 });
 
 // Helper: Generate master outline
-async function generateMasterOutline(
-  aiConfig: AIConfig,
-  bible: string,
-  targetChapters: number,
-  targetWordCount: number
-) {
-  const volumeCount = Math.ceil(targetChapters / 80);
-  const chaptersPerVolume = Math.ceil(targetChapters / volumeCount);
 
-  const system = `你是一个**网文爆款大纲策划专家**，精通长篇连载的节奏把控。
-
-【硬性要求】
-1. 必须严格按照目标章数分配各卷章节，确保分卷章节数之和**恰好等于**目标总章数
-2. 每一卷必须有明确的"阶段性爽点"和"卷末高潮"设计
-3. volumes 数组中的每个卷必须包含: title, startChapter, endChapter, goal, conflict, climax, volumeEndState
-4. endChapter 必须紧接着下一卷的 startChapter（无重叠无间隙）
-5. 最后一卷的 endChapter 必须等于目标总章数
-
-【⚠️ 剧情连贯性 - 关键约束】
-6. **剧情单向递进原则**：主角的重大状态变化（如称帝、结婚、突破境界）一旦发生，后续所有卷必须以此为前提，绝不可回退
-7. **卷末状态延续**：每卷的 volumeEndState（卷末主角状态）必须成为下一卷的起始前提
-8. **里程碑时间顺序**：milestones 必须按照剧情发展顺序排列，不可出现逻辑冲突（如"第100章称帝"不可出现在"第200章起兵"之后）
-
-输出严格的 JSON 格式，不要有其他文字。
-
-JSON 结构:
-{
-  "mainGoal": "全书核心目标",
-  "milestones": ["里程碑1（按时间顺序）", "里程碑2", ...],
-  "volumes": [
-    {
-      "title": "第一卷 卷名",
-      "startChapter": 1,
-      "endChapter": 80,
-      "goal": "本卷剧情目标",
-      "conflict": "本卷核心冲突",
-      "climax": "本卷高潮/爽点",
-      "volumeEndState": "本卷结束时主角的状态（身份、实力、处境等，下一卷必须从此状态开始）"
-    },
-    ...
-  ]
-}`;
-
-  const prompt = `【Story Bible】
-${bible}
-
-【目标规模 - 必须严格遵守】
-- 总章数: ${targetChapters} 章（分卷章节数之和必须恰好等于此数）
-- 总字数: ${targetWordCount} 万字
-- 预计分卷数: ${volumeCount} 卷
-- 建议每卷约 ${chaptersPerVolume} 章
-
-请生成符合要求的 JSON 格式总大纲：`;
-
-  const raw = await generateText(aiConfig, { system, prompt, temperature: 0.7 });
-  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
-  const outline = JSON.parse(jsonText);
-
-  // Validate and auto-correct volume chapter coverage
-  const volumes = outline.volumes || [];
-  let expectedStart = 1;
-
-  for (let i = 0; i < volumes.length; i++) {
-    const vol = volumes[i];
-    // Ensure startChapter is correct
-    if (vol.startChapter !== expectedStart) {
-      console.log(`Auto-correcting volume ${i + 1} startChapter: ${vol.startChapter} -> ${expectedStart}`);
-      vol.startChapter = expectedStart;
-    }
-
-    // For the last volume, ensure endChapter equals targetChapters
-    if (i === volumes.length - 1 && vol.endChapter !== targetChapters) {
-      console.log(`Auto-correcting last volume endChapter: ${vol.endChapter} -> ${targetChapters}`);
-      vol.endChapter = targetChapters;
-    }
-
-    expectedStart = vol.endChapter + 1;
-  }
-
-  // Verify total coverage
-  const totalCoverage = volumes.reduce((sum: number, v: any) => sum + (v.endChapter - v.startChapter + 1), 0);
-  if (totalCoverage !== targetChapters) {
-    console.warn(`Volume coverage mismatch: ${totalCoverage} vs target ${targetChapters}. Auto-adjusting last volume.`);
-    if (volumes.length > 0) {
-      const lastVol = volumes[volumes.length - 1];
-      lastVol.endChapter = targetChapters;
-    }
-  }
-
-  return outline;
-}
-
-// Helper: Generate volume chapters with chunked generation and validation
-async function generateVolumeChapters(
-  aiConfig: AIConfig,
-  bible: string,
-  masterOutline: any,
-  volume: any,
-  previousVolumeEndState: string | null = null
-): Promise<any[]> {
-  const startChapter = volume.startChapter;
-  const endChapter = volume.endChapter;
-  const totalChapters = endChapter - startChapter + 1;
-
-  // Chunk size for generation (to avoid token limits)
-  const CHUNK_SIZE = 20;
-  const allChapters: any[] = [];
-
-  // Generate chapters in chunks
-  for (let chunkStart = startChapter; chunkStart <= endChapter; chunkStart += CHUNK_SIZE) {
-    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE - 1, endChapter);
-    const chunkSize = chunkEnd - chunkStart + 1;
-
-    console.log(`Generating chapters ${chunkStart}-${chunkEnd} for volume "${volume.title}"...`);
-
-    const system = `你是一个**网文章节大纲策划专家**，擅长设计引人入胜的章节结构。
-
-【硬性要求】
-1. 必须生成 **恰好 ${chunkSize} 个章节**，索引从 ${chunkStart} 到 ${chunkEnd}
-2. 每章必须有**独特且有创意的标题**，严禁使用"第X章"作为占位符
-3. 每章标题应该体现本章的核心冲突或转折点
-4. 每章必须有 goal（本章目标，至少20字） 和 hook（章末钩子，让读者想看下一章）
-5. 章节之间要有逻辑递进，不能跳跃
-
-输出严格的 JSON 数组格式，不要有其他文字。
-
-JSON 结构:
-[
-  {
-    "index": ${chunkStart},
-    "title": "创意章节标题（不要包含'第X章'）",
-    "goal": "本章具体剧情目标和要完成的内容",
-    "hook": "章末悬念/钩子，让读者想立刻看下一章"
-  },
-  ...
-]`;
-
-    // Build context from previously generated chapters in this volume
-    const prevChaptersContext = allChapters.length > 0
-      ? `\n【本卷已生成章节】\n${allChapters.slice(-5).map(c => `- 第${c.index}章 ${c.title}: ${c.goal.slice(0, 50)}...`).join('\n')}`
-      : '';
-
-    const prompt = `【Story Bible】
-${bible.slice(0, 1500)}...
-
-【全书进度定位】
-- 总目标: ${masterOutline.mainGoal}
-${previousVolumeEndState 
-  ? `- 前卷结局状态: ${previousVolumeEndState}
-- ⚠️ 重要约束：本卷剧情必须从上述状态开始，主角身份/实力/处境不可回退！` 
-  : '- 这是第一卷，故事开端'}
-
-【本卷信息】
-- ${volume.title}
-- 本卷目标: ${volume.goal}
-- 本卷冲突: ${volume.conflict || '待发展'}
-- 本卷高潮: ${volume.climax || '待发展'}
-${prevChaptersContext}
-
-【本次生成任务】
-请生成第 ${chunkStart} 章到第 ${chunkEnd} 章的大纲（共 ${chunkSize} 章），输出 JSON 数组：`;
-
-    try {
-      const raw = await generateText(aiConfig, { system, prompt, temperature: 0.75 });
-      const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
-      const chapters = JSON.parse(jsonText);
-
-      // Validate and fix chapter indices
-      const validatedChapters = chapters.map((ch: any, i: number) => ({
-        index: chunkStart + i,
-        title: ch.title && !ch.title.match(/^第?\d+章?$/) ? ch.title : `${volume.title.replace(/第.+卷\s*/, '')}·${chunkStart + i}`,
-        goal: ch.goal || ch.description || ch.plot || '剧情推进',
-        hook: ch.hook || ch.cliffhanger || '悬念待续',
-      }));
-
-      allChapters.push(...validatedChapters);
-    } catch (error) {
-      console.error(`Error generating chapters ${chunkStart}-${chunkEnd}:`, error);
-      // Generate placeholder chapters for this chunk if API fails
-      for (let idx = chunkStart; idx <= chunkEnd; idx++) {
-        allChapters.push({
-          index: idx,
-          title: `${volume.title.replace(/第.+卷\s*/, '')}·${idx}`,
-          goal: '待补充',
-          hook: '待补充',
-        });
-      }
-    }
-  }
-
-  // Final validation: ensure all indices are present
-  const indexSet = new Set(allChapters.map(c => c.index));
-  const missingIndices: number[] = [];
-  for (let i = startChapter; i <= endChapter; i++) {
-    if (!indexSet.has(i)) {
-      missingIndices.push(i);
-    }
-  }
-
-  // Fill in any missing chapters
-  if (missingIndices.length > 0) {
-    console.warn(`Missing chapter indices: ${missingIndices.join(', ')}. Filling with placeholders.`);
-    for (const idx of missingIndices) {
-      allChapters.push({
-        index: idx,
-        title: `${volume.title.replace(/第.+卷\s*/, '')}·${idx}`,
-        goal: '待补充',
-        hook: '待补充',
-      });
-    }
-  }
-
-  // Sort by index
-  allChapters.sort((a, b) => a.index - b.index);
-
-  console.log(`Volume "${volume.title}" complete: ${allChapters.length}/${totalChapters} chapters generated.`);
-
-  return allChapters;
-}
 
 
 
@@ -1361,7 +1298,7 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
       // Force refine specific volume
       console.log(`Force refining Volume ${volumeIndex + 1}`);
       const vol = volumes[volumeIndex];
-      const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
+      const chaptersData = await generateVolumeChapters(aiConfig, { bible, masterOutline: outline, volume: vol });
       volumes[volumeIndex] = normalizeVolume({ ...vol, chapters: chaptersData }, volumeIndex, chaptersData);
       updated = true;
     } else {
@@ -1383,7 +1320,7 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
         if (isPlaceholder || isEmpty) {
           console.log(`Refining Volume ${i + 1}: ${vol.title}`);
 
-          const chaptersData = await generateVolumeChapters(aiConfig, bible, outline, vol);
+          const chaptersData = await generateVolumeChapters(aiConfig, { bible, masterOutline: outline, volume: vol });
           volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
           updated = true;
         }

@@ -18,6 +18,84 @@ function getAIConfigFromHeaders(c: any): AIConfig | null {
   return { provider, model, apiKey, baseUrl };
 }
 
+// Create a new chapter (user-scoped)
+editingRoutes.post('/projects/:name/chapters', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+  
+  try {
+    const { content, insertAfter } = await c.req.json();
+    
+    if (typeof content !== 'string') {
+      return c.json({ success: false, error: 'content is required' }, 400);
+    }
+
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT p.id, s.next_chapter_index FROM projects p
+      LEFT JOIN states s ON p.id = s.project_id
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const projectId = (project as any).id;
+    
+    // Determine the chapter index
+    let chapterIndex: number;
+    
+    if (typeof insertAfter === 'number') {
+      // Insert after a specific chapter
+      chapterIndex = insertAfter + 1;
+      
+      // Check if the position is valid (insertAfter chapter must exist or be 0)
+      if (insertAfter > 0) {
+        const prevChapter = await c.env.DB.prepare(`
+          SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
+        `).bind(projectId, insertAfter).first();
+        
+        if (!prevChapter) {
+          return c.json({ success: false, error: `Chapter ${insertAfter} does not exist` }, 400);
+        }
+      }
+    } else {
+      // Append at the end - use next_chapter_index from state
+      chapterIndex = (project as any).next_chapter_index || 1;
+    }
+
+    // Check if chapter already exists (might happen if inserting)
+    const existing = await c.env.DB.prepare(`
+      SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
+    `).bind(projectId, chapterIndex).first();
+
+    if (existing) {
+      return c.json({ success: false, error: `Chapter ${chapterIndex} already exists` }, 400);
+    }
+
+    // Insert the new chapter
+    await c.env.DB.prepare(`
+      INSERT INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+    `).bind(projectId, chapterIndex, content).run();
+
+    // Update next_chapter_index in state if we're appending at the end
+    if (!insertAfter || chapterIndex >= ((project as any).next_chapter_index || 1)) {
+      await c.env.DB.prepare(`
+        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+      `).bind(chapterIndex + 1, projectId).run();
+    }
+
+    return c.json({ 
+      success: true, 
+      chapterIndex,
+      message: `Chapter ${chapterIndex} created`
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Update chapter content (user-scoped)
 editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
   const name = c.req.param('name');
