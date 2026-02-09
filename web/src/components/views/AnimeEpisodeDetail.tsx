@@ -153,7 +153,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
   // Loading state
   if (!episode) {
     return (
-      <div className="h-full flex flex-col bg-background items-center justify-center">
+      <div className="h-full flex flex-col bg-background items-center justify-center text-center">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mb-4" />
         <p className="text-muted-foreground">加载中...</p>
         <Button variant="ghost" className="mt-4" onClick={onBack}>
@@ -364,7 +364,7 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
                                                         </span>
                                                     </div>
                                                 ) : (
-                                                    <div className="text-zinc-700 flex flex-col items-center">
+                                                    <div className="text-zinc-700 flex flex-col items-center text-center">
                                                         <Film className="w-8 h-8 mb-2 opacity-50"/>
                                                         <span className="text-xs">等待生成...</span>
                                                     </div>

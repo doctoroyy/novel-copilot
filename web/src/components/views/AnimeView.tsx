@@ -833,7 +833,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                         </pre>
                     </div>
                     ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 text-center">
                         <FileText className="w-12 h-12 opacity-20"/>
                         <p>暂无剧本数据</p>
                         <Button variant="outline" size="sm" onClick={() => selectedEpisode && handleGenerateEpisode(selectedEpisode)}>
@@ -870,7 +870,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                         ))}
                     </div>
                     ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 text-center">
                         <ImageIcon className="w-12 h-12 opacity-20"/>
                         <p>暂无分镜数据</p>
                         <Button variant="outline" size="sm" onClick={() => selectedEpisode && handleGenerateEpisode(selectedEpisode)}>
