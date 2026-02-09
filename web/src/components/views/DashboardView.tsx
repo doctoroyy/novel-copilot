@@ -78,11 +78,11 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                 </defs>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl lg:text-3xl font-bold gradient-text">{Math.round(progress)}%</span>
+                <span className="text-2xl lg:text-3xl font-bold gradient-text tabular-nums">{Math.round(progress)}%</span>
                 <span className="text-xs text-muted-foreground">完成进度</span>
               </div>
             </div>
-            <p className="mt-4 text-sm text-muted-foreground">
+            <p className="mt-4 text-sm text-muted-foreground tabular-nums">
               {chaptersGenerated} / {project.state.totalChapters} 章
             </p>
           </CardContent>
@@ -95,7 +95,7 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs lg:text-sm text-muted-foreground">已生成</p>
-                  <p className="text-2xl lg:text-3xl font-bold">{chaptersGenerated}</p>
+                  <p className="text-2xl lg:text-3xl font-bold tabular-nums">{chaptersGenerated}</p>
                 </div>
                 <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0">
                   <CheckCircle className="h-5 w-5 lg:h-6 lg:w-6 text-green-500" />

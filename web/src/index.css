@@ -129,8 +129,8 @@
   --background: #09090b; /* zinc-950 */
   --foreground: #fafafa; /* zinc-50 */
 
-  /* Cards - slightly lighter than bg, with transparency for glass effect potentially */
-  --card: #18181b; /* zinc-900 */
+  /* Cards - deeper than bg for better layer separation */
+  --card: #121214; /* custom: deeper than zinc-900 */
   --card-foreground: #fafafa;
 
   --popover: #18181b;
@@ -187,6 +187,25 @@
     @apply bg-background text-foreground subpixel-antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
+  
+  /* Typography: Tabular nums for consistent number widths */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  
+  /* Button press feedback */
+  button, [role="button"], .btn {
+    @apply transition-transform duration-75;
+  }
+  
+  button:active:not(:disabled), [role="button"]:active:not(:disabled), .btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  
+  /* Enhanced focus ring for accessibility */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
 }
 
 /* Advanced Utilities for Visual Polish */
@@ -197,10 +216,17 @@
   }
 
   .glass-card {
-    @apply bg-card/95 border border-white/10 shadow-xl;
+    @apply bg-card/95 border border-white/10;
+    box-shadow: 
+      0 4px 6px -1px rgba(0, 0, 0, 0.3),
+      0 2px 4px -1px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
     /* In light mode, give it more substance */
     :where(.light &) {
-      @apply bg-white/70 border-gray-200/50 shadow-sm;
+      @apply bg-white/70 border-gray-200/50;
+      box-shadow: 
+        0 4px 6px -1px rgba(0, 0, 0, 0.1),
+        0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }
   }
 
