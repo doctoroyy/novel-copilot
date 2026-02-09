@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Sparkles, RotateCw } from 'lucide-react';
+import { Loader2, Sparkles, RotateCw, FileText, Target, Trophy, Library } from 'lucide-react';
 import { type ProjectDetail, refineOutline } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
@@ -59,7 +59,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       <div className="p-4 lg:p-6">
         <Card className="glass-card">
           <CardContent className="p-8 lg:p-12 text-center text-muted-foreground">
-            <div className="text-4xl lg:text-5xl mb-4">📋</div>
+            <FileText className="h-10 w-10 lg:h-12 lg:w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
             <p className="text-base lg:text-lg font-medium mb-2">尚未生成大纲</p>
             <p className="text-xs lg:text-sm">前往"生成"标签页创建大纲</p>
           </CardContent>
@@ -77,7 +77,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-            <span>🎯</span>
+            <Target className="h-5 w-5 text-primary" />
             <span>主线目标</span>
           </CardTitle>
         </CardHeader>
@@ -96,7 +96,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
         <Card className="glass-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-              <span>🏆</span>
+              <Trophy className="h-5 w-5 text-yellow-500" />
               <span>里程碑</span>
             </CardTitle>
           </CardHeader>
@@ -123,7 +123,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-medium flex items-center gap-2 text-sm lg:text-base">
-            <span>📚</span>
+            <Library className="h-5 w-5 text-primary" />
             <span>卷目结构</span>
           </h3>
           <Button 

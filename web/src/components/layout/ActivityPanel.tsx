@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { PanelRightClose, Power } from 'lucide-react';
+import { PanelRightClose, Power, FileText, Loader2, Circle } from 'lucide-react';
 import type { ProgressEvent } from '@/hooks/useServerEvents';
 import {
   Tooltip,
@@ -175,7 +175,7 @@ export function ActivityPanel({
           })}
           {logs.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
-              <div className="text-2xl mb-2">📝</div>
+              <FileText className="h-6 w-6 mx-auto mb-2 opacity-50" />
               <p className="text-xs">等待服务器事件...</p>
             </div>
           )}
@@ -190,8 +190,8 @@ export function ActivityPanel({
             <div className="text-xs text-muted-foreground">日志数</div>
           </div>
           <div className="p-3 rounded-lg bg-muted/50 text-center">
-            <div className={`text-lg font-bold ${progress?.status === 'generating' ? 'text-blue-400' : 'text-green-500'}`}>
-              {progress?.status === 'generating' ? '⏳' : '🟢'}
+            <div className={`text-lg font-bold flex justify-center ${progress?.status === 'generating' ? 'text-blue-400' : 'text-green-500'}`}>
+              {progress?.status === 'generating' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Circle className="h-5 w-5 fill-current" />}
             </div>
             <div className="text-xs text-muted-foreground">
               {progress?.status === 'generating' ? '生成中' : '就绪'}

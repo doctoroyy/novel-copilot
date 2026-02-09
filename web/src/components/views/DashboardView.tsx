@@ -1,5 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { CheckCircle, Clock, FileEdit, Library, AlertTriangle, FileText, Loader2, Wand2 } from 'lucide-react';
 import type { ProjectDetail } from '@/lib/api';
 
 interface DashboardViewProps {
@@ -96,8 +97,8 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                   <p className="text-xs lg:text-sm text-muted-foreground">已生成</p>
                   <p className="text-2xl lg:text-3xl font-bold">{chaptersGenerated}</p>
                 </div>
-                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-green-500/20 flex items-center justify-center text-xl lg:text-2xl shrink-0">
-                  ✅
+                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0">
+                  <CheckCircle className="h-5 w-5 lg:h-6 lg:w-6 text-green-500" />
                 </div>
               </div>
             </CardContent>
@@ -110,8 +111,8 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                   <p className="text-xs lg:text-sm text-muted-foreground">待生成</p>
                   <p className="text-2xl lg:text-3xl font-bold">{chaptersRemaining}</p>
                 </div>
-                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-amber-500/20 flex items-center justify-center text-xl lg:text-2xl shrink-0">
-                  ⏳
+                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                  <Clock className="h-5 w-5 lg:h-6 lg:w-6 text-amber-500" />
                 </div>
               </div>
             </CardContent>
@@ -125,8 +126,8 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                   <p className="text-2xl lg:text-3xl font-bold truncate">{project.outline?.targetWordCount || '--'}</p>
                   <p className="text-xs text-muted-foreground">万字</p>
                 </div>
-                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-xl lg:text-2xl shrink-0">
-                  📝
+                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                  <FileEdit className="h-5 w-5 lg:h-6 lg:w-6 text-blue-500" />
                 </div>
               </div>
             </CardContent>
@@ -139,8 +140,8 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                   <p className="text-xs lg:text-sm text-muted-foreground">卷数</p>
                   <p className="text-2xl lg:text-3xl font-bold">{project.outline?.volumes.length || '--'}</p>
                 </div>
-                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-purple-500/20 flex items-center justify-center text-xl lg:text-2xl shrink-0">
-                  📚
+                <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-purple-500/20 flex items-center justify-center shrink-0">
+                  <Library className="h-5 w-5 lg:h-6 lg:w-6 text-purple-500" />
                 </div>
               </div>
             </CardContent>
@@ -159,7 +160,7 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                 disabled={loading}
                 className="gradient-bg hover:opacity-90 text-sm lg:text-base"
               >
-                {loading ? '⏳ 生成中...' : '📋 生成大纲'}
+                {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><FileText className="h-4 w-4" /> 生成大纲</>}
               </Button>
             )}
             {project.outline && (
@@ -168,7 +169,7 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
                 disabled={loading}
                 className="gradient-bg hover:opacity-90 text-sm lg:text-base"
               >
-                {loading ? '⏳ 生成中...' : '✍️ 生成下一章'}
+                {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><Wand2 className="h-4 w-4" /> 生成下一章</>}
               </Button>
             )}
           </div>
@@ -203,7 +204,9 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
         <Card className="border-destructive bg-destructive/10">
           <CardContent className="p-4 lg:p-6">
             <div className="flex items-center gap-3">
-              <div className="text-xl lg:text-2xl shrink-0">⚠️</div>
+              <div className="shrink-0">
+                <AlertTriangle className="h-6 w-6 lg:h-7 lg:w-7 text-destructive" />
+              </div>
               <div className="min-w-0">
                 <h3 className="font-medium text-destructive text-sm lg:text-base">需要人工介入</h3>
                 <p className="text-xs lg:text-sm text-muted-foreground">{project.state.needHumanReason}</p>

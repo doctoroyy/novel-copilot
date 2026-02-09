@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -83,7 +84,7 @@ export function GenerateView({
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-            <span className="text-xl">📋</span>
+            <FileText className="h-5 w-5 text-primary" />
             大纲生成
           </CardTitle>
           <CardDescription className="text-xs lg:text-sm">
@@ -125,13 +126,13 @@ export function GenerateView({
             disabled={loading || generatingOutline} 
             className="w-full gradient-bg hover:opacity-90 text-sm lg:text-base"
           >
-            {generatingOutline ? '⏳ 生成大纲中...' : '🚀 生成大纲'}
+            {generatingOutline ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成大纲中...</> : <><Rocket className="h-4 w-4" /> 生成大纲</>}
           </Button>
 
           {project.outline && (
             <div className="mt-4 p-3 lg:p-4 rounded-lg bg-green-500/10 border border-green-500/20">
               <div className="flex items-center gap-2 text-green-500 font-medium mb-2 text-xs lg:text-sm">
-                <span>✅</span>
+                <CheckCircle className="h-4 w-4" />
                 <span>已有大纲</span>
               </div>
               <div className="text-xs lg:text-sm text-muted-foreground space-y-1">
@@ -149,7 +150,7 @@ export function GenerateView({
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-            <span className="text-xl">✍️</span>
+            <Wand2 className="h-5 w-5 text-primary" />
             章节生成
           </CardTitle>
           <CardDescription className="text-xs lg:text-sm">
@@ -178,7 +179,7 @@ export function GenerateView({
             disabled={loading || !project.outline} 
             className="w-full gradient-bg hover:opacity-90 text-sm lg:text-base"
           >
-            {loading ? '⏳ 生成中...' : '📝 开始生成'}
+            {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
           </Button>
 
           {!project.outline && (
@@ -190,7 +191,7 @@ export function GenerateView({
           {project.state.needHuman && (
             <div className="p-3 lg:p-4 rounded-lg bg-destructive/10 border border-destructive/20">
               <div className="flex items-center gap-2 text-destructive font-medium mb-2 text-xs lg:text-sm">
-                <span>⚠️</span>
+                <AlertTriangle className="h-4 w-4" />
                 <span>需要人工介入</span>
               </div>
               <p className="text-xs lg:text-sm mb-3">{project.state.needHumanReason}</p>
@@ -200,7 +201,8 @@ export function GenerateView({
                 onClick={onResetState}
                 className="text-xs lg:text-sm"
               >
-                🔄 重置状态
+                <RefreshCw className="h-4 w-4 mr-1" />
+                重置状态
               </Button>
             </div>
           )}
