@@ -210,3 +210,49 @@ ${instruction}
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+// Update outline (user-scoped)
+editingRoutes.put('/projects/:name/outline', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+  
+  try {
+    const { outline } = await c.req.json();
+    
+    if (!outline) {
+      return c.json({ success: false, error: 'outline is required' }, 400);
+    }
+
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const projectId = (project as any).id;
+
+    // Check if outline exists
+    const existing = await c.env.DB.prepare(`
+      SELECT id FROM outlines WHERE project_id = ?
+    `).bind(projectId).first();
+
+    if (existing) {
+      // Update
+      await c.env.DB.prepare(`
+        UPDATE outlines SET outline_json = ?, updated_at = datetime('now') WHERE project_id = ?
+      `).bind(JSON.stringify(outline), projectId).run();
+    } else {
+      // Insert (should strictly not happen if calling update, but good fallback)
+      await c.env.DB.prepare(`
+        INSERT INTO outlines (project_id, outline_json) VALUES (?, ?)
+      `).bind(projectId, JSON.stringify(outline)).run();
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
