@@ -219,6 +219,16 @@ export async function refineOutline(
   return data.outline;
 }
 
+export async function updateOutline(name: string, outline: NovelOutline): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ outline }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
 export async function generateChapters(
   name: string,
   chaptersToGenerate: number,
