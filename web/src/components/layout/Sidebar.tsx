@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { PanelLeftClose } from 'lucide-react';
+import { PanelLeftClose, BookOpen, Plus, BookMarked } from 'lucide-react';
 import type { ProjectSummary } from '@/lib/api';
 
 interface SidebarProps {
@@ -18,8 +18,8 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
       {/* Logo */}
       <div className="p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center text-xl shrink-0">
-            📚
+          <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center shrink-0">
+            <BookOpen className="h-5 w-5 text-white" />
           </div>
           <div className="min-w-0">
             <h1 className="font-bold text-lg gradient-text truncate">Novel Copilot</h1>
@@ -37,7 +37,7 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
           onClick={onNewProject}
           className="w-full gradient-bg hover:opacity-90 transition-opacity"
         >
-          <span className="mr-2">✨</span>
+          <Plus className="h-4 w-4 mr-2" />
           新建项目
         </Button>
       </div>
@@ -97,7 +97,7 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
           
           {projects.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
-              <div className="text-4xl mb-2">📖</div>
+              <BookMarked className="h-10 w-10 mx-auto mb-2 opacity-50" />
               <p className="text-sm">暂无项目</p>
               <p className="text-xs">点击上方按钮创建第一个项目</p>
             </div>

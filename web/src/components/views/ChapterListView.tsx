@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -220,8 +221,9 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                     </Button>
                   </>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7">
-                    🗑️ 批量删除
+                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
+                    <Trash2 className="h-3.5 w-3.5" />
+                    批量删除
                   </Button>
                 )}
               </div>
@@ -255,7 +257,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                               <div className="flex-1 min-w-0 flex items-center gap-2">
                                 {selectionMode && (
                                   <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(chapterIndex) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                                    {selectedChapters.has(chapterIndex) && '✓'}
+                                    {selectedChapters.has(chapterIndex) && <Check className="h-3 w-3" />}
                                   </div>
                                 )}
                                 <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
@@ -272,7 +274,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                   className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                                   title="复制章节内容"
                                 >
-                                  {copyingChapter === chapterIndex ? '复制中...' : copiedChapter === chapterIndex ? '✅ 已复制' : copyError === chapterIndex ? '❌ 失败' : '📋 复制'}
+                                  {copyingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === chapterIndex ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === chapterIndex ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
                                 </button>
                                 {onDeleteChapter && (
                                   <button
@@ -281,7 +283,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                     className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
                                     title="删除章节"
                                   >
-                                    {deletingChapter === chapterIndex ? '删除中...' : '🗑️ 删除'}
+                                    {deletingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
                                   </button>
                                 )}
                                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
@@ -311,7 +313,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                       <div className="flex items-center gap-2">
                         {selectionMode && (
                           <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(index) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                            {selectedChapters.has(index) && '✓'}
+                            {selectedChapters.has(index) && <Check className="h-3 w-3" />}
                           </div>
                         )}
                         <span className="font-medium">第 {index} 章</span>
@@ -323,7 +325,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                           className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                           title="复制章节内容"
                         >
-                          {copyingChapter === index ? '复制中...' : copiedChapter === index ? '✅ 已复制' : copyError === index ? '❌ 失败' : '📋 复制'}
+                          {copyingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === index ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === index ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
                         </button>
                         {onDeleteChapter && (
                           <button
@@ -332,7 +334,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                             className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
                             title="删除章节"
                           >
-                            {deletingChapter === index ? '删除中...' : '🗑️ 删除'}
+                            {deletingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
                           </button>
                         )}
                         <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
@@ -347,7 +349,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
 
             {project.chapters.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
-                <div className="text-4xl mb-3">📖</div>
+                <BookOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
                 <p>暂无生成的章节</p>
                 <p className="text-sm">前往"生成"标签页开始创作</p>
               </div>
@@ -398,7 +400,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                   )}
                   className="gap-1 lg:gap-2 text-xs lg:text-sm"
                 >
-                  {loading ? '⏳' : '➡️'}
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
                   <span className="hidden sm:inline">{loading ? '加载中' : '下一章'}</span>
                 </Button>
                 <Button
@@ -408,7 +410,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                   className="gap-1 lg:gap-2 text-xs lg:text-sm"
                   aria-label={copySuccess ? '已复制' : '复制章节内容'}
                 >
-                  {copySuccess ? '✅' : '📋'}
+                  {copySuccess ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                   <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
                 </Button>
               </div>

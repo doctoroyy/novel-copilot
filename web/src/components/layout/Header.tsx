@@ -2,7 +2,24 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
 import type { ProjectDetail } from '@/lib/api';
-import { PanelLeftOpen, PanelRightOpen, LogOut } from 'lucide-react';
+import { 
+  PanelLeftOpen, 
+  PanelRightOpen, 
+  LogOut,
+  LayoutDashboard,
+  FileText,
+  Wand2,
+  BookOpen,
+  BookMarked,
+  Network,
+  Clapperboard,
+  Settings,
+  RefreshCw,
+  Download,
+  Trash2,
+  User,
+  type LucideIcon
+} from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
@@ -19,14 +36,14 @@ interface HeaderProps {
   activityPanelOpen?: boolean;
 }
 
-const tabs = [
-  { id: 'dashboard', label: '仪表盘', icon: '📊' },
-  { id: 'outline', label: '大纲', icon: '📋' },
-  { id: 'generate', label: '生成', icon: '✍️' },
-  { id: 'chapters', label: '章节', icon: '📖' },
-  { id: 'bible', label: '设定', icon: '📕' },
-  { id: 'characters', label: '人物关系', icon: '🕸️' },
-  { id: 'anime', label: 'AI动漫', icon: '🎬' },
+const tabs: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+  { id: 'outline', label: '大纲', icon: FileText },
+  { id: 'generate', label: '生成', icon: Wand2 },
+  { id: 'chapters', label: '章节', icon: BookOpen },
+  { id: 'bible', label: '设定', icon: BookMarked },
+  { id: 'characters', label: '人物关系', icon: Network },
+  { id: 'anime', label: 'AI动漫', icon: Clapperboard },
 ];
 
 export function Header({ 
@@ -62,8 +79,9 @@ export function Header({
         <div className="flex items-center gap-1 lg:gap-2">
           {user && (
             <>
-              <span className="text-sm text-muted-foreground hidden sm:inline">
-                👤 {user.username}
+              <span className="text-sm text-muted-foreground hidden sm:inline flex items-center gap-1">
+                <User className="h-3.5 w-3.5" />
+                {user.username}
               </span>
               <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs lg:text-sm">
                 <LogOut className="h-4 w-4" />
@@ -73,8 +91,8 @@ export function Header({
             </>
           )}
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
-            <span className="hidden sm:inline">⚙️ 设置</span>
-            <span className="sm:hidden">⚙️</span>
+            <Settings className="h-4 w-4" />
+            <span className="hidden sm:inline ml-1">设置</span>
           </Button>
           <ThemeToggle />
         </div>
@@ -121,36 +139,37 @@ export function Header({
         </div>
 
         <div className="flex items-center gap-1 lg:gap-2">
-          <Button variant="ghost" size="sm" onClick={onRefresh} className="hidden sm:flex text-xs lg:text-sm">
-            <span className="hidden lg:inline">🔄 刷新</span>
-            <span className="lg:hidden">🔄</span>
+          <Button variant="ghost" size="sm" onClick={onRefresh} className="hidden sm:flex text-xs lg:text-sm items-center gap-1">
+            <RefreshCw className="h-4 w-4" />
+            <span className="hidden lg:inline">刷新</span>
           </Button>
           <Button 
             variant="ghost" 
             size="sm" 
             onClick={onDownload}
             disabled={project.chapters.length === 0}
-            className="hidden sm:flex text-xs lg:text-sm"
+            className="hidden sm:flex text-xs lg:text-sm items-center gap-1"
           >
-            <span className="hidden lg:inline">📥 下载</span>
-            <span className="lg:hidden">📥</span>
+            <Download className="h-4 w-4" />
+            <span className="hidden lg:inline">下载</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hidden md:flex text-xs lg:text-sm">
-            <span className="hidden lg:inline">🗑️ 删除</span>
-            <span className="lg:hidden">🗑️</span>
+          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hidden md:flex text-xs lg:text-sm items-center gap-1">
+            <Trash2 className="h-4 w-4" />
+            <span className="hidden lg:inline">删除</span>
           </Button>
           <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-          <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
-            <span className="hidden lg:inline">⚙️ 设置</span>
-            <span className="lg:hidden">⚙️</span>
+          <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1">
+            <Settings className="h-4 w-4" />
+            <span className="hidden lg:inline">设置</span>
           </Button>
           
           {/* User info and logout */}
           {user && (
             <>
               <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-              <span className="text-xs text-muted-foreground hidden md:inline">
-                👤 {user.username}
+              <span className="text-xs text-muted-foreground hidden md:inline flex items-center gap-1">
+                <User className="h-3.5 w-3.5" />
+                {user.username}
               </span>
               <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs">
                 <LogOut className="h-4 w-4" />
@@ -188,7 +207,7 @@ export function Header({
               }
             `}
           >
-            <span className="mr-1 lg:mr-1.5">{tab.icon}</span>
+            <tab.icon className="h-4 w-4 mr-1 lg:mr-1.5" />
             <span className="hidden sm:inline">{tab.label}</span>
           </button>
         ))}
