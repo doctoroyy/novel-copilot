@@ -65,7 +65,7 @@
   - Dark Mode: Deep Space, Obsidian, Vibrant Accents (Not just gray)
 */
 
-/* Light Theme */
+/* Light Theme (Default: Ember 🔥) */
 :root {
   --radius: 0.75rem;
 
@@ -80,7 +80,7 @@
   --popover: #ffffff;
   --popover-foreground: #0c0a09;
 
-  /* Primary: Vibrant Orange/Amber but more saturated/modern */
+  /* Primary: Vibrant Orange/Amber */
   --primary: #ea580c; /* orange-600 */
   --primary-foreground: #ffffff;
 
@@ -121,6 +121,15 @@
   --chart-3: #2563eb;
   --chart-4: #d97706;
   --chart-5: #dc2626;
+
+  /* Gradient colors (theme-aware) */
+  --gradient-from: #f97316;
+  --gradient-via: #ea580c;
+  --gradient-to: #d97706;
+  --gradient-shadow: rgba(249, 115, 22, 0.2);
+  --gradient-shadow-hover: rgba(249, 115, 22, 0.3);
+  --gradient-border-from: rgba(249, 115, 22, 0.5);
+  --gradient-border-to: rgba(234, 88, 12, 0.1);
 }
 
 /* Dark Theme - Deep Space */
@@ -177,6 +186,122 @@
   --chart-3: #3b82f6;
   --chart-4: #f59e0b;
   --chart-5: #ef4444;
+
+  /* Gradient colors */
+  --gradient-from: #fb923c;
+  --gradient-via: #f97316;
+  --gradient-to: #f59e0b;
+  --gradient-shadow: rgba(249, 115, 22, 0.25);
+  --gradient-shadow-hover: rgba(249, 115, 22, 0.35);
+  --gradient-border-from: rgba(249, 115, 22, 0.5);
+  --gradient-border-to: rgba(234, 88, 12, 0.1);
+}
+
+/* ========== Color Theme Overrides ========== */
+
+/* 🌿 Jade — Literary Emerald */
+[data-theme="jade"] {
+  --primary: #059669;
+  --primary-foreground: #ffffff;
+  --accent: #ecfdf5;
+  --accent-foreground: #047857;
+  --ring: #10b981;
+  --sidebar-primary: #059669;
+  --sidebar-ring: #10b981;
+  --chart-1: #059669;
+  --gradient-from: #10b981;
+  --gradient-via: #059669;
+  --gradient-to: #0d9488;
+  --gradient-shadow: rgba(16, 185, 129, 0.2);
+  --gradient-shadow-hover: rgba(16, 185, 129, 0.3);
+  --gradient-border-from: rgba(16, 185, 129, 0.5);
+  --gradient-border-to: rgba(5, 150, 105, 0.1);
+}
+[data-theme="jade"].dark,
+:is([data-theme="jade"] .dark) {
+  --primary: #34d399;
+  --primary-foreground: #022c22;
+  --ring: #10b981;
+  --sidebar-primary: #34d399;
+  --sidebar-ring: #10b981;
+  --chart-1: #34d399;
+  --gradient-from: #6ee7b7;
+  --gradient-via: #34d399;
+  --gradient-to: #2dd4bf;
+  --gradient-shadow: rgba(52, 211, 153, 0.25);
+  --gradient-shadow-hover: rgba(52, 211, 153, 0.35);
+  --gradient-border-from: rgba(52, 211, 153, 0.5);
+  --gradient-border-to: rgba(16, 185, 129, 0.1);
+}
+
+/* 🌊 Ocean — Cool Cyan */
+[data-theme="ocean"] {
+  --primary: #0891b2;
+  --primary-foreground: #ffffff;
+  --accent: #ecfeff;
+  --accent-foreground: #0e7490;
+  --ring: #06b6d4;
+  --sidebar-primary: #0891b2;
+  --sidebar-ring: #06b6d4;
+  --chart-1: #0891b2;
+  --gradient-from: #06b6d4;
+  --gradient-via: #0891b2;
+  --gradient-to: #0284c7;
+  --gradient-shadow: rgba(6, 182, 212, 0.2);
+  --gradient-shadow-hover: rgba(6, 182, 212, 0.3);
+  --gradient-border-from: rgba(6, 182, 212, 0.5);
+  --gradient-border-to: rgba(8, 145, 178, 0.1);
+}
+[data-theme="ocean"].dark,
+:is([data-theme="ocean"] .dark) {
+  --primary: #22d3ee;
+  --primary-foreground: #083344;
+  --ring: #06b6d4;
+  --sidebar-primary: #22d3ee;
+  --sidebar-ring: #06b6d4;
+  --chart-1: #22d3ee;
+  --gradient-from: #67e8f9;
+  --gradient-via: #22d3ee;
+  --gradient-to: #38bdf8;
+  --gradient-shadow: rgba(34, 211, 238, 0.25);
+  --gradient-shadow-hover: rgba(34, 211, 238, 0.35);
+  --gradient-border-from: rgba(34, 211, 238, 0.5);
+  --gradient-border-to: rgba(6, 182, 212, 0.1);
+}
+
+/* 📰 Editorial — Sophisticated Slate */
+[data-theme="editorial"] {
+  --primary: #475569;
+  --primary-foreground: #ffffff;
+  --accent: #f1f5f9;
+  --accent-foreground: #334155;
+  --ring: #64748b;
+  --sidebar-primary: #475569;
+  --sidebar-ring: #64748b;
+  --chart-1: #475569;
+  --gradient-from: #64748b;
+  --gradient-via: #475569;
+  --gradient-to: #334155;
+  --gradient-shadow: rgba(100, 116, 139, 0.2);
+  --gradient-shadow-hover: rgba(100, 116, 139, 0.3);
+  --gradient-border-from: rgba(100, 116, 139, 0.5);
+  --gradient-border-to: rgba(71, 85, 105, 0.1);
+}
+[data-theme="editorial"].dark,
+:is([data-theme="editorial"] .dark) {
+  --primary: #94a3b8;
+  --primary-foreground: #0f172a;
+  --ring: #64748b;
+  --sidebar-primary: #94a3b8;
+  --sidebar-ring: #64748b;
+  --chart-1: #94a3b8;
+  --gradient-from: #cbd5e1;
+  --gradient-via: #94a3b8;
+  --gradient-to: #64748b;
+  --gradient-shadow: rgba(148, 163, 184, 0.25);
+  --gradient-shadow-hover: rgba(148, 163, 184, 0.35);
+  --gradient-border-from: rgba(148, 163, 184, 0.5);
+  --gradient-border-to: rgba(100, 116, 139, 0.1);
 }
 
 @layer base {
@@ -234,21 +359,22 @@
     @apply bg-sidebar/95 border-r border-sidebar-border/50;
   }
 
-  /* Typography Gradients */
+  /* Typography Gradients — theme-aware via CSS vars */
   .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-amber-600;
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(to right, var(--gradient-from), var(--gradient-to));
   }
 
   .text-gradient-subtle {
     @apply bg-clip-text text-transparent bg-gradient-to-br from-foreground to-muted-foreground;
   }
 
-  /* Borders & Glows */
+  /* Borders & Glows — theme-aware */
   .gradient-border {
     position: relative;
     border: 1px solid transparent;
     background: linear-gradient(var(--card), var(--card)) padding-box,
-                linear-gradient(135deg, rgba(249, 115, 22, 0.5) 0%, rgba(234, 88, 12, 0.1) 100%) border-box;
+                linear-gradient(135deg, var(--gradient-border-from) 0%, var(--gradient-border-to) 100%) border-box;
   }
 
   /* Interactive Cards */
@@ -318,17 +444,21 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
-  /* Compatibility & Enhanced Utilities */
+  /* Compatibility & Enhanced Utilities — theme-aware */
   .gradient-text {
-    @apply bg-clip-text text-transparent bg-gradient-to-br from-orange-400 via-orange-500 to-amber-600;
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(to bottom right, var(--gradient-from), var(--gradient-via), var(--gradient-to));
   }
 
   .gradient-bg {
-    @apply bg-gradient-to-br from-orange-500 to-amber-600 shadow-lg shadow-orange-500/20 text-white border-0;
+    @apply text-white border-0;
+    background-image: linear-gradient(to bottom right, var(--gradient-from), var(--gradient-to));
+    box-shadow: 0 10px 15px -3px var(--gradient-shadow);
   }
   
   .gradient-bg:hover {
-    @apply opacity-90 shadow-orange-500/30;
+    @apply opacity-90;
+    box-shadow: 0 10px 15px -3px var(--gradient-shadow-hover);
   }
 
   .grid-pattern {

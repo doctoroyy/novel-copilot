@@ -1013,8 +1013,8 @@ function App() {
                   <div className="text-lg font-semibold text-green-500">{activeTask.completedChapters.length}</div>
                   <div className="text-xs text-muted-foreground">已完成</div>
                 </div>
-                <div className="p-2 rounded bg-orange-500/10">
-                  <div className="text-lg font-semibold text-orange-500">{activeTask.targetCount - activeTask.completedChapters.length}</div>
+                <div className="p-2 rounded bg-amber-500/10">
+                  <div className="text-lg font-semibold text-amber-500">{activeTask.targetCount - activeTask.completedChapters.length}</div>
                   <div className="text-xs text-muted-foreground">剩余</div>
                 </div>
               </div>
