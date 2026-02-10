@@ -209,16 +209,84 @@ export async function generateOutline(
 export async function refineOutline(
   name: string,
   volumeIndex?: number,
-  aiHeaders?: Record<string, string>
+  aiHeaders?: Record<string, string>,
+  callbacks?: {
+    onStart?: (totalVolumes: number) => void;
+    onProgress?: (data: { current: number; total: number; volumeIndex: number; volumeTitle: string; message: string }) => void;
+    onVolumeComplete?: (data: { current: number; total: number; volumeIndex: number; volumeTitle: string; chapterCount: number; message: string }) => void;
+    onDone?: (outline: NovelOutline, message: string) => void;
+    onError?: (error: string) => void;
+  }
 ): Promise<NovelOutline> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline/refine`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ volumeIndex }),
   });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.outline;
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let resultOutline: NovelOutline | null = null;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr) {
+            try {
+              const event = JSON.parse(jsonStr);
+
+              if (event.type === 'heartbeat') continue;
+
+              if (event.type === 'start') {
+                callbacks?.onStart?.(event.totalVolumes);
+              } else if (event.type === 'progress') {
+                callbacks?.onProgress?.(event);
+              } else if (event.type === 'volume_complete') {
+                callbacks?.onVolumeComplete?.(event);
+              } else if (event.type === 'done') {
+                resultOutline = event.outline;
+                callbacks?.onDone?.(event.outline, event.message);
+                reader.releaseLock();
+                return event.outline as NovelOutline;
+              } else if (event.type === 'error') {
+                callbacks?.onError?.(event.error);
+                throw new Error(event.error || 'Refine failed');
+              }
+            } catch (e) {
+              if (e instanceof SyntaxError) continue;
+              throw e;
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!resultOutline) {
+    throw new Error('No outline received from refine');
+  }
+  return resultOutline;
 }
 
 export async function updateOutline(name: string, outline: NovelOutline): Promise<void> {

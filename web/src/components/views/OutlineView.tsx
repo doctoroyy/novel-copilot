@@ -20,6 +20,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editedOutline, setEditedOutline] = useState<NovelOutline | null>(null);
+  const [refineMessage, setRefineMessage] = useState('');
   
   const { config, isConfigured } = useAIConfig();
 
@@ -38,11 +39,24 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
     try {
       setIsRefining(true);
+      setRefineMessage('正在分析大纲...');
       const headers = getAIConfigHeaders(config);
-      await refineOutline(project.name, undefined, headers);
+      await refineOutline(project.name, undefined, headers, {
+        onStart: (totalVolumes) => {
+          setRefineMessage(`发现 ${totalVolumes} 卷需要完善`);
+        },
+        onProgress: (data) => {
+          setRefineMessage(data.message);
+        },
+        onVolumeComplete: (data) => {
+          setRefineMessage(data.message);
+        },
+      });
+      setRefineMessage('');
       onRefresh?.();
     } catch (error) {
       alert(`操作失败: ${(error as Error).message}`);
+      setRefineMessage('');
     } finally {
       setIsRefining(false);
     }
@@ -56,11 +70,21 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
     try {
       setRefiningVolIdx(volIndex);
+      setRefineMessage(`正在重新生成第 ${volIndex + 1} 卷的章节大纲...`);
       const headers = getAIConfigHeaders(config);
-      await refineOutline(project.name, volIndex, headers);
+      await refineOutline(project.name, volIndex, headers, {
+        onProgress: (data) => {
+          setRefineMessage(data.message);
+        },
+        onVolumeComplete: (data) => {
+          setRefineMessage(data.message);
+        },
+      });
+      setRefineMessage('');
       onRefresh?.();
     } catch (error) {
       alert(`操作失败: ${(error as Error).message}`);
+      setRefineMessage('');
     } finally {
       setRefiningVolIdx(null);
     }
@@ -261,6 +285,14 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
             </Button>
           )}
         </div>
+
+        {/* Refine progress banner */}
+        {refineMessage && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/20 animate-in fade-in slide-in-from-top-2 duration-300">
+            <Sparkles className="h-4 w-4 text-primary animate-pulse shrink-0" />
+            <span className="text-sm text-primary font-medium">{refineMessage}</span>
+          </div>
+        )}
         
         <ScrollArea className="h-[calc(100vh-450px)] lg:h-[calc(100vh-500px)]">
           <div className="space-y-4 pr-2 lg:pr-4">

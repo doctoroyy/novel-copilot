@@ -1251,7 +1251,7 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 
 
 
-// Refine outline (regenerate missing/incomplete volumes)
+// Refine outline (regenerate missing/incomplete volumes) - SSE streaming
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
@@ -1261,89 +1261,163 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  try {
-    // Get project (user-scoped)
-    const project = await c.env.DB.prepare(`
-      SELECT id, bible FROM projects WHERE name = ? AND user_id = ?
-    `).bind(name, userId).first();
+  const encoder = new TextEncoder();
 
-    if (!project) {
-      return c.json({ success: false, error: 'Project not found' }, 404);
-    }
-
-    // Get current outline
-    const outlineRecord = await c.env.DB.prepare(`
-      SELECT outline_json FROM outlines WHERE project_id = ?
-    `).bind((project as any).id).first();
-
-    if (!outlineRecord) {
-      return c.json({ success: false, error: 'Outline not found' }, 404);
-    }
-
-    let outline = JSON.parse((outlineRecord as any).outline_json);
-    const bible = (project as any).bible;
-
-    let volumeIndex: number | undefined;
-    try {
-      const body = await c.req.json();
-      volumeIndex = body.volumeIndex;
-    } catch (e) {
-      // Start with undefined
-    }
-
-    let updated = false;
-    const volumes = outline.volumes || [];
-
-    if (typeof volumeIndex === 'number' && volumeIndex >= 0 && volumeIndex < volumes.length) {
-      // Force refine specific volume
-      console.log(`Force refining Volume ${volumeIndex + 1}`);
-      const vol = volumes[volumeIndex];
-      const chaptersData = await generateVolumeChapters(aiConfig, { bible, masterOutline: outline, volume: vol });
-      volumes[volumeIndex] = normalizeVolume({ ...vol, chapters: chaptersData }, volumeIndex, chaptersData);
-      updated = true;
-    } else {
-      // Auto-detect incomplete volumes
-      for (let i = 0; i < volumes.length; i++) {
-        const vol = volumes[i];
-        const chapters = vol.chapters || [];
-        const expectedCount = (vol.endChapter - vol.startChapter) + 1;
-
-        // Heuristic for "incomplete":
-        // 1. No chapters
-        // 2. Significantly fewer chapters than expected (e.g., < 20% of expected, or just placeholder 1 chapter)
-        // 3. Most chapters are empty (no goal)
-
-        const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
-        const isPlaceholder = chapters.length <= 1;
-        const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1)); // Less than 10% content populated
-
-        if (isPlaceholder || isEmpty) {
-          console.log(`Refining Volume ${i + 1}: ${vol.title}`);
-
-          const chaptersData = await generateVolumeChapters(aiConfig, { bible, masterOutline: outline, volume: vol });
-          volumes[i] = normalizeVolume({ ...vol, chapters: chaptersData }, i, chaptersData);
-          updated = true;
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendEvent = (type: string, data: any) => {
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch (e) {
+          console.error('Error sending SSE event', e);
         }
+      };
+
+      // Heartbeat to keep connection alive
+      const heartbeatInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      try {
+        // Get project (user-scoped)
+        const project = await c.env.DB.prepare(`
+          SELECT id, bible FROM projects WHERE name = ? AND user_id = ?
+        `).bind(name, userId).first();
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        // Get current outline
+        const outlineRecord = await c.env.DB.prepare(`
+          SELECT outline_json FROM outlines WHERE project_id = ?
+        `).bind((project as any).id).first();
+
+        if (!outlineRecord) {
+          sendEvent('error', { error: 'Outline not found' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        let outline = JSON.parse((outlineRecord as any).outline_json);
+        const bible = (project as any).bible;
+
+        let volumeIndex: number | undefined;
+        try {
+          const body = await c.req.json();
+          volumeIndex = body.volumeIndex;
+        } catch (e) {
+          // Start with undefined
+        }
+
+        let updated = false;
+        const volumes = outline.volumes || [];
+        const volumesToRefine: number[] = [];
+
+        if (typeof volumeIndex === 'number' && volumeIndex >= 0 && volumeIndex < volumes.length) {
+          volumesToRefine.push(volumeIndex);
+        } else {
+          // Auto-detect incomplete volumes
+          for (let i = 0; i < volumes.length; i++) {
+            const vol = volumes[i];
+            const chapters = vol.chapters || [];
+            const expectedCount = (vol.endChapter - vol.startChapter) + 1;
+            const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
+            const isPlaceholder = chapters.length <= 1;
+            const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1));
+
+            if (isPlaceholder || isEmpty) {
+              volumesToRefine.push(i);
+            }
+          }
+        }
+
+        sendEvent('start', { 
+          totalVolumes: volumesToRefine.length,
+          volumeIndices: volumesToRefine,
+        });
+
+        for (let vi = 0; vi < volumesToRefine.length; vi++) {
+          const idx = volumesToRefine[vi];
+          const vol = volumes[idx];
+
+          sendEvent('progress', {
+            current: vi + 1,
+            total: volumesToRefine.length,
+            volumeIndex: idx,
+            volumeTitle: vol.title,
+            message: `正在生成第 ${idx + 1} 卷「${vol.title}」的章节大纲... (${vi + 1}/${volumesToRefine.length})`,
+          });
+
+          console.log(`Refining Volume ${idx + 1}: ${vol.title}`);
+
+          // Build previousVolumeSummary from the preceding volume for context alignment
+          let previousVolumeSummary: string | undefined;
+          if (idx > 0) {
+            const prevVol = volumes[idx - 1];
+            previousVolumeSummary = prevVol.volumeEndState ||
+              `${prevVol.climax}（主角已达成：${prevVol.goal}）`;
+          }
+
+          const chaptersData = await generateVolumeChapters(aiConfig, { 
+            bible, 
+            masterOutline: outline, 
+            volume: vol,
+            previousVolumeSummary,
+          });
+          volumes[idx] = normalizeVolume({ ...vol, chapters: chaptersData }, idx, chaptersData);
+          updated = true;
+
+          sendEvent('volume_complete', {
+            current: vi + 1,
+            total: volumesToRefine.length,
+            volumeIndex: idx,
+            volumeTitle: vol.title,
+            chapterCount: chaptersData.length,
+            message: `第 ${idx + 1} 卷「${vol.title}」完成 (${chaptersData.length} 章)`,
+          });
+        }
+
+        if (updated) {
+          outline.volumes = volumes;
+
+          // Save updated outline
+          await c.env.DB.prepare(`
+            UPDATE outlines SET outline_json = ? WHERE project_id = ?
+          `).bind(JSON.stringify(outline), (project as any).id).run();
+
+          sendEvent('done', { success: true, message: 'Outline refined successfully', outline });
+        } else {
+          sendEvent('done', { success: true, message: 'Outline is already complete', outline });
+        }
+
+        clearInterval(heartbeatInterval);
+        controller.close();
+      } catch (error) {
+        console.error('Refine outline error:', error);
+        sendEvent('error', { error: (error as Error).message });
+        clearInterval(heartbeatInterval);
+        controller.close();
       }
     }
+  });
 
-    if (updated) {
-      outline.volumes = volumes;
-
-      // Save updated outline
-      await c.env.DB.prepare(`
-        UPDATE outlines SET outline_json = ? WHERE project_id = ?
-      `).bind(JSON.stringify(outline), (project as any).id).run();
-
-      return c.json({ success: true, message: 'Outline refined successfully', outline });
-    } else {
-      return c.json({ success: true, message: 'Outline is already complete', outline });
-    }
-
-  } catch (error) {
-    console.error('Refine outline error:', error);
-    return c.json({ success: false, error: (error as Error).message }, 500);
-  }
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 });
 
 // Migration endpoint to normalize existing outline data
