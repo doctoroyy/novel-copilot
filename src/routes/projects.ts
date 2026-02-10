@@ -63,7 +63,7 @@ projectsRoutes.get('/:name', async (c) => {
 
     const { results: chapters } = await c.env.DB.prepare(`
       SELECT chapter_index FROM chapters 
-      WHERE project_id = ? ORDER BY chapter_index
+      WHERE project_id = ? AND deleted_at IS NULL ORDER BY chapter_index
     `).bind((project as any).id).all();
 
     const result = {
