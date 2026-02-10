@@ -10,7 +10,6 @@ import {
   FileText,
   Wand2,
   BookOpen,
-  BookMarked,
   Network,
   Clapperboard,
   Settings,
@@ -41,7 +40,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
-  { id: 'knowledge', label: '设定集', icon: BookMarked },
+  // Knowledge tab removed
   { id: 'characters', label: '人物关系', icon: Network },
   { id: 'anime', label: 'AI动漫', icon: Clapperboard },
 ];
@@ -167,8 +166,8 @@ export function Header({
           {user && (
             <>
               <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-              <span className="text-xs text-muted-foreground hidden md:inline flex items-center gap-1">
-                <User className="h-3.5 w-3.5" />
+              <span className="text-xs text-muted-foreground hidden md:inline-flex items-center gap-1">
+                <User className="h-4 w-4" />
                 {user.username}
               </span>
               <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs">
