@@ -41,7 +41,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
-  { id: 'bible', label: '设定', icon: BookMarked },
+  { id: 'knowledge', label: '设定集', icon: BookMarked },
   { id: 'characters', label: '人物关系', icon: Network },
   { id: 'anime', label: 'AI动漫', icon: Clapperboard },
 ];

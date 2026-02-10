@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
 import { AiAutocomplete } from './extensions/AiAutocomplete';
 import { ChapterChatSidebar } from './ChapterChatSidebar';
+import { ConsistencyCheckDialog } from './ConsistencyCheckDialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { 
@@ -24,6 +25,7 @@ import {
   ArrowLeft,
   Bot,
   MessageSquare,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface ChapterEditorProps {
@@ -54,6 +56,7 @@ export function ChapterEditor({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showBubbleMenu, setShowBubbleMenu] = useState(false);
   const [savedChapterIndex, setSavedChapterIndex] = useState<number | undefined>(chapterIndex);
+  const [showConsistencyDialog, setShowConsistencyDialog] = useState(false);
   const [wordCount, setWordCount] = useState(0);
 
   // Debounce ref for ghost text
@@ -324,6 +327,16 @@ export function ChapterEditor({
             AI 助手
           </Button>
 
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowConsistencyDialog(true)}
+            className="flex items-center gap-1"
+            title="一致性检查"
+          >
+            <AlertTriangle className="h-4 w-4" />
+          </Button>
+
           <Button 
             onClick={handleSave} 
             disabled={isSaving || !hasChanges}
@@ -396,7 +409,6 @@ export function ChapterEditor({
         </div>
       )}
 
-      {/* AI Instruction Dialog */}
       <Dialog open={showInstructionDialog} onOpenChange={setShowInstructionDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -457,6 +469,15 @@ export function ChapterEditor({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Consistency Check Dialog */}
+      <ConsistencyCheckDialog
+        open={showConsistencyDialog}
+        onOpenChange={setShowConsistencyDialog}
+        projectName={projectName}
+        chapterIndex={savedChapterIndex || 1}
+        content={editor?.getText() || ''}
+      />
 
       {/* Editor Styles */}
       <style>{`

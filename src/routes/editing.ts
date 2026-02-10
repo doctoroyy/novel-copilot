@@ -388,3 +388,151 @@ ${context ? context.substring(0, 3000) : '（无上下文）'}
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+// Update project settings (bible, background, role_settings)
+editingRoutes.put('/projects/:name', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+  
+  try {
+    const { bible, background, role_settings, outline } = await c.req.json();
+    
+    // Get project
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+    
+    // Update fields if provided
+    // We construct the query dynamically or just update all if provided (usually full update from settings form)
+    // But since we might only update settings, we should be careful about outline (outline is separate table? No, outline is in `outlines` table, but bible/bg is in `projects`)
+    // The request body might contain bible, background, role_settings.
+    
+    await c.env.DB.prepare(`
+      UPDATE projects 
+      SET 
+        bible = COALESCE(?, bible), 
+        background = COALESCE(?, background), 
+        role_settings = COALESCE(?, role_settings),
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(bible, background, role_settings, (project as any).id).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Check consistency
+editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
+  const name = c.req.param('name');
+  const index = parseInt(c.req.param('index'), 10);
+  const userId = c.get('userId');
+  
+  // Get AI config from request header
+  const aiConfig = await (async () => {
+      const provider = c.req.header('x-ai-provider');
+      const model = c.req.header('x-ai-model');
+      const apiKey = c.req.header('x-ai-api-key');
+      const imageModel = c.req.header('x-ai-image-model');
+      
+      if (provider && model && apiKey) {
+          return { provider, model, apiKey, imageModel };
+      }
+      return null;
+  })();
+
+  if (!aiConfig) {
+      return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  try {
+    const { content, context } = await c.req.json();
+    
+    if (!content) {
+      return c.json({ success: false, error: 'content is required' }, 400);
+    }
+
+    // Get project details
+    const project = await c.env.DB.prepare(`
+      SELECT p.bible, p.background, p.role_settings FROM projects p
+      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
+    `).bind(name, userId).first();
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const bible = (project as any).bible || '';
+    const background = (project as any).background || '';
+    const roleSettings = (project as any).role_settings || '';
+    
+    // Construct system prompt
+    const systemPrompt = `你是一位专业的小说逻辑与一致性检查专家。
+你的任务是检查当前章节内容是否与已有的设定（世界观、角色设定）存在冲突，以及逻辑是否连贯。
+
+【世界观与背景】
+${background.substring(0, 1000)}
+
+【核心设定 (Bible)】
+${bible.substring(0, 1000)}
+
+【角色设定】
+${roleSettings.substring(0, 1000)}
+
+请分析提交的章节内容，输出 JSON 格式的报告：
+{
+  "issues": [
+    {
+      "type": "conflict" | "logic" | "character" | "style",
+      "severity": "high" | "medium" | "low",
+      "description": "具体问题描述。请指出冲突点和原文位置。",
+      "quote": "原文引用 (可选)",
+      "suggestion": "修改建议"
+    }
+  ],
+  "overall_score": 0-100,
+  "summary": "简短的一句话评价，指出主要优点和改进空间。"
+}
+
+如果未发现明显问题，"issues" 数组可以为空。
+请严格输出 JSON 格式，不要包含 Markdown 代码块标记。`;
+
+    const userPrompt = `【当前章节内容】
+${content.substring(0, 5000)}
+
+【上下文 (可选)】
+${context || '无'}`;
+
+    const { generateText } = await import('../aiClient.js');
+    const response = await generateText(aiConfig as any, {
+      system: systemPrompt,
+      prompt: userPrompt,
+      temperature: 0.3,
+    });
+
+    let report;
+    try {
+      const jsonStr = response.trim().replace(/^```json/, '').replace(/```$/, '');
+      report = JSON.parse(jsonStr);
+    } catch (e) {
+      console.warn('Failed to parse consistency report JSON', e);
+      report = {
+        issues: [],
+        overall_score: 0,
+        summary: "无法解析 AI 响应格式: " + response.substring(0, 100),
+        raw_response: response
+      };
+    }
+
+    return c.json({ 
+      success: true, 
+      report,
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
