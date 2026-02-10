@@ -54,6 +54,7 @@ import { SettingsDialog } from '@/components/SettingsDialog';
 import { FloatingProgressButton, addTaskToHistory } from '@/components/FloatingProgressButton';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { useGeneration } from '@/contexts/GenerationContext';
+import { Toaster } from "@/components/ui/toaster";
 
 // Constants
 const MOBILE_BREAKPOINT = 1024;
@@ -790,6 +791,7 @@ function App() {
           }}
         />
       )}
+      <Toaster />
 
       {/* Left Sidebar */}
       <div className={`

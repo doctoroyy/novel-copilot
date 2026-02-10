@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Bot, Send, User, X, Loader2, Sparkles } from 'lucide-react';
+import { Bot, Send, User, X, Loader2 } from 'lucide-react';
 import { chatWithChapter } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/contexts/AIConfigContext';
 

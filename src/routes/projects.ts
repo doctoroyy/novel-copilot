@@ -79,6 +79,8 @@ projectsRoutes.get('/:name', async (c) => {
         needHumanReason: (project as any).need_human_reason,
       },
       bible: (project as any).bible,
+      background: (project as any).background,
+      role_settings: (project as any).role_settings,
       outline: (project as any).outline_json ? JSON.parse((project as any).outline_json) : null,
       chapters: chapters.map((ch: any) => `${ch.chapter_index.toString().padStart(3, '0')}.md`),
     };

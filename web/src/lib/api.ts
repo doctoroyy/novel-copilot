@@ -57,6 +57,8 @@ export type ProjectDetail = {
   path: string;
   state: BookState;
   bible: string;
+  background?: string;
+  role_settings?: string;
   outline: NovelOutline | null;
   chapters: string[];
 };
@@ -747,6 +749,50 @@ export async function createChapter(
     body: JSON.stringify({ content, insertAfter }),
   });
   const data = await res.json();
-  if (!data.success) throw new Error(data.error);
   return { chapterIndex: data.chapterIndex };
+}
+
+export async function updateProject(
+  name: string,
+  data: { bible?: string; background?: string; role_settings?: string }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error);
+  if (!json.success) throw new Error(json.error);
+}
+
+export interface ConsistencyIssue {
+  type: 'conflict' | 'logic' | 'character' | 'style';
+  severity: 'high' | 'medium' | 'low';
+  description: string;
+  quote?: string;
+  suggestion?: string;
+}
+
+export interface ConsistencyReport {
+  issues: ConsistencyIssue[];
+  overall_score: number;
+  summary: string;
+  raw_response?: string;
+}
+
+export async function checkConsistency(
+  name: string,
+  chapterIndex: number,
+  content: string,
+  context?: string
+): Promise<ConsistencyReport> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${chapterIndex}/consistency`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ content, context }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error);
+  return json.report;
 }
