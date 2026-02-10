@@ -300,7 +300,7 @@ export function ChapterEditor({
                 <span className="text-green-600">● 已保存</span>
               )}
               {isSuggesting && (
-                 <span className="text-orange-500 flex items-center gap-1 animate-pulse">
+                 <span className="text-primary flex items-center gap-1 animate-pulse">
                    <Bot className="h-3 w-3" />
                    思考中...
                  </span>
@@ -373,7 +373,7 @@ export function ChapterEditor({
                   onClick={handleRefineClick}
                   className="flex items-center gap-1"
                 >
-                  <Sparkles className="h-4 w-4 text-orange-500" />
+                  <Sparkles className="h-4 w-4 text-primary" />
                   AI 优化
                 </Button>
               </div>
@@ -413,7 +413,7 @@ export function ChapterEditor({
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-orange-500" />
+              <Sparkles className="h-5 w-5 text-primary" />
               AI 文本优化
             </DialogTitle>
             <DialogDescription>
@@ -482,13 +482,13 @@ export function ChapterEditor({
       {/* Editor Styles */}
       <style>{`
         .ai-highlight {
-          background-color: rgba(249, 115, 22, 0.2);
+          background-color: hsl(var(--primary) / 0.2);
           border-radius: 2px;
           padding: 0 2px;
         }
         
         .dark .ai-highlight {
-          background-color: rgba(249, 115, 22, 0.3);
+          background-color: hsl(var(--primary) / 0.3);
         }
 
         .ai-autocomplete-suggestion {
@@ -512,7 +512,7 @@ export function ChapterEditor({
         }
         
         .ProseMirror::selection {
-          background-color: rgba(249, 115, 22, 0.3);
+          background-color: hsl(var(--primary) / 0.3);
         }
       `}</style>
     </div>

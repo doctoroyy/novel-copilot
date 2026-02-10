@@ -120,7 +120,7 @@ export function ConsistencyCheckDialog({
                 {/* Issues List */}
                 <div>
                   <h3 className="font-semibold text-lg mb-3 flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-orange-500" />
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
                     发现的问题 ({report.issues.length})
                   </h3>
                   
@@ -137,7 +137,7 @@ export function ConsistencyCheckDialog({
                             <div className="flex items-center gap-2">
                               <span className={`px-2 py-0.5 rounded text-xs font-medium uppercase border ${
                                 issue.severity === 'high' ? 'bg-red-50 text-red-700 border-red-200' :
-                                issue.severity === 'medium' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                issue.severity === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' :
                                 'bg-blue-50 text-blue-700 border-blue-200'
                               }`}>
                                 {issue.severity}

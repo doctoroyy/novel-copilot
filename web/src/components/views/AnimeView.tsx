@@ -429,7 +429,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                     智能推荐
                 </Button>
               </div>
-              <p className={`text-xs mt-1 ${wordsPerEpisode > 800 ? 'text-orange-400' : 'text-muted-foreground'}`}>
+              <p className={`text-xs mt-1 ${wordsPerEpisode > 800 ? 'text-amber-400' : 'text-muted-foreground'}`}>
                 每集约 {wordsPerEpisode} 字内容
                 {wordsPerEpisode > 800 && ' (内容可能过多，建议增加集数)'}
               </p>
