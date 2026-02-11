@@ -339,6 +339,13 @@ async function* streamWithGemini(
   }
 
   if (!response.body) {
+    // Some provider gateways return non-streaming bodies even when stream mode is requested.
+    // Fallback to a normal completion so generation can continue without surfacing a false failure.
+    const fallbackText = await generateWithGemini(config, system, prompt, temperature, maxTokens);
+    if (fallbackText) {
+      yield fallbackText;
+      return;
+    }
     throw new Error('No response body for streaming');
   }
 
@@ -416,6 +423,13 @@ async function* streamWithOpenAI(
   }
 
   if (!response.body) {
+    // Some OpenAI-compatible providers do not keep streaming response bodies available.
+    // Degrade to non-streaming completion to keep the chapter pipeline moving.
+    const fallbackText = await generateWithOpenAI(config, system, prompt, temperature, maxTokens);
+    if (fallbackText) {
+      yield fallbackText;
+      return;
+    }
     throw new Error('No response body for streaming');
   }
 
