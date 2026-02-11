@@ -113,7 +113,7 @@ export function AuthScreen() {
                   <Ionicons name="library-outline" size={26} color={ui.colors.primaryStrong} />
                 </View>
                 <View style={styles.heroTextWrap}>
-                  <Text style={styles.title}>小说副驾</Text>
+                  <Text style={styles.title}>Novel Copilot</Text>
                   <Text style={styles.subtitle}>更懂中文创作节奏的写作助手</Text>
                 </View>
               </LinearGradient>

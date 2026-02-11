@@ -67,8 +67,24 @@ function ProjectsStackNavigator() {
 
 function MainTabNavigator() {
   const insets = useSafeAreaInsets();
-  const tabBottom = Math.max(10, insets.bottom + 4);
-  const tabHeight = 58 + Math.max(8, insets.bottom);
+  const tabHeight = 60 + Math.max(8, insets.bottom);
+  const baseTabBarStyle = {
+    position: 'absolute' as const,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    backgroundColor: ui.colors.tabBg,
+    borderTopColor: ui.colors.border,
+    borderTopWidth: 1,
+    height: tabHeight,
+    paddingBottom: Math.max(8, insets.bottom),
+    paddingTop: 8,
+    paddingHorizontal: 8,
+    shadowColor: 'transparent',
+    elevation: 0,
+  };
 
   return (
     <MainTabs.Navigator
@@ -77,31 +93,13 @@ function MainTabNavigator() {
         tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: ui.colors.accent,
         tabBarInactiveTintColor: ui.colors.textTertiary,
-        tabBarStyle: {
-          position: 'absolute',
-          left: 12,
-          right: 12,
-          bottom: tabBottom,
-          borderRadius: 24,
-          backgroundColor: ui.colors.tabBg,
-          borderColor: ui.colors.border,
-          borderWidth: 1,
-          height: tabHeight + 2,
-          paddingBottom: Math.max(8, insets.bottom),
-          paddingTop: 8,
-          paddingHorizontal: 8,
-          shadowColor: '#1a1712',
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 5 },
-          elevation: 4,
-        },
+        tabBarStyle: baseTabBarStyle,
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '800',
         },
         tabBarItemStyle: {
-          borderRadius: 16,
+          borderRadius: 10,
           marginHorizontal: 2,
           minHeight: 42,
         },
@@ -119,27 +117,7 @@ function MainTabNavigator() {
           const shouldHideTabBar = routeName !== 'ProjectsHome';
           return {
             tabBarLabel: '项目',
-            tabBarStyle: shouldHideTabBar
-              ? { display: 'none' }
-              : {
-                  position: 'absolute',
-                  left: 12,
-                  right: 12,
-                  bottom: tabBottom,
-                  borderRadius: 24,
-                  backgroundColor: ui.colors.tabBg,
-                  borderColor: ui.colors.border,
-                  borderWidth: 1,
-                  height: tabHeight + 2,
-                  paddingBottom: Math.max(8, insets.bottom),
-                  paddingTop: 8,
-                  paddingHorizontal: 8,
-                  shadowColor: '#1a1712',
-                  shadowOpacity: 0.08,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 5 },
-                  elevation: 4,
-                },
+            tabBarStyle: shouldHideTabBar ? { display: 'none' } : baseTabBarStyle,
           };
         }}
       />
