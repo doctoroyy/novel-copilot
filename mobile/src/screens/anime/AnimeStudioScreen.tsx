@@ -113,7 +113,9 @@ export function AnimeStudioScreen() {
   useEffect(() => {
     if (!selectedProjectName) return;
     const matched = animeProjects.find((item) => item.name === `anime-${selectedProjectName}`) || null;
-    void loadAnimeDetail(matched);
+    loadAnimeDetail(matched).catch((err) => {
+      setError((err as Error).message);
+    });
   }, [animeProjects, loadAnimeDetail, selectedProjectName]);
 
   const handleCreateAnimeProject = async () => {
