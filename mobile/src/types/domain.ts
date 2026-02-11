@@ -1,0 +1,183 @@
+export type User = {
+  id: string;
+  username: string;
+  role?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
+};
+
+export type BookState = {
+  bookTitle: string;
+  totalChapters: number;
+  nextChapterIndex: number;
+  rollingSummary: string;
+  openLoops: string[];
+  needHuman?: boolean;
+  needHumanReason?: string;
+};
+
+export type ChapterOutline = {
+  index: number;
+  title: string;
+  goal: string;
+  hook: string;
+};
+
+export type VolumeOutline = {
+  title: string;
+  startChapter: number;
+  endChapter: number;
+  goal: string;
+  conflict: string;
+  climax: string;
+  chapters: ChapterOutline[];
+};
+
+export type NovelOutline = {
+  totalChapters: number;
+  targetWordCount: number;
+  volumes: VolumeOutline[];
+  mainGoal: string;
+  milestones: string[];
+};
+
+export type ProjectSummary = {
+  name: string;
+  path: string;
+  state: BookState;
+  hasOutline: boolean;
+  outlineSummary: {
+    totalChapters: number;
+    targetWordCount: number;
+    volumeCount: number;
+    mainGoal: string;
+  } | null;
+};
+
+export type ProjectDetail = {
+  name: string;
+  path: string;
+  state: BookState;
+  bible: string;
+  background?: string;
+  role_settings?: string;
+  outline: NovelOutline | null;
+  chapters: string[];
+};
+
+export type GenerationTask = {
+  id: number;
+  projectId: string;
+  projectName: string;
+  userId: string;
+  targetCount: number;
+  startChapter: number;
+  completedChapters: number[];
+  failedChapters: number[];
+  currentProgress: number;
+  currentMessage: string | null;
+  status: 'running' | 'paused' | 'completed' | 'failed';
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  updatedAtMs: number;
+};
+
+export type AnimeProject = {
+  id: string;
+  name: string;
+  novel_text?: string;
+  total_episodes: number;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnimeEpisode = {
+  id: string;
+  project_id: string;
+  episode_num: number;
+  status: 'pending' | 'script' | 'storyboard' | 'audio' | 'video' | 'done' | 'error' | 'processing';
+  duration_seconds?: number | null;
+  video_r2_key?: string | null;
+  error_message?: string | null;
+  updated_at?: string;
+};
+
+export type AIConfig = {
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+};
+
+export type AppConfig = {
+  apiBaseUrl: string;
+  ai: AIConfig;
+};
+
+export type ApiSuccess<T> =
+  | ({ success: true; error?: string } & T)
+  | ({ success: false; error: string } & Partial<T>);
+
+export type GenerationStreamEventType =
+  | 'start'
+  | 'progress'
+  | 'chapter_complete'
+  | 'chapter_error'
+  | 'done'
+  | 'error'
+  | 'heartbeat'
+  | 'task_resumed'
+  | 'task_created';
+
+export type GenerationStreamEvent = {
+  type: GenerationStreamEventType;
+  total?: number;
+  taskId?: number;
+  completedChapters?: number[];
+  targetCount?: number;
+  currentProgress?: number;
+  currentMessage?: string;
+  current?: number;
+  chapterIndex?: number;
+  status?:
+    | 'preparing'
+    | 'generating'
+    | 'analyzing'
+    | 'planning'
+    | 'reviewing'
+    | 'repairing'
+    | 'saving'
+    | 'updating_summary';
+  message?: string;
+  title?: string;
+  preview?: string;
+  wordCount?: number;
+  error?: string;
+  success?: boolean;
+  generated?: { chapter: number; title: string }[];
+  failedChapters?: number[];
+  totalGenerated?: number;
+  totalFailed?: number;
+};
+
+export type OutlineStreamEvent = {
+  type:
+    | 'heartbeat'
+    | 'start'
+    | 'progress'
+    | 'master_outline'
+    | 'volume_complete'
+    | 'done'
+    | 'error';
+  message?: string;
+  error?: string;
+  totalVolumes?: number;
+  volumeIndex?: number;
+  volumeTitle?: string;
+  chapterCount?: number;
+  outline?: NovelOutline;
+  success?: boolean;
+};
