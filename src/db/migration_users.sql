@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  role TEXT DEFAULT 'user',
+  google_id TEXT UNIQUE,
+  email TEXT UNIQUE,
+  avatar_url TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login_at DATETIME DEFAULT NULL
 );
