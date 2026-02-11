@@ -417,25 +417,6 @@ export function ProjectDetailScreen() {
         ) : null}
 
         <View style={styles.sectionStack}>
-          <View style={[styles.sectionCard, styles.sectionGuideCard]}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={[styles.sectionIconBadge, styles.sectionGuideIcon]}>
-                <Ionicons name="sparkles-outline" size={13} color={ui.colors.primaryStrong} />
-              </View>
-              <Text style={styles.sectionTitle}>操作说明</Text>
-            </View>
-            <Text style={styles.cardHint}>
-              章节主操作已固定在底部，单手即可继续生成。更多操作在“更多”里展开。
-            </Text>
-            <Pressable
-              style={({ pressed }) => [styles.inlineGhostBtn, pressed && styles.pressed]}
-              onPress={() => navigation.getParent()?.navigate('AnimeTab' as never)}
-            >
-              <Ionicons name="film-outline" size={14} color={ui.colors.primaryStrong} />
-              <Text style={styles.inlineGhostBtnText}>进入 AI 漫剧</Text>
-            </Pressable>
-          </View>
-
           <View style={[styles.sectionCard, styles.sectionOutlineCard]}>
             <View style={styles.sectionHeaderRow}>
               <View style={[styles.sectionIconBadge, styles.sectionOutlineIcon]}>
@@ -663,8 +644,13 @@ export function ProjectDetailScreen() {
         </View>
       </Modal>
 
-      <Modal visible={chapterModalOpen} animationType="slide" onRequestClose={() => setChapterModalOpen(false)}>
-        <SafeAreaView style={styles.chapterSafeArea} edges={['top', 'bottom']}>
+      <Modal
+        visible={chapterModalOpen}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setChapterModalOpen(false)}
+      >
+        <SafeAreaView style={[styles.chapterSafeArea, { paddingTop: insets.top }]} edges={['bottom']}>
             <View style={styles.chapterHeader}>
               <Text style={styles.chapterHeaderTitle} numberOfLines={1}>{chapterModalTitle}</Text>
               <View style={styles.chapterHeaderActions}>
@@ -865,28 +851,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ui.colors.border,
   },
-  cardHint: {
-    color: ui.colors.textSecondary,
-    fontSize: 12,
-  },
-  inlineGhostBtn: {
-    marginTop: 2,
-    alignSelf: 'flex-start',
-    minHeight: 34,
-    borderRadius: ui.radius.md,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    backgroundColor: ui.colors.cardAlt,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  inlineGhostBtnText: {
-    color: ui.colors.primaryStrong,
-    fontSize: 12,
-    fontWeight: '700',
-  },
   primaryButton: {
     backgroundColor: ui.colors.primary,
     minHeight: 44,
@@ -1075,9 +1039,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sectionGuideIcon: {
-    backgroundColor: ui.colors.primarySoft,
-  },
   sectionOutlineIcon: {
     backgroundColor: ui.colors.accentSoft,
   },
@@ -1091,10 +1052,6 @@ const styles = StyleSheet.create({
     color: ui.colors.text,
     fontSize: 16,
     fontWeight: '800',
-  },
-  sectionGuideCard: {
-    backgroundColor: '#fff9f1',
-    borderColor: '#ead7be',
   },
   sectionOutlineCard: {
     backgroundColor: '#f6f9fd',

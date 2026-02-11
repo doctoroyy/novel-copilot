@@ -118,7 +118,7 @@ export function ProjectsHomeScreen() {
               <View style={styles.heroPanel}>
                 <View style={styles.headerRow}>
                   <View>
-                    <Text style={styles.pageTitle}>书稿工坊</Text>
+                    <Text style={styles.pageTitle}>Novel Copilot</Text>
                     <Text style={styles.pageSubtitle}>立项、生成、追踪一体化</Text>
                   </View>
                   <Pressable style={({ pressed }) => [styles.createPill, pressed && styles.pressed]} onPress={() => setShowCreateModal(true)}>
@@ -336,7 +336,8 @@ const styles = StyleSheet.create({
   },
   pageTitle: {
     color: ui.colors.text,
-    fontSize: 42,
+    fontSize: 34,
+    lineHeight: 40,
     fontWeight: '800',
   },
   pageSubtitle: {
