@@ -166,6 +166,11 @@ export function ProjectDetailScreen() {
   const handleGenerateOutline = async () => {
     if (!project || !ensureReady() || !token) return;
 
+    if (activeTask) {
+      Alert.alert('已有进行中的任务', '当前有生成任务正在运行，请等待完成或先停止该任务。');
+      return;
+    }
+
     setRunningAction('outline');
     setLiveMessage('开始生成大纲...');
 
@@ -201,6 +206,11 @@ export function ProjectDetailScreen() {
 
   const handleGenerateChapters = async () => {
     if (!project || !ensureReady() || !token) return;
+
+    if (activeTask) {
+      Alert.alert('已有进行中的任务', '当前有生成任务正在运行，请等待完成或先停止该任务。');
+      return;
+    }
 
     const count = Math.max(1, parseInt(chapterCount, 10) || 1);
     setRunningAction('generate');
