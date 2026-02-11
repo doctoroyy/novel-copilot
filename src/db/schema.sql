@@ -5,6 +5,10 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  role TEXT DEFAULT 'user',
+  google_id TEXT UNIQUE,
+  email TEXT UNIQUE,
+  avatar_url TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_login_at DATETIME DEFAULT NULL
 );
@@ -148,6 +152,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   start_chapter INTEGER NOT NULL,
   completed_chapters TEXT DEFAULT '[]',
   failed_chapters TEXT DEFAULT '[]',
+  current_progress INTEGER DEFAULT 0,
+  current_message TEXT DEFAULT NULL,
   status TEXT DEFAULT 'running' CHECK(status IN ('running', 'paused', 'completed', 'failed')),
   error_message TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

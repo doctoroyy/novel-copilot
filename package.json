@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:local": "tsx src/server.ts",
+    "dev:mobile": "cd mobile && pnpm start",
+    "mobile:android": "cd mobile && pnpm android",
+    "mobile:ios": "cd mobile && pnpm ios",
+    "mobile:typecheck": "cd mobile && pnpm exec tsc --noEmit",
     "deploy": "pnpm build:web && wrangler deploy",
     "build:web": "cd web && pnpm build",
     "db:init": "wrangler d1 execute novel-copilot-db --file=./src/db/schema.sql",
