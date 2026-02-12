@@ -10,6 +10,8 @@ export default function GeneratePage() {
     generationState,
     handleGenerateOutline,
     handleGenerateChapters,
+    handlePauseGeneration,
+    handleStopGeneration,
     handleResetProject,
   } = useProject();
 
@@ -18,6 +20,11 @@ export default function GeneratePage() {
   const [outlineWordCount, setOutlineWordCount] = useState('100');
   const [outlineCustomPrompt, setOutlineCustomPrompt] = useState('');
   const [generateCount, setGenerateCount] = useState('1');
+  const [plannerMode, setPlannerMode] = useState<'llm' | 'rule'>('llm');
+  const [autoOutline, setAutoOutline] = useState<'on' | 'off'>('on');
+  const [autoCharacters, setAutoCharacters] = useState<'on' | 'off'>('on');
+  const [repairAttempts, setRepairAttempts] = useState('1');
+  const [conflictPolicy, setConflictPolicy] = useState<'block' | 'takeover'>('block');
 
   if (!selectedProject) {
     return null;
@@ -38,7 +45,27 @@ export default function GeneratePage() {
       onGenerateOutline={() => handleGenerateOutline(outlineChapters, outlineWordCount, outlineCustomPrompt)}
       generateCount={generateCount}
       onGenerateCountChange={setGenerateCount}
-      onGenerateChapters={() => handleGenerateChapters(generateCount)}
+      plannerMode={plannerMode}
+      onPlannerModeChange={setPlannerMode}
+      autoOutline={autoOutline}
+      onAutoOutlineChange={setAutoOutline}
+      autoCharacters={autoCharacters}
+      onAutoCharactersChange={setAutoCharacters}
+      repairAttempts={repairAttempts}
+      onRepairAttemptsChange={setRepairAttempts}
+      conflictPolicy={conflictPolicy}
+      onConflictPolicyChange={setConflictPolicy}
+      onGenerateChapters={() =>
+        handleGenerateChapters(generateCount, {
+          useLLMPlanner: plannerMode === 'llm',
+          autoGenerateOutline: autoOutline === 'on',
+          autoGenerateCharacters: autoCharacters === 'on',
+          maxRepairAttempts: parseInt(repairAttempts, 10),
+          takeover: conflictPolicy === 'takeover',
+        })
+      }
+      onPauseGeneration={handlePauseGeneration}
+      onStopGeneration={handleStopGeneration}
       onResetState={handleResetProject}
     />
   );

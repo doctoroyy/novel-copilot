@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, type AIConfig } from '../services/aiClient.js';
 import { writeOneChapter } from '../generateChapter.js';
-import { generateMasterOutline, generateVolumeChapters } from '../generateOutline.js';
+import { generateVolumeChapters } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
 import type { CharacterStateRegistry } from '../types/characterState.js';
 import type { PlotGraph } from '../types/plotGraph.js';
@@ -11,6 +11,9 @@ import { initializeRegistryFromGraph } from '../context/characterStateManager.js
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
 import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTask, updateTaskMessage } from './tasks.js';
+import { runOutlineAgent } from '../agent/orchestrator.js';
+import { runProjectAgent } from '../agent/projectOrchestrator.js';
+import type { ProjectAgentState } from '../agent/projectTypes.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -26,6 +29,25 @@ function getAIConfigFromHeaders(c: any): AIConfig | null {
   }
 
   return { provider: provider as AIConfig['provider'], model, apiKey, baseUrl };
+}
+
+function toPositiveInt(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+function toBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+  }
+  return fallback;
 }
 
 // Normalize chapter data from LLM output to consistent structure
@@ -163,59 +185,73 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字`);
 
-        // Phase 1: Generate master outline
-        sendEvent('progress', { phase: 1, message: '正在生成总体大纲...' });
-        console.log('Phase 1: Generating master outline...');
-        const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
-        const totalVolumes = masterOutline.volumes?.length || 0;
-        console.log(`Master outline generated: ${totalVolumes} volumes`);
-        sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
+        sendEvent('progress', { phase: 0, message: 'Agent orchestrator 启动，准备进入迭代生成...' });
 
-        // Phase 2: Generate volume chapters
-        const volumes = [];
-        for (let i = 0; i < masterOutline.volumes.length; i++) {
-          const vol = masterOutline.volumes[i];
-          const previousVolumeEndState = i > 0 
-            ? masterOutline.volumes[i - 1].volumeEndState || 
-              `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
-            : null;
-          
-          sendEvent('progress', { 
-            phase: 2, 
-            volumeIndex: i + 1, 
-            totalVolumes, 
-            volumeTitle: vol.title,
-            message: `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...` 
-          });
-          console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
-          
-          const chapters = await generateVolumeChapters(aiConfig, { bible, masterOutline, volume: vol, previousVolumeSummary: previousVolumeEndState || undefined });
-          const normalizedVolume = normalizeVolume(vol, i, chapters);
-          volumes.push(normalizedVolume);
-          
-          sendEvent('volume_complete', { 
-            volumeIndex: i + 1, 
-            totalVolumes, 
-            volumeTitle: normalizedVolume.title,
-            chapterCount: normalizedVolume.chapters?.length || 0
-          });
-        }
-
-        const outline = {
-          totalChapters: targetChapters,
+        const maxRetries = 2;
+        const agentResult = await runOutlineAgent({
+          aiConfig,
+          bible,
+          targetChapters,
           targetWordCount,
-          volumes,
-          mainGoal: masterOutline.mainGoal || '',
-          milestones: normalizeMilestones(masterOutline.milestones || []),
-        };
+          maxRetries,
+          targetScore: 8,
+          useLLMPlanner: true,
+          callbacks: {
+            onAttemptStart: ({ attempt, maxAttempts, reason }) => {
+              sendEvent('progress', {
+                phase: 1,
+                attempt,
+                maxAttempts,
+                message: `第 ${attempt}/${maxAttempts} 轮：${reason}`,
+              });
+            },
+            onMasterOutline: ({ attempt, totalVolumes, mainGoal }) => {
+              sendEvent('master_outline', { attempt, totalVolumes, mainGoal });
+            },
+            onVolumeStart: ({ attempt, volumeIndex, totalVolumes, volumeTitle }) => {
+              sendEvent('progress', {
+                phase: 2,
+                attempt,
+                volumeIndex,
+                totalVolumes,
+                volumeTitle,
+                message: `第 ${attempt} 轮：正在生成第 ${volumeIndex}/${totalVolumes} 卷「${volumeTitle}」...`,
+              });
+            },
+            onVolumeComplete: ({ attempt, volumeIndex, totalVolumes, volumeTitle, chapterCount }) => {
+              sendEvent('volume_complete', {
+                attempt,
+                volumeIndex,
+                totalVolumes,
+                volumeTitle,
+                chapterCount,
+              });
+            },
+            onCritic: ({ attempt, score, passed, issues }) => {
+              sendEvent('agent_critic', {
+                attempt,
+                score,
+                passed,
+                issues: issues.slice(0, 10),
+              });
+            },
+          },
+        });
 
-        // Phase 3: Validate
-        sendEvent('progress', { phase: 3, message: '正在验证大纲...' });
-        console.log('Phase 3: Validating outline...');
-        const validation = validateOutline(outline, targetChapters);
+        const outline = agentResult.outline;
+        const validation = {
+          valid: agentResult.evaluation.passed,
+          issues: agentResult.evaluation.issues.slice(0, 20),
+          score: agentResult.evaluation.score,
+          metrics: agentResult.evaluation.metrics,
+          attempts: agentResult.attempts,
+          doneReason: agentResult.doneReason,
+        };
         if (!validation.valid) {
           console.warn('Outline validation issues:', validation.issues);
         }
+
+        sendEvent('progress', { phase: 3, message: '正在保存大纲...' });
 
         // Save outline
         await c.env.DB.prepare(`
@@ -229,10 +265,16 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         console.log(`Outline generation complete for ${name}!`);
 
-        sendEvent('done', { 
-          success: true, 
+        sendEvent('done', {
+          success: true,
           outline,
-          validation: validation.valid ? undefined : validation 
+          validation: validation.valid ? undefined : validation,
+          agent: {
+            attempts: agentResult.attempts,
+            score: agentResult.evaluation.score,
+            doneReason: agentResult.doneReason,
+            history: agentResult.history,
+          },
         });
 
         clearInterval(heartbeatInterval);
@@ -865,6 +907,302 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           controller.close();
         } catch {
           // Already closed, ignore
+        }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+});
+
+// Agent runtime based project generation (outline + characters + chapters tools)
+generationRoutes.post('/projects/:name/generate-agent-stream', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+  const aiConfig = getAIConfigFromHeaders(c);
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      let taskId: number | undefined;
+      let clientConnected = true;
+
+      const sendEvent = (type: string, data: any) => {
+        if (!clientConnected) return;
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch {
+          clientConnected = false;
+          console.log('Client disconnected, generation continues in background...');
+        }
+      };
+
+      const heartbeatInterval = setInterval(() => {
+        if (!clientConnected) {
+          clearInterval(heartbeatInterval);
+          return;
+        }
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clientConnected = false;
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      try {
+        const requestBody = await c.req.json().catch(() => ({} as Record<string, unknown>));
+        const rawSpec =
+          requestBody.taskSpec && typeof requestBody.taskSpec === 'object'
+            ? (requestBody.taskSpec as Record<string, unknown>)
+            : (requestBody as Record<string, unknown>);
+
+        const chaptersToGenerate = toPositiveInt(
+          rawSpec.chaptersToGenerate ?? rawSpec.count,
+          1
+        );
+        const useLLMPlanner = toBoolean(rawSpec.useLLMPlanner, true);
+        const autoGenerateOutline = toBoolean(rawSpec.autoGenerateOutline, true);
+        const autoGenerateCharacters = toBoolean(rawSpec.autoGenerateCharacters, true);
+        const parsedRepairAttempts = Number(rawSpec.maxRepairAttempts);
+        const maxRepairAttempts =
+          Number.isFinite(parsedRepairAttempts) && parsedRepairAttempts >= 0
+            ? Math.floor(parsedRepairAttempts)
+            : 1;
+        const takeover = toBoolean(rawSpec.takeover, false);
+        const requestedStartChapter = rawSpec.startChapter
+          ? toPositiveInt(rawSpec.startChapter, 1)
+          : undefined;
+
+        sendEvent('start', {
+          total: chaptersToGenerate,
+          mode: 'agent',
+          taskSpec: {
+            chaptersToGenerate,
+            useLLMPlanner,
+            autoGenerateOutline,
+            autoGenerateCharacters,
+            maxRepairAttempts,
+            takeover,
+            startChapter: requestedStartChapter,
+          },
+          config: {
+            useLLMPlanner,
+            autoGenerateOutline,
+            autoGenerateCharacters,
+            maxRepairAttempts,
+          },
+        });
+
+        const project = await c.env.DB.prepare(`
+          SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+          FROM projects p
+          JOIN states s ON p.id = s.project_id
+          LEFT JOIN outlines o ON p.id = o.project_id
+          LEFT JOIN characters c ON p.id = c.project_id
+          WHERE p.name = ? AND p.user_id = ?
+        `).bind(name, userId).first() as any;
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        const maxChapterResult = await c.env.DB.prepare(`
+          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
+        `).bind(project.id).first() as any;
+        const actualMaxChapter = maxChapterResult?.max_index || 0;
+        const expectedNextIndex = actualMaxChapter + 1;
+        if (project.next_chapter_index !== expectedNextIndex) {
+          project.next_chapter_index = expectedNextIndex;
+          await c.env.DB.prepare(`
+            UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+          `).bind(expectedNextIndex, project.id).run();
+        }
+
+        if (requestedStartChapter && requestedStartChapter !== project.next_chapter_index) {
+          sendEvent('error', {
+            error: `项目状态已变化，请刷新后重试（期望起始章 ${requestedStartChapter}，当前应从 ${project.next_chapter_index} 章开始）`,
+            code: 'STATE_VERSION_MISMATCH',
+            expectedNextChapter: project.next_chapter_index,
+          });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        const startChapterIndex = requestedStartChapter ?? project.next_chapter_index;
+        const endChapterIndex = Math.min(project.total_chapters, startChapterIndex + chaptersToGenerate - 1);
+        if (endChapterIndex < startChapterIndex) {
+          sendEvent('done', {
+            success: true,
+            generated: [],
+            failedChapters: [],
+            totalGenerated: 0,
+            totalFailed: 0,
+            doneReason: '无可生成章节',
+          });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        const { isRunning, taskId: runningTaskId } = await checkRunningTask(c.env.DB, project.id);
+        if (isRunning) {
+          if (!takeover) {
+            sendEvent('error', {
+              error: '已有运行中的任务，默认阻止并发写入。若要接管，请在请求中设置 takeover=true。',
+              code: 'TASK_LOCKED',
+              runningTaskId,
+            });
+            clearInterval(heartbeatInterval);
+            controller.close();
+            return;
+          }
+
+          await c.env.DB.prepare(`
+            UPDATE generation_tasks
+            SET status = 'paused', error_message = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ? AND user_id = ? AND status = 'running'
+          `).bind('Taken over by a newer task', project.id, userId).run();
+
+          sendEvent('task_takeover', { previousTaskId: runningTaskId });
+        }
+
+        taskId = await createGenerationTask(
+          c.env.DB,
+          project.id,
+          userId!,
+          chaptersToGenerate,
+          startChapterIndex
+        );
+        sendEvent('task_created', { taskId });
+
+        const outline = project.outline_json ? JSON.parse(project.outline_json) : undefined;
+        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+
+        let openLoops: string[] = [];
+        try {
+          openLoops = JSON.parse(project.open_loops || '[]');
+          if (!Array.isArray(openLoops)) {
+            openLoops = [];
+          }
+        } catch {
+          openLoops = [];
+        }
+
+        const initialState: ProjectAgentState = {
+          projectId: project.id,
+          projectName: name,
+          userId: userId!,
+          aiConfig,
+          goal: `为项目 ${name} 生成 ${chaptersToGenerate} 章高质量内容`,
+          bible: project.bible,
+          totalChapters: project.total_chapters,
+          targetChaptersToGenerate: chaptersToGenerate,
+          startChapterIndex,
+          currentChapterIndex: startChapterIndex,
+          endChapterIndex,
+          maxRepairAttempts: Math.max(0, Number(maxRepairAttempts) || 0),
+          iteration: 0,
+          done: false,
+          outline,
+          characters,
+          rollingSummary: project.rolling_summary || '',
+          openLoops,
+          generated: [],
+          failedChapters: [],
+          history: [],
+        };
+
+        const result = await runProjectAgent({
+          initialState,
+          shouldContinue: async () => {
+            if (!taskId) {
+              return true;
+            }
+            const taskRow = await c.env.DB.prepare(`
+              SELECT status FROM generation_tasks WHERE id = ?
+            `).bind(taskId).first() as { status?: string } | null;
+            return taskRow?.status === 'running';
+          },
+          context: {
+            db: c.env.DB,
+            useLLMPlanner: Boolean(useLLMPlanner),
+            autoGenerateOutline: Boolean(autoGenerateOutline),
+            autoGenerateCharacters: Boolean(autoGenerateCharacters),
+            onStatus: ({ type, message, chapterIndex, data }) => {
+              sendEvent(type, { message, chapterIndex, ...(data || {}) });
+              if (taskId) {
+                updateTaskMessage(c.env.DB, taskId, message, chapterIndex).catch((err) => {
+                  console.warn('Failed to update task message', err);
+                });
+              }
+            },
+          },
+          onDecision: ({ iteration, decision, state }) => {
+            sendEvent('agent_decision', {
+              iteration,
+              tool: decision.tool,
+              reason: decision.reason,
+              currentChapterIndex: state.currentChapterIndex,
+              generatedCount: state.generated.length,
+            });
+          },
+        });
+
+        if (taskId) {
+          for (const item of result.generated) {
+            await updateTaskProgress(c.env.DB, taskId, item.chapterIndex, false);
+          }
+          for (const chapterIndex of result.failedChapters) {
+            await updateTaskProgress(c.env.DB, taskId, chapterIndex, true);
+          }
+          const finalTask = await c.env.DB.prepare(`
+            SELECT status FROM generation_tasks WHERE id = ?
+          `).bind(taskId).first() as { status?: string } | null;
+          if (finalTask?.status === 'running') {
+            await completeTask(c.env.DB, taskId, true);
+          }
+        }
+
+        sendEvent('done', {
+          success: true,
+          generated: result.generated,
+          failedChapters: result.failedChapters,
+          totalGenerated: result.generated.length,
+          totalFailed: result.failedChapters.length,
+          attempts: result.attempts,
+          doneReason: result.doneReason,
+          history: result.history,
+          taskId,
+        });
+      } catch (error) {
+        if (taskId) {
+          await completeTask(c.env.DB, taskId, false, (error as Error).message);
+        }
+        sendEvent('error', { error: (error as Error).message });
+      } finally {
+        clearInterval(heartbeatInterval);
+        try {
+          controller.close();
+        } catch {
+          // ignore
         }
       }
     },

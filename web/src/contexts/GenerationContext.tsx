@@ -7,7 +7,7 @@ export interface ActiveTask {
   id: string;
   type: TaskType;
   title: string;
-  status: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
+  status: 'preparing' | 'generating' | 'analyzing' | 'planning' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error';
   current?: number;
   total?: number;
   message?: string;
@@ -22,7 +22,7 @@ export interface GenerationState {
   total: number;
   currentChapter?: number;
   currentChapterTitle?: string;
-  status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
+  status?: 'preparing' | 'generating' | 'analyzing' | 'planning' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error';
   message?: string;
   startTime?: number;
   projectName?: string;
