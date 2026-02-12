@@ -609,32 +609,6 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
       bookTitle = state.bookTitle;
     }
     
-    // Prepare chapter contents
-    const chapterContents: { index: number; title: string; content: string }[] = [];
-    
-    for (const file of files) {
-      const chapterIndex = parseInt(file.replace('.md', ''), 10);
-      const chapterPath = path.join(chaptersDir, file);
-      const content = await fs.readFile(chapterPath, 'utf-8');
-      
-      // Check if content already has a chapter title line
-      const hasTitle = /^第?\d*[章回节]/.test(content.trim());
-      const title = getChapterTitle(chapterIndex) || '';
-      
-      let finalContent: string;
-      if (hasTitle) {
-        finalContent = content.trim();
-      } else {
-        const chapterHeader = `第${chapterIndex}章 ${title}`.trim();
-        finalContent = `${chapterHeader}\n\n${content.trim()}`;
-      }
-      
-      chapterContents.push({ index: chapterIndex, title, content: finalContent });
-    }
-    
-    // Create full novel content
-    const fullNovelContent = chapterContents.map(c => c.content).join('\n\n' + '='.repeat(40) + '\n\n');
-    
     // Set response headers for ZIP download
     const zipFilename = `${bookTitle}.zip`;
     const encodedFilename = encodeURIComponent(zipFilename).replace(/'/g, '%27');
@@ -651,15 +625,43 @@ app.get('/api/projects/:name/download', async (req: Request, res: Response) => {
     // Pipe archive to response
     archive.pipe(res);
     
-    // Add complete novel file
-    archive.append(fullNovelContent, { name: `${bookTitle}.txt` });
-    
     // Add chapters folder with individual files
-    for (const chapter of chapterContents) {
-      const chapterFilename = chapter.title 
-        ? `第${chapter.index}章 ${chapter.title}.txt`
-        : `第${chapter.index}章.txt`;
-      archive.append(chapter.content, { name: `chapters/${chapterFilename}` });
+    for (const file of files) {
+      const chapterIndex = parseInt(file.replace('.md', ''), 10);
+      const chapterPath = path.join(chaptersDir, file);
+      const content = await fs.readFile(chapterPath, 'utf-8');
+      
+      const title = getChapterTitle(chapterIndex) || '';
+      
+      // Determine final content
+      // Requirement: Title on first line, then content
+      // Check if content already starts with title
+      let finalContent: string;
+      const lines = content.trim().split('\n');
+      const firstLine = lines[0].trim();
+      
+      // Construct the expected title line based on user request "第1章 Title"
+      // User request format: "第1章 重生1988，绝望的妻女"
+      // Note: User's screenshot shows "01_第1章 重生1988，绝望的妻女.txt" as filename
+      // and content starts with "第1章 重生1988，绝望的妻女" followed by body.
+      
+      const fullChapterTitle = title ? `第${chapterIndex}章 ${title}` : `第${chapterIndex}章`;
+      
+      if (firstLine.includes(`第${chapterIndex}章`) || (title && firstLine.includes(title))) {
+         // Existing content likely has title, just use it but ensure spacing
+         finalContent = content.trim();
+      } else {
+         // Prepend title
+         finalContent = `${fullChapterTitle}\n\n${content.trim()}`;
+      }
+
+      // Filename format: 01_第1章 重生1988，绝望的妻女.txt
+      // Pad index with 0 to 2 digits (or more if needed, user showed "01_")
+      const paddedIndex = chapterIndex.toString().padStart(2, '0');
+      const filename = `${paddedIndex}_${fullChapterTitle}.txt`;
+      
+      // Path in ZIP: BookTitle/01_...txt
+      archive.append(finalContent, { name: `${bookTitle}/${filename}` });
     }
     
     // Finalize archive
