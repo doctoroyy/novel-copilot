@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.lg,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    backgroundColor: '#fff9f1',
+    backgroundColor: ui.colors.surfaceWarm,
     paddingHorizontal: 8,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    shadowColor: '#1a1712',
+    shadowColor: ui.colors.shadow,
     shadowOpacity: 0.06,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
   },
   statusRunning: {
     backgroundColor: ui.colors.successSoft,
-    borderColor: '#c9ddd2',
+    borderColor: ui.colors.accentBorder,
   },
   statusIdle: {
     backgroundColor: ui.colors.bgMuted,

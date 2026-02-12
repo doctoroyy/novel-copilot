@@ -405,7 +405,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.pill,
     backgroundColor: ui.colors.primarySoft,
     borderWidth: 1,
-    borderColor: '#e8c3ac',
+    borderColor: ui.colors.primaryBorder,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
@@ -435,8 +435,8 @@ const styles = StyleSheet.create({
   workflowRail: {
     borderRadius: ui.radius.lg,
     borderWidth: 1,
-    borderColor: '#ead8c0',
-    backgroundColor: '#fff7ea',
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.surfaceWarm,
     paddingHorizontal: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   workflowLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#ead8c0',
+    backgroundColor: ui.colors.border,
   },
   workflowText: {
     color: ui.colors.textSecondary,
@@ -473,15 +473,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   selectorCard: {
-    backgroundColor: '#fffdf8',
+    backgroundColor: ui.colors.surfaceSoft,
   },
   createCard: {
-    backgroundColor: '#fdf8f2',
-    borderColor: '#e7d7c4',
+    backgroundColor: ui.colors.surfaceWarm,
+    borderColor: ui.colors.border,
   },
   progressCard: {
-    backgroundColor: '#f6fbf9',
-    borderColor: '#d5e7df',
+    backgroundColor: ui.colors.surfaceAccent,
+    borderColor: ui.colors.accentBorder,
   },
   episodesCard: {
     backgroundColor: ui.colors.card,
@@ -518,7 +518,7 @@ const styles = StyleSheet.create({
   },
   projectChipActive: {
     backgroundColor: ui.colors.accentSoft,
-    borderColor: '#c7ddd5',
+    borderColor: ui.colors.accentBorder,
   },
   projectChipText: {
     color: ui.colors.textSecondary,
@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#cfc8bc',
+    borderColor: ui.colors.border,
   },
   episodeIndexText: {
     color: ui.colors.textSecondary,
