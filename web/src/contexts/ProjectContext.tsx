@@ -451,27 +451,44 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleDownloadBook = useCallback(async () => {
     if (!selectedProject) return;
     
-    const chapters = await Promise.all(
-      selectedProject.chapters.map(async (ch) => {
-        const index = parseInt(ch.replace('.md', ''), 10);
-        const content = await fetchChapter(selectedProject.name, index);
-        const title = selectedProject.outline?.volumes
-          .flatMap(v => v.chapters)
-          .find(c => c.index === index)?.title || `第 ${index} 章`;
-        return { index, title, content };
-      })
-    );
-    
-    chapters.sort((a, b) => a.index - b.index);
-    
-    const text = chapters.map(ch => `# ${ch.title}\n\n${ch.content}`).join('\n\n---\n\n');
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${selectedProject.name}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const url = `/api/projects/${encodeURIComponent(selectedProject.name)}/download`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error('下载失败');
+      }
+
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${selectedProject.name}.zip`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (filenameMatch && !/^%[0-9A-F]{2}/i.test(filenameMatch[1])) {
+          filename = filenameMatch[1];
+        } else if (filenameStarMatch) {
+          filename = decodeURIComponent(filenameStarMatch[1]);
+        } else if (filenameMatch) {
+          try {
+            filename = decodeURIComponent(filenameMatch[1]);
+          } catch {
+            filename = filenameMatch[1];
+          }
+        }
+      }
+
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setError('下载失败：' + (err as Error).message);
+    }
   }, [selectedProject]);
 
   const handleGenerateBible = useCallback(async () => {
