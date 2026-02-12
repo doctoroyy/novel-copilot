@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine } from 'lucide-react';
+import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine, Pause, Square } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -20,7 +20,7 @@ interface GenerationState {
   total: number;
   currentChapter?: number;
   currentChapterTitle?: string;
-  status?: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
+  status?: 'preparing' | 'generating' | 'analyzing' | 'planning' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error';
   message?: string;
   startTime?: number;
   projectName?: string;
@@ -42,7 +42,19 @@ interface GenerateViewProps {
   // Chapter generation
   generateCount: string;
   onGenerateCountChange: (value: string) => void;
+  plannerMode?: 'llm' | 'rule';
+  onPlannerModeChange?: (value: 'llm' | 'rule') => void;
+  autoOutline?: 'on' | 'off';
+  onAutoOutlineChange?: (value: 'on' | 'off') => void;
+  autoCharacters?: 'on' | 'off';
+  onAutoCharactersChange?: (value: 'on' | 'off') => void;
+  repairAttempts?: string;
+  onRepairAttemptsChange?: (value: string) => void;
+  conflictPolicy?: 'block' | 'takeover';
+  onConflictPolicyChange?: (value: 'block' | 'takeover') => void;
   onGenerateChapters: () => void;
+  onPauseGeneration?: () => void;
+  onStopGeneration?: () => void;
   onResetState: () => void;
 }
 
@@ -60,9 +72,25 @@ export function GenerateView({
   onGenerateOutline,
   generateCount,
   onGenerateCountChange,
+  plannerMode = 'llm',
+  onPlannerModeChange = () => {},
+  autoOutline = 'on',
+  onAutoOutlineChange = () => {},
+  autoCharacters = 'on',
+  onAutoCharactersChange = () => {},
+  repairAttempts = '1',
+  onRepairAttemptsChange = () => {},
+  conflictPolicy = 'block',
+  onConflictPolicyChange = () => {},
   onGenerateChapters,
+  onPauseGeneration = () => {},
+  onStopGeneration = () => {},
   onResetState,
 }: GenerateViewProps) {
+  const isCurrentProjectGenerating = Boolean(
+    generationState?.isGenerating && generationState?.projectName === project.name
+  );
+
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
       {/* Generation Progress Overlay - only show if the progress belongs to THIS project */}
@@ -174,17 +202,97 @@ export function GenerateView({
             </Select>
           </div>
 
+          <div className="grid grid-cols-2 gap-3 lg:gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">规划模式</Label>
+              <Select value={plannerMode} onValueChange={(v) => onPlannerModeChange(v as 'llm' | 'rule')}>
+                <SelectTrigger className="bg-muted/50 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="llm">LLM Planner</SelectItem>
+                  <SelectItem value="rule">规则 Planner</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">冲突策略</Label>
+              <Select value={conflictPolicy} onValueChange={(v) => onConflictPolicyChange(v as 'block' | 'takeover')}>
+                <SelectTrigger className="bg-muted/50 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="block">检测到任务则阻止</SelectItem>
+                  <SelectItem value="takeover">接管运行中任务</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 lg:gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">自动补大纲</Label>
+              <Select value={autoOutline} onValueChange={(v) => onAutoOutlineChange(v as 'on' | 'off')}>
+                <SelectTrigger className="bg-muted/50 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="on">开启</SelectItem>
+                  <SelectItem value="off">关闭</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">自动补人物</Label>
+              <Select value={autoCharacters} onValueChange={(v) => onAutoCharactersChange(v as 'on' | 'off')}>
+                <SelectTrigger className="bg-muted/50 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="on">开启</SelectItem>
+                  <SelectItem value="off">关闭</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">QC 修复次数</Label>
+              <Select value={repairAttempts} onValueChange={onRepairAttemptsChange}>
+                <SelectTrigger className="bg-muted/50 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">0 次</SelectItem>
+                  <SelectItem value="1">1 次</SelectItem>
+                  <SelectItem value="2">2 次</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <Button 
             onClick={onGenerateChapters} 
-            disabled={loading || !project.outline} 
+            disabled={loading || isCurrentProjectGenerating || (!project.outline && autoOutline === 'off')} 
             className="w-full gradient-bg hover:opacity-90 text-sm lg:text-base"
           >
-            {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
+            {loading || isCurrentProjectGenerating ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
           </Button>
 
-          {!project.outline && (
+          {isCurrentProjectGenerating && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={onPauseGeneration} className="text-xs lg:text-sm">
+                <Pause className="h-4 w-4 mr-1" />
+                暂停任务
+              </Button>
+              <Button variant="destructive" onClick={onStopGeneration} className="text-xs lg:text-sm">
+                <Square className="h-4 w-4 mr-1" />
+                停止任务
+              </Button>
+            </div>
+          )}
+
+          {!project.outline && autoOutline === 'off' && (
             <p className="text-xs lg:text-sm text-muted-foreground text-center">
-              请先生成大纲
+              当前关闭了自动补大纲，请先手动生成大纲
             </p>
           )}
 

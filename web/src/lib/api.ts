@@ -317,6 +317,10 @@ export async function generateChapters(
 // Streaming generation event types
 export type GenerationEventType = 
   | 'start' 
+  | 'task_created'
+  | 'task_takeover'
+  | 'agent_decision'
+  | 'tool_progress'
   | 'progress' 
   | 'chapter_complete' 
   | 'chapter_error' 
@@ -327,14 +331,24 @@ export type GenerationEventType =
 
 export type GenerationEvent = {
   type: GenerationEventType;
+  mode?: 'legacy' | 'agent';
+  code?: string;
   // start event
   total?: number; // For start event
+  taskSpec?: ChapterGenerationTaskSpec;
   // task_resumed event
   taskId?: number;
+  runningTaskId?: number;
+  previousTaskId?: number;
   completedChapters?: number[];
   targetCount?: number;
   currentProgress?: number;
   currentMessage?: string;
+  // agent decision
+  iteration?: number;
+  tool?: string;
+  reason?: string;
+  generatedCount?: number;
   // progress event
   current?: number;
   chapterIndex?: number;
@@ -348,10 +362,22 @@ export type GenerationEvent = {
   error?: string;
   // done event
   success?: boolean;
-  generated?: { chapter: number; title: string }[];
+  generated?: Array<{ chapter: number; title: string } | { chapterIndex: number; title: string }>;
   failedChapters?: number[];
   totalGenerated?: number;
   totalFailed?: number;
+  attempts?: number;
+  doneReason?: string;
+};
+
+export type ChapterGenerationTaskSpec = {
+  chaptersToGenerate: number;
+  startChapter?: number;
+  useLLMPlanner?: boolean;
+  autoGenerateOutline?: boolean;
+  autoGenerateCharacters?: boolean;
+  maxRepairAttempts?: number;
+  takeover?: boolean;
 };
 
 /**
@@ -419,6 +445,65 @@ export async function* generateChaptersStream(
   }
 }
 
+export async function* generateChaptersAgentStream(
+  name: string,
+  taskSpec: ChapterGenerationTaskSpec,
+  aiHeaders?: Record<string, string>,
+  signal?: AbortSignal
+): AsyncGenerator<GenerationEvent, void, unknown> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate-agent-stream`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ taskSpec }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr) {
+            try {
+              const event = JSON.parse(jsonStr) as GenerationEvent;
+              if (event.type !== 'heartbeat') {
+                yield event;
+              }
+              if (event.type === 'done' || event.type === 'error') {
+                return;
+              }
+            } catch {
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /**
  * Convenient wrapper for streaming generation with callbacks
  * Includes auto-reconnect logic for network failures
@@ -441,9 +526,11 @@ export async function generateChaptersWithProgress(
   options?: {
     maxRetries?: number;
     retryDelayMs?: number;
+    mode?: 'legacy' | 'agent';
+    taskSpec?: Omit<ChapterGenerationTaskSpec, 'chaptersToGenerate'>;
   }
 ): Promise<{ chapter: number; title: string }[]> {
-  const { maxRetries = 5, retryDelayMs = 3000 } = options || {};
+  const { maxRetries = 5, retryDelayMs = 3000, mode = 'legacy', taskSpec } = options || {};
   const results: { chapter: number; title: string }[] = [];
   let retryCount = 0;
   
@@ -470,7 +557,20 @@ export async function generateChaptersWithProgress(
       // But actually, we just rely on calling generate-stream. 
       // If task is running, backend returns it.
       
-      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
+      const stream =
+        mode === 'agent'
+          ? generateChaptersAgentStream(
+              name,
+              {
+                chaptersToGenerate,
+                ...(taskSpec || {}),
+              },
+              aiHeaders,
+              signal
+            )
+          : generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal);
+
+      for await (const event of stream) {
         switch (event.type) {
           case 'start':
             if (retryCount === 0) {
@@ -498,8 +598,17 @@ export async function generateChaptersWithProgress(
             }
             break;
           case 'done':
-            callbacks.onDone?.(event.generated || results, event.failedChapters || []);
-            return results;
+            const normalized = (event.generated || results).map((item) => {
+              if ('chapter' in item) {
+                return item;
+              }
+              return {
+                chapter: item.chapterIndex,
+                title: item.title,
+              };
+            });
+            callbacks.onDone?.(normalized, event.failedChapters || []);
+            return normalized;
           case 'error':
             callbacks.onError?.(event.error || 'Unknown error');
             throw new Error(event.error || 'Generation failed');
@@ -565,6 +674,14 @@ export async function getActiveTask(name: string): Promise<GenerationTask | null
 export async function cancelTask(name: string, taskId: number): Promise<void> {
   await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/tasks/${taskId}`, {
     method: 'DELETE',
+    headers: defaultHeaders(),
+  });
+}
+
+// Pause a running generation task
+export async function pauseTask(name: string, taskId: number): Promise<void> {
+  await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/tasks/${taskId}/pause`, {
+    method: 'POST',
     headers: defaultHeaders(),
   });
 }

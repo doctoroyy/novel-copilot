@@ -58,9 +58,10 @@ export async function generateMasterOutline(
     bible: string;
     targetChapters: number;
     targetWordCount: number;
+    revisionNotes?: string;
   }
 ): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] }> {
-  const { bible, targetChapters, targetWordCount } = args;
+  const { bible, targetChapters, targetWordCount, revisionNotes } = args;
 
   // 估算分卷数 (通常每 50-100 章一卷)
   const volumeCount = Math.ceil(targetChapters / 80);
@@ -91,6 +92,8 @@ JSON 结构：
 【Story Bible】
 ${bible}
 
+${revisionNotes ? `【本轮修订重点】\n${revisionNotes}\n` : ''}
+
 【目标规模】
 - 总章数: ${targetChapters} 章
 - 总字数: ${targetWordCount} 万字
@@ -119,9 +122,10 @@ export async function generateVolumeChapters(
     masterOutline: { mainGoal: string; milestones: string[] };
     volume: Omit<VolumeOutline, 'chapters'>;
     previousVolumeSummary?: string;
+    revisionNotes?: string;
   }
 ): Promise<ChapterOutline[]> {
-  const { bible, masterOutline, volume, previousVolumeSummary } = args;
+  const { bible, masterOutline, volume, previousVolumeSummary, revisionNotes } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
 
@@ -141,6 +145,8 @@ export async function generateVolumeChapters(
   const prompt = `
 【Story Bible】
 ${bible.slice(0, 2000)}...
+
+${revisionNotes ? `【本轮修订重点】\n${revisionNotes}\n` : ''}
 
 【总目标】${masterOutline.mainGoal}
 

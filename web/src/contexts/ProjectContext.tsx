@@ -8,6 +8,7 @@ import {
   fetchProject,
   createProject,
   generateOutline,
+  type ChapterGenerationTaskSpec,
   generateChaptersWithProgress,
   fetchChapter,
   deleteProject,
@@ -15,6 +16,9 @@ import {
   generateBible,
   deleteChapter,
   batchDeleteChapters,
+  getActiveTask,
+  pauseTask,
+  cancelAllActiveTasks,
   getAllActiveTasks,
   type ProjectSummary,
   type ProjectDetail,
@@ -77,7 +81,12 @@ interface ProjectContextType {
   
   // Generation handlers
   handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
-  handleGenerateChapters: (count: string) => Promise<void>;
+  handleGenerateChapters: (
+    count: string,
+    options?: Omit<ChapterGenerationTaskSpec, 'chaptersToGenerate'>
+  ) => Promise<void>;
+  handlePauseGeneration: () => Promise<void>;
+  handleStopGeneration: () => Promise<void>;
   handleResetProject: () => Promise<void>;
   
   // Chapter handlers
@@ -357,11 +366,28 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProject, config, isConfigured, loadProject]);
 
-  const handleGenerateChapters = useCallback(async (count: string) => {
+  const handleGenerateChapters = useCallback(async (
+    count: string,
+    options?: Omit<ChapterGenerationTaskSpec, 'chaptersToGenerate'>
+  ) => {
     if (!selectedProject || !isConfigured) return;
     
-    const chapterCount = parseInt(count);
+    const chapterCount = parseInt(count, 10);
+    if (!Number.isFinite(chapterCount) || chapterCount <= 0) {
+      setError('生成章数必须大于 0');
+      return;
+    }
+
     const startChapter = selectedProject.state.nextChapterIndex;
+    const taskSpec: ChapterGenerationTaskSpec = {
+      chaptersToGenerate: chapterCount,
+      useLLMPlanner: options?.useLLMPlanner ?? true,
+      autoGenerateOutline: options?.autoGenerateOutline ?? true,
+      autoGenerateCharacters: options?.autoGenerateCharacters ?? true,
+      maxRepairAttempts: options?.maxRepairAttempts ?? 1,
+      takeover: options?.takeover ?? false,
+      startChapter: options?.startChapter ?? startChapter,
+    };
     
     startGeneration(selectedProject.name, chapterCount);
     
@@ -377,11 +403,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           onProgress: (event) => {
             setGenerationState(prev => ({
               ...prev,
-              current: event.current || prev.current,
+              current: event.current ?? prev.current,
               total: event.total || prev.total,
               currentChapter: event.chapterIndex,
               currentChapterTitle: event.title,
-              status: event.status as 'generating' | 'saving' | 'done' | 'error' | 'preparing',
+              status: event.status || prev.status,
               message: event.message,
             }));
           },
@@ -408,13 +434,64 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             setError(error);
           },
         },
-        headers
+        headers,
+        undefined,
+        {
+          mode: 'agent',
+          taskSpec: {
+            startChapter: taskSpec.startChapter,
+            useLLMPlanner: taskSpec.useLLMPlanner,
+            autoGenerateOutline: taskSpec.autoGenerateOutline,
+            autoGenerateCharacters: taskSpec.autoGenerateCharacters,
+            maxRepairAttempts: taskSpec.maxRepairAttempts,
+            takeover: taskSpec.takeover,
+          },
+        }
       );
     } catch (err) {
       completeGeneration();
       setError((err as Error).message);
     }
   }, [selectedProject, config, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime]);
+
+  const handlePauseGeneration = useCallback(async () => {
+    if (!selectedProject) return;
+
+    try {
+      const activeTask = await getActiveTask(selectedProject.name);
+      if (!activeTask || activeTask.status !== 'running') {
+        setError('当前没有可暂停的运行任务');
+        return;
+      }
+
+      await pauseTask(selectedProject.name, activeTask.id);
+      setGenerationState((prev) => ({
+        ...prev,
+        isGenerating: false,
+        status: 'done',
+        message: '任务已暂停',
+      }));
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, [selectedProject, setGenerationState, loadProject]);
+
+  const handleStopGeneration = useCallback(async () => {
+    if (!selectedProject) return;
+
+    try {
+      await cancelAllActiveTasks(selectedProject.name);
+      setGenerationState({
+        isGenerating: false,
+        current: 0,
+        total: 0,
+      });
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, [selectedProject, setGenerationState, loadProject]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -525,6 +602,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     handleRefresh,
     handleGenerateOutline,
     handleGenerateChapters,
+    handlePauseGeneration,
+    handleStopGeneration,
     handleResetProject,
     handleViewChapter,
     handleDeleteChapter,
