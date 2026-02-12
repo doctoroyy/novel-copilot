@@ -319,8 +319,8 @@ const styles = StyleSheet.create({
   heroPanel: {
     borderRadius: ui.radius.lg,
     borderWidth: 1,
-    borderColor: '#e6d7c4',
-    backgroundColor: '#fff9ef',
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.surfaceWarm,
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 10,
@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
   },
   heroDivider: {
     height: 1,
-    backgroundColor: '#eadbc8',
+    backgroundColor: ui.colors.border,
   },
   pageTitle: {
     color: ui.colors.text,
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.md,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    backgroundColor: '#fffdf9',
+    backgroundColor: ui.colors.surfaceSoft,
     paddingHorizontal: 10,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -384,7 +384,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.pill,
     backgroundColor: ui.colors.accentSoft,
     borderWidth: 1,
-    borderColor: '#cfdfe9',
+    borderColor: ui.colors.accentBorder,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.lg,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    backgroundColor: '#ffffff',
+    backgroundColor: ui.colors.surfaceSoft,
     padding: 12,
     gap: 8,
   },
@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: '#e8c8ac',
+    borderColor: ui.colors.accentBorder,
   },
   missionBadgeText: {
     color: ui.colors.textSecondary,
@@ -535,20 +535,20 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    shadowColor: '#1a1712',
+    shadowColor: ui.colors.shadow,
     shadowOpacity: 0.06,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
   cardTonePrimary: {
-    backgroundColor: '#fffdf9',
+    backgroundColor: ui.colors.surfaceSoft,
   },
   cardToneAccent: {
-    backgroundColor: '#f8fbfe',
+    backgroundColor: ui.colors.surfaceAccent,
   },
   cardToneNeutral: {
-    backgroundColor: '#fffcf6',
+    backgroundColor: ui.colors.card,
   },
   cardTopTag: {
     alignSelf: 'flex-start',
@@ -559,11 +559,11 @@ const styles = StyleSheet.create({
   },
   cardTopTagPrimary: {
     backgroundColor: ui.colors.primarySoft,
-    borderColor: '#e8c3ac',
+    borderColor: ui.colors.primaryBorder,
   },
   cardTopTagAccent: {
     backgroundColor: ui.colors.accentSoft,
-    borderColor: '#cfdfe9',
+    borderColor: ui.colors.accentBorder,
   },
   cardTopTagNeutral: {
     backgroundColor: ui.colors.bgMuted,
@@ -597,12 +597,12 @@ const styles = StyleSheet.create({
   badgeReady: {
     color: ui.colors.accent,
     backgroundColor: ui.colors.accentSoft,
-    borderColor: '#cfdfe9',
+    borderColor: ui.colors.accentBorder,
   },
   badgeDraft: {
     color: ui.colors.primaryStrong,
     backgroundColor: ui.colors.primarySoft,
-    borderColor: '#efc9b4',
+    borderColor: ui.colors.primaryBorder,
   },
   cardSubtitle: {
     color: ui.colors.textSecondary,
@@ -634,7 +634,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningText: {
-    color: '#9a5a36',
+    color: ui.colors.primaryStrong,
     fontSize: 12,
     fontWeight: '600',
   },
