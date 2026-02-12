@@ -14,6 +14,7 @@ A powerful AI-driven creative writing platform powered by Cloudflare Workers. Fe
 - 📋 **Automated Outlining**: AI-generated volume and chapter structures
 - 📊 **Character Relationship Graph**: Visual force-directed graph of character relationships
 - ✅ **Multi-dimensional QC**: Automated quality checks with repair loop
+- 🌐 **WebMCP Tools**: Exposes core writing workflows to browser agents via `navigator.modelContext`
 
 ### 🧠 Context Engineering System
 
@@ -158,6 +159,26 @@ Visit: http://localhost:5173
 2. **Generate Characters**: AI creates character profiles with visual references
 3. **Script & Storyboard**: Generate screenplay and visual storyboards per episode
 4. **Video Generation**: Synthesize video clips with Veo (requires API access)
+
+### WebMCP (Chrome)
+
+Novel Copilot now registers page tools when `navigator.modelContext` is available (WebMCP-capable browsers).
+
+Available tools:
+- `novel_get_runtime_status`
+- `novel_list_projects`
+- `novel_get_project`
+- `novel_create_project`
+- `novel_get_chapter`
+- `novel_update_chapter`
+- `novel_create_chapter`
+- `novel_generate_outline`
+- `novel_generate_chapters`
+
+Notes:
+- You must be logged in before most tools can execute.
+- `novel_generate_outline` and `novel_generate_chapters` require AI provider/model/API key to be configured in Settings.
+- Tool registration is page-scoped, so keep the Novel Copilot tab open while the agent is using tools.
 
 ## 🗄️ Database Schema
 

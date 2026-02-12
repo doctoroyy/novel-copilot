@@ -6,6 +6,7 @@ import { AIConfigProvider } from './contexts/AIConfigContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { GenerationProvider } from './contexts/GenerationContext'
 import { ServerEventsProvider } from './contexts/ServerEventsContext'
+import { WebMCPProvider } from './components/WebMCPProvider'
 import './index.css'
 
 // Layout and pages
@@ -106,6 +107,7 @@ createRoot(document.getElementById('root')!).render(
       <AIConfigProvider>
         <GenerationProvider>
           <ServerEventsProvider>
+            <WebMCPProvider />
             <BrowserRouter>
               <Routes>
                 <Route path="/login" element={<LoginRoute />} />
@@ -132,6 +134,5 @@ createRoot(document.getElementById('root')!).render(
     </AuthProvider>
   </StrictMode>,
 )
-
 
 
