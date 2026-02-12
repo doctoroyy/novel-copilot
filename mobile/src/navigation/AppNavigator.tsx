@@ -1,4 +1,4 @@
-import { NavigationContainer, DarkTheme, getFocusedRouteNameFromRoute } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,14 +23,15 @@ const ProjectsStack = createNativeStackNavigator<ProjectsStackParamList>();
 const MainTabs = createBottomTabNavigator<MainTabParamList>();
 
 const appTheme = {
-  ...DarkTheme,
+  ...DefaultTheme,
   colors: {
-    ...DarkTheme.colors,
+    ...DefaultTheme.colors,
     background: ui.colors.bg,
     card: ui.colors.card,
     border: ui.colors.border,
     primary: ui.colors.primary,
     text: ui.colors.text,
+    notification: ui.colors.primary,
   },
 };
 
