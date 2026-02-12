@@ -33,6 +33,15 @@ import { isAIConfigured } from '../../lib/storage';
 import { gradients, ui } from '../../theme/tokens';
 
 type ScreenRoute = RouteProp<ProjectsStackParamList, 'ProjectDetail'>;
+type DetailPanel = 'hub' | 'outline' | 'chapters' | 'summary' | 'studio';
+
+const PANELS: { id: DetailPanel; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { id: 'hub', label: '书籍主页', hint: '总览与导航', icon: 'home-outline' },
+  { id: 'outline', label: '大纲中心', hint: '卷章结构', icon: 'library-outline' },
+  { id: 'chapters', label: '章节库', hint: '正文与复制', icon: 'document-text-outline' },
+  { id: 'summary', label: '剧情摘要', hint: '脉络与待办', icon: 'newspaper-outline' },
+  { id: 'studio', label: '创作台', hint: '生成与控制', icon: 'sparkles-outline' },
+];
 
 export function ProjectDetailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
@@ -47,13 +56,14 @@ export function ProjectDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [activePanel, setActivePanel] = useState<DetailPanel>('hub');
+
   const [outlineModal, setOutlineModal] = useState(false);
   const [outlineChapters, setOutlineChapters] = useState('120');
   const [outlineWordCount, setOutlineWordCount] = useState('30');
   const [outlinePrompt, setOutlinePrompt] = useState('');
 
   const [chapterCount, setChapterCount] = useState('1');
-  const [showMoreActions, setShowMoreActions] = useState(false);
   const [runningAction, setRunningAction] = useState<'outline' | 'generate' | 'reset' | null>(null);
   const [liveMessage, setLiveMessage] = useState<string>('');
 
@@ -93,7 +103,7 @@ export function ProjectDetailScreen() {
       const task = await fetchProjectActiveTask(config.apiBaseUrl, token, projectName);
       setActiveTask(task);
     } catch {
-      // silent: task panel degrades gracefully
+      // graceful degrade
     }
   }, [config.apiBaseUrl, projectName, token]);
 
@@ -130,14 +140,16 @@ export function ProjectDetailScreen() {
   }, [activeTask]);
 
   const chapterCountNum = useMemo(() => Math.max(1, parseInt(chapterCount, 10) || 1), [chapterCount]);
-  const chapterIndices = useMemo(() => (
-    project
-      ? project.chapters
-          .map((file) => parseInt(file.replace(/\.md$/i, ''), 10))
-          .filter((value) => Number.isFinite(value))
-          .sort((a, b) => a - b)
-      : []
-  ), [project]);
+  const chapterIndices = useMemo(
+    () =>
+      project
+        ? project.chapters
+            .map((file) => parseInt(file.replace(/\.md$/i, ''), 10))
+            .filter((value) => Number.isFinite(value))
+            .sort((a, b) => a - b)
+        : [],
+    [project],
+  );
   const canOpenPrevChapter = useMemo(
     () => chapterModalIndex !== null && chapterIndices.includes(chapterModalIndex - 1),
     [chapterIndices, chapterModalIndex],
@@ -147,7 +159,15 @@ export function ProjectDetailScreen() {
     [chapterIndices, chapterModalIndex],
   );
 
-  const actionDockOffset = useMemo(() => (showMoreActions ? 252 : 172), [showMoreActions]);
+  const generatedChapters = useMemo(() => Math.max(0, (project?.state.nextChapterIndex || 1) - 1), [project]);
+  const remainingChapters = useMemo(
+    () => Math.max(0, (project?.state.totalChapters || 0) - generatedChapters),
+    [generatedChapters, project],
+  );
+  const panelLabel = useMemo(
+    () => PANELS.find((panel) => panel.id === activePanel)?.label || '书籍主页',
+    [activePanel],
+  );
 
   const ensureReady = useCallback(() => {
     if (!token) {
@@ -195,6 +215,7 @@ export function ProjectDetailScreen() {
       );
 
       setOutlineModal(false);
+      setActivePanel('outline');
       await loadProject();
     } catch (err) {
       setError((err as Error).message);
@@ -236,6 +257,7 @@ export function ProjectDetailScreen() {
         },
       );
 
+      setActivePanel('chapters');
       await Promise.all([loadProject(), loadTask()]);
     } catch (err) {
       setError((err as Error).message);
@@ -292,25 +314,28 @@ export function ProjectDetailScreen() {
     ]);
   };
 
-  const openChapter = useCallback(async (chapterIndex: number) => {
-    if (!token || !project) return;
+  const openChapter = useCallback(
+    async (chapterIndex: number) => {
+      if (!token || !project) return;
 
-    setChapterModalOpen(true);
-    setChapterModalIndex(chapterIndex);
-    setChapterModalTitle(`${project.name} · 第 ${chapterIndex} 章`);
-    setChapterModalContent('');
-    setChapterModalCopied(false);
-    setChapterLoading(true);
+      setChapterModalOpen(true);
+      setChapterModalIndex(chapterIndex);
+      setChapterModalTitle(`${project.name} · 第 ${chapterIndex} 章`);
+      setChapterModalContent('');
+      setChapterModalCopied(false);
+      setChapterLoading(true);
 
-    try {
-      const content = await fetchChapterContent(config.apiBaseUrl, token, project.name, chapterIndex);
-      setChapterModalContent(content);
-    } catch (err) {
-      setChapterModalContent(`加载失败：${(err as Error).message}`);
-    } finally {
-      setChapterLoading(false);
-    }
-  }, [config.apiBaseUrl, project, token]);
+      try {
+        const content = await fetchChapterContent(config.apiBaseUrl, token, project.name, chapterIndex);
+        setChapterModalContent(content);
+      } catch (err) {
+        setChapterModalContent(`加载失败：${(err as Error).message}`);
+      } finally {
+        setChapterLoading(false);
+      }
+    },
+    [config.apiBaseUrl, project, token],
+  );
 
   const toggleVolumeExpand = (index: number) => {
     setExpandedVolumes((prev) => {
@@ -382,277 +407,490 @@ export function ProjectDetailScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + actionDockOffset }]}>
-        <View style={styles.headerCard}>
-          <View style={styles.headerBadge}>
-            <Ionicons name="compass-outline" size={12} color={ui.colors.primaryStrong} />
-            <Text style={styles.headerBadgeText}>项目驾驶舱</Text>
-          </View>
-          <Text style={styles.projectTitle}>{project.name}</Text>
-          <Text style={styles.projectSub}>进度 {project.state.nextChapterIndex - 1}/{project.state.totalChapters}</Text>
-
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
-          </View>
-
-          <View style={styles.metaRow}>
-            <Meta label="进度" value={`${progressPct}%`} />
-            <Meta label="大纲" value={project.outline ? '已生成' : '未生成'} />
-            <Meta label="需人工" value={project.state.needHuman ? '是' : '否'} />
-          </View>
-        </View>
-
-        {activeTask ? (
-          <View style={styles.taskCard}>
-            <Text style={styles.cardTitle}>当前生成任务</Text>
-            <Text style={styles.taskText}>{activeTask.currentMessage || `第 ${activeTask.currentProgress} 章处理中`}</Text>
-            <View style={styles.taskProgressTrack}>
-              <View style={[styles.taskProgressFill, { width: `${activeTaskPct}%` }]} />
+        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
+          <View style={styles.headerCard}>
+            <View style={styles.headerBadge}>
+              <Ionicons name="sunny-outline" size={12} color={ui.colors.primaryStrong} />
+              <Text style={styles.headerBadgeText}>创作中心</Text>
             </View>
-            <Text style={styles.taskMeta}>{activeTask.completedChapters.length}/{activeTask.targetCount} 完成</Text>
-            <Pressable style={styles.stopBtn} onPress={handleCancelTask}>
-              <Text style={styles.stopBtnText}>停止任务</Text>
-            </Pressable>
-          </View>
-        ) : null}
+            <Text style={styles.projectTitle}>{project.name}</Text>
+            <Text style={styles.projectSub}>已生成 {generatedChapters} 章 · 剩余 {remainingChapters} 章</Text>
 
-        <View style={styles.sectionStack}>
-          <View style={[styles.sectionCard, styles.sectionOutlineCard]}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={[styles.sectionIconBadge, styles.sectionOutlineIcon]}>
-                <Ionicons name="library-outline" size={13} color={ui.colors.accent} />
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+            </View>
+
+            <View style={styles.metaRow}>
+              <Meta label="完成度" value={`${progressPct}%`} />
+              <Meta label="大纲卷数" value={String(project.outline?.volumes.length || 0)} />
+              <Meta label="待复核" value={project.state.needHuman ? '有' : '无'} />
+            </View>
+          </View>
+
+          <View style={styles.breadcrumbRow}>
+            <Ionicons name="git-branch-outline" size={13} color={ui.colors.accent} />
+            <Text style={styles.breadcrumbText}>书库 / {project.name} / {panelLabel}</Text>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.panelNavContent}
+          >
+            {PANELS.map((panel) => {
+              const active = panel.id === activePanel;
+              return (
+                <Pressable
+                  key={panel.id}
+                  style={({ pressed }) => [styles.panelChip, active && styles.panelChipActive, pressed && styles.pressed]}
+                  onPress={() => setActivePanel(panel.id)}
+                >
+                  <Ionicons
+                    name={panel.icon}
+                    size={14}
+                    color={active ? ui.colors.primaryStrong : ui.colors.textSecondary}
+                  />
+                  <View style={styles.panelChipTextWrap}>
+                    <Text style={[styles.panelChipTitle, active && styles.panelChipTitleActive]}>{panel.label}</Text>
+                    <Text style={styles.panelChipHint}>{panel.hint}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {error ? (
+            <View style={styles.errorInline}>
+              <Ionicons name="alert-circle-outline" size={14} color="#fff" />
+              <Text style={styles.errorInlineText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {activeTask && activePanel !== 'studio' ? (
+            <View style={styles.activeTaskHintCard}>
+              <View style={styles.activeTaskHintTextWrap}>
+                <Text style={styles.activeTaskHintTitle}>当前有生成任务在运行</Text>
+                <Text style={styles.activeTaskHintText} numberOfLines={2}>
+                  {activeTask.currentMessage || `已完成 ${activeTask.completedChapters.length}/${activeTask.targetCount}`}
+                </Text>
               </View>
-              <Text style={styles.sectionTitle}>大纲预览</Text>
+              <Pressable style={styles.activeTaskHintBtn} onPress={() => setActivePanel('studio')}>
+                <Text style={styles.activeTaskHintBtnText}>去创作台</Text>
+              </Pressable>
             </View>
-            {!project.outline ? (
-              <Text style={styles.emptyText}>还没有大纲，可通过底部按钮先生成大纲。</Text>
-            ) : (
-              <View style={styles.volumeList}>
-                {project.outline.volumes.map((volume, volIndex) => {
-                  const expanded = expandedVolumes.includes(volIndex);
-                  return (
-                    <View key={`${volume.title}-${volIndex}`} style={styles.volumeCard}>
-                      <Pressable
-                        style={({ pressed }) => [styles.volumeHeader, pressed && styles.pressed]}
-                        onPress={() => toggleVolumeExpand(volIndex)}
-                      >
-                        <View style={styles.volumeHeaderTextWrap}>
-                          <Text style={styles.volumeTitle} numberOfLines={1}>第 {volIndex + 1} 卷 · {volume.title}</Text>
-                          <Text style={styles.volumeMeta}>第 {volume.startChapter}-{volume.endChapter} 章 · {volume.chapters.length} 章</Text>
-                        </View>
-                        <Ionicons
-                          name={expanded ? 'chevron-up' : 'chevron-down'}
-                          size={16}
-                          color={ui.colors.textTertiary}
-                        />
-                      </Pressable>
+          ) : null}
 
-                      {expanded ? (
-                        <View style={styles.volumeBody}>
-                          <Text style={styles.volumeBodyText}>目标：{volume.goal || '暂无'}</Text>
-                          <Text style={styles.volumeBodyText}>冲突：{volume.conflict || '暂无'}</Text>
-                          <Text style={styles.volumeBodyText}>高潮：{volume.climax || '暂无'}</Text>
-                          <View style={styles.volumeChapterList}>
-                            {volume.chapters.map((chapter) => (
-                              <Text key={`${volume.title}-${chapter.index}`} style={styles.volumeChapterText}>
-                                第 {chapter.index} 章：{chapter.title}
+          {activePanel === 'hub' ? (
+            <View style={styles.sectionStack}>
+              <View style={styles.moduleGrid}>
+                <ModuleEntry
+                  icon="library-outline"
+                  title="大纲中心"
+                  desc={project.outline ? `已生成 ${project.outline.volumes.length} 卷` : '尚未生成大纲'}
+                  tone="accent"
+                  onPress={() => setActivePanel('outline')}
+                />
+                <ModuleEntry
+                  icon="document-text-outline"
+                  title="章节库"
+                  desc={`已生成 ${project.chapters.length} 章，可逐章查看`}
+                  tone="warm"
+                  onPress={() => setActivePanel('chapters')}
+                />
+                <ModuleEntry
+                  icon="newspaper-outline"
+                  title="剧情摘要"
+                  desc={project.state.rollingSummary ? '已沉淀滚动摘要' : '暂时还没有摘要'}
+                  tone="sun"
+                  onPress={() => setActivePanel('summary')}
+                />
+                <ModuleEntry
+                  icon="sparkles-outline"
+                  title="创作台"
+                  desc="生成章节、重建大纲、重置项目"
+                  tone="primary"
+                  onPress={() => setActivePanel('studio')}
+                />
+              </View>
+
+              <View style={styles.infoCard}>
+                <Text style={styles.cardTitle}>当前建议路径</Text>
+                <Text style={styles.infoText}>
+                  {!project.outline
+                    ? '先进入创作台生成大纲，再回到章节库持续推进。'
+                    : `当前已具备大纲，建议每次批量生成 ${chapterCountNum} 章并在章节库抽检。`}
+                </Text>
+                <View style={styles.inlineRow}>
+                  {!project.outline ? (
+                    <Pressable
+                      style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
+                      onPress={() => {
+                        setActivePanel('studio');
+                        setOutlineModal(true);
+                      }}
+                    >
+                      <Text style={styles.primaryButtonText}>去生成大纲</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
+                      onPress={() => setActivePanel('chapters')}
+                    >
+                      <Text style={styles.primaryButtonText}>查看章节库</Text>
+                    </Pressable>
+                  )}
+
+                  <Pressable
+                    style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                    onPress={() => void loadProject()}
+                  >
+                    <Text style={styles.ghostButtonText}>刷新数据</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {activePanel === 'outline' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionOutlineCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionOutlineIcon]}>
+                    <Ionicons name="library-outline" size={13} color={ui.colors.accent} />
+                  </View>
+                  <Text style={styles.sectionTitle}>卷章结构</Text>
+                </View>
+                {!project.outline ? (
+                  <>
+                    <Text style={styles.emptyText}>还没有大纲，请先到创作台生成。</Text>
+                    <Pressable
+                      style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
+                      onPress={() => {
+                        setActivePanel('studio');
+                        setOutlineModal(true);
+                      }}
+                    >
+                      <Text style={styles.primaryButtonText}>前往创作台</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <View style={styles.volumeList}>
+                    {project.outline.volumes.map((volume, volIndex) => {
+                      const expanded = expandedVolumes.includes(volIndex);
+                      return (
+                        <View key={`${volume.title}-${volIndex}`} style={styles.volumeCard}>
+                          <Pressable
+                            style={({ pressed }) => [styles.volumeHeader, pressed && styles.pressed]}
+                            onPress={() => toggleVolumeExpand(volIndex)}
+                          >
+                            <View style={styles.volumeHeaderTextWrap}>
+                              <Text style={styles.volumeTitle} numberOfLines={1}>
+                                第 {volIndex + 1} 卷 · {volume.title}
                               </Text>
-                            ))}
-                          </View>
+                              <Text style={styles.volumeMeta}>
+                                第 {volume.startChapter}-{volume.endChapter} 章 · {volume.chapters.length} 章
+                              </Text>
+                            </View>
+                            <Ionicons
+                              name={expanded ? 'chevron-up' : 'chevron-down'}
+                              size={16}
+                              color={ui.colors.textTertiary}
+                            />
+                          </Pressable>
+
+                          {expanded ? (
+                            <View style={styles.volumeBody}>
+                              <Text style={styles.volumeBodyText}>目标：{volume.goal || '暂无'}</Text>
+                              <Text style={styles.volumeBodyText}>冲突：{volume.conflict || '暂无'}</Text>
+                              <Text style={styles.volumeBodyText}>高潮：{volume.climax || '暂无'}</Text>
+                              <View style={styles.volumeChapterList}>
+                                {volume.chapters.map((chapter) => (
+                                  <Text key={`${volume.title}-${chapter.index}`} style={styles.volumeChapterText}>
+                                    第 {chapter.index} 章：{chapter.title}
+                                  </Text>
+                                ))}
+                              </View>
+                            </View>
+                          ) : null}
                         </View>
-                      ) : null}
-                    </View>
-                  );
-                })}
+                      );
+                    })}
+                  </View>
+                )}
               </View>
-            )}
-          </View>
-
-          <View style={[styles.sectionCard, styles.sectionChapterCard]}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={[styles.sectionIconBadge, styles.sectionChapterIcon]}>
-                <Ionicons name="document-text-outline" size={13} color={ui.colors.primaryStrong} />
-              </View>
-              <Text style={styles.sectionTitle}>章节列表</Text>
             </View>
-            <Text style={styles.sectionHint}>点击章节可查看正文预览</Text>
-            {project.chapters.length === 0 ? (
-              <Text style={styles.emptyText}>还没有章节，先生成 1 章试试。</Text>
-            ) : (
-              <View style={styles.chapterList}>
-                {project.chapters.map((file) => {
-                  const index = parseInt(file.replace(/\.md$/i, ''), 10);
-                  return (
-                    <View key={file} style={styles.chapterItem}>
-                      <Pressable
-                        style={({ pressed }) => [styles.chapterMainPressable, pressed && styles.pressed]}
-                        onPress={() => void openChapter(index)}
-                      >
-                        <View style={styles.chapterTextWrap}>
-                          <Text style={styles.chapterTitle}>第 {index} 章</Text>
-                          <Text style={styles.chapterSubTitle}>点击查看正文预览</Text>
+          ) : null}
+
+          {activePanel === 'chapters' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionChapterCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionChapterIcon]}>
+                    <Ionicons name="document-text-outline" size={13} color={ui.colors.primaryStrong} />
+                  </View>
+                  <Text style={styles.sectionTitle}>章节列表</Text>
+                </View>
+                <Text style={styles.sectionHint}>点击章节可查看正文，旁边可一键复制全文。</Text>
+                {project.chapters.length === 0 ? (
+                  <>
+                    <Text style={styles.emptyText}>还没有章节，先去创作台生成 1 章。</Text>
+                    <Pressable
+                      style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
+                      onPress={() => setActivePanel('studio')}
+                    >
+                      <Text style={styles.primaryButtonText}>前往创作台</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <View style={styles.chapterList}>
+                    {project.chapters.map((file) => {
+                      const index = parseInt(file.replace(/\.md$/i, ''), 10);
+                      return (
+                        <View key={file} style={styles.chapterItem}>
+                          <Pressable
+                            style={({ pressed }) => [styles.chapterMainPressable, pressed && styles.pressed]}
+                            onPress={() => void openChapter(index)}
+                          >
+                            <View style={styles.chapterTextWrap}>
+                              <Text style={styles.chapterTitle}>第 {index} 章</Text>
+                              <Text style={styles.chapterSubTitle}>点击查看正文预览</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color={ui.colors.textTertiary} />
+                          </Pressable>
+
+                          <Pressable
+                            style={({ pressed }) => [styles.chapterCopyBtn, pressed && styles.pressed]}
+                            onPress={() => void copyChapter(index)}
+                            disabled={chapterCopyingIndex === index}
+                          >
+                            {chapterCopyingIndex === index ? (
+                              <ActivityIndicator size="small" color={ui.colors.primaryStrong} />
+                            ) : (
+                              <Ionicons
+                                name={chapterCopiedIndex === index ? 'checkmark-done-outline' : 'copy-outline'}
+                                size={14}
+                                color={chapterCopiedIndex === index ? ui.colors.accent : ui.colors.primaryStrong}
+                              />
+                            )}
+                            <Text style={styles.chapterCopyBtnText}>
+                              {chapterCopyingIndex === index ? '复制中' : chapterCopiedIndex === index ? '已复制' : '复制'}
+                            </Text>
+                          </Pressable>
                         </View>
-                        <Ionicons name="chevron-forward" size={18} color={ui.colors.textTertiary} />
-                      </Pressable>
-
-                      <Pressable
-                        style={({ pressed }) => [styles.chapterCopyBtn, pressed && styles.pressed]}
-                        onPress={() => void copyChapter(index)}
-                        disabled={chapterCopyingIndex === index}
-                      >
-                        {chapterCopyingIndex === index ? (
-                          <ActivityIndicator size="small" color={ui.colors.primaryStrong} />
-                        ) : (
-                          <Ionicons
-                            name={chapterCopiedIndex === index ? 'checkmark-done-outline' : 'copy-outline'}
-                            size={14}
-                            color={chapterCopiedIndex === index ? ui.colors.accent : ui.colors.primaryStrong}
-                          />
-                        )}
-                        <Text style={styles.chapterCopyBtnText}>
-                          {chapterCopyingIndex === index ? '复制中' : chapterCopiedIndex === index ? '已复制' : '复制'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  );
-                })}
+                      );
+                    })}
+                  </View>
+                )}
               </View>
-            )}
-          </View>
+            </View>
+          ) : null}
 
-          <View style={[styles.sectionCard, styles.sectionSummaryCard]}>
-            <View style={styles.sectionHeaderRow}>
-              <View style={[styles.sectionIconBadge, styles.sectionSummaryIcon]}>
-                <Ionicons name="newspaper-outline" size={13} color={ui.colors.primaryStrong} />
+          {activePanel === 'summary' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionSummaryCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionSummaryIcon]}>
+                    <Ionicons name="newspaper-outline" size={13} color={ui.colors.primaryStrong} />
+                  </View>
+                  <Text style={styles.sectionTitle}>剧情摘要</Text>
+                </View>
+                <Text style={styles.summaryText}>{project.state.rollingSummary || '暂无摘要'}</Text>
               </View>
-              <Text style={styles.sectionTitle}>剧情摘要</Text>
+
+              <View style={styles.sectionCard}>
+                <Text style={styles.cardTitle}>未闭环线索</Text>
+                {project.state.openLoops.length === 0 ? (
+                  <Text style={styles.emptyText}>暂无未闭环线索。</Text>
+                ) : (
+                  <View style={styles.loopList}>
+                    {project.state.openLoops.map((loop, idx) => (
+                      <View key={`${loop}-${idx}`} style={styles.loopItem}>
+                        <Ionicons name="ellipse" size={8} color={ui.colors.primaryStrong} />
+                        <Text style={styles.loopText}>{loop}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                <View style={styles.reviewCard}>
+                  <Text style={styles.reviewTitle}>人工复核</Text>
+                  <Text style={styles.reviewText}>
+                    {project.state.needHuman
+                      ? `需要处理：${project.state.needHumanReason || '请检查剧情一致性与角色状态。'}`
+                      : '当前无需人工介入。'}
+                  </Text>
+                </View>
+              </View>
             </View>
-            <Text style={styles.summaryText}>{project.state.rollingSummary || '暂无摘要'}</Text>
-          </View>
-        </View>
-      </ScrollView>
+          ) : null}
 
-      {error ? <Text style={[styles.errorBar, { bottom: insets.bottom + actionDockOffset + 10 }]}>{error}</Text> : null}
+          {activePanel === 'studio' ? (
+            <View style={styles.sectionStack}>
+              {activeTask ? (
+                <View style={styles.taskCard}>
+                  <Text style={styles.cardTitle}>当前生成任务</Text>
+                  <Text style={styles.taskText}>{activeTask.currentMessage || `第 ${activeTask.currentProgress} 章处理中`}</Text>
+                  <View style={styles.taskProgressTrack}>
+                    <View style={[styles.taskProgressFill, { width: `${activeTaskPct}%` }]} />
+                  </View>
+                  <Text style={styles.taskMeta}>
+                    {activeTask.completedChapters.length}/{activeTask.targetCount} 完成
+                  </Text>
+                  <Pressable style={styles.stopBtn} onPress={handleCancelTask}>
+                    <Text style={styles.stopBtnText}>停止任务</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
-      <View style={[styles.actionDock, { paddingBottom: insets.bottom + 8 }]}>
-        <View style={styles.actionTopRow}>
-          <View style={styles.countStepper}>
-            <Pressable
-              style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
-              onPress={() => adjustChapterCount(-1)}
-              disabled={runningAction !== null}
-            >
-              <Ionicons name="remove" size={16} color={ui.colors.primaryStrong} />
-            </Pressable>
-            <Text style={styles.stepValue}>{chapterCountNum}</Text>
-            <Pressable
-              style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
-              onPress={() => adjustChapterCount(1)}
-              disabled={runningAction !== null}
-            >
-              <Ionicons name="add" size={16} color={ui.colors.primaryStrong} />
-            </Pressable>
-          </View>
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionSummaryIcon]}>
+                    <Ionicons name="sparkles-outline" size={13} color={ui.colors.primaryStrong} />
+                  </View>
+                  <Text style={styles.sectionTitle}>生成控制台</Text>
+                </View>
 
-          <Pressable
-            style={({ pressed }) => [styles.primaryDockBtn, pressed && styles.pressed]}
-            onPress={() => (project.outline ? void handleGenerateChapters() : setOutlineModal(true))}
-            disabled={runningAction !== null}
-          >
-            {runningAction === 'generate' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryDockBtnText}>{project.outline ? '继续生成章节' : '先生成大纲'}</Text>
-            )}
-          </Pressable>
+                <View style={styles.studioRow}>
+                  <View style={styles.countStepper}>
+                    <Pressable
+                      style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+                      onPress={() => adjustChapterCount(-1)}
+                      disabled={runningAction !== null}
+                    >
+                      <Ionicons name="remove" size={16} color={ui.colors.primaryStrong} />
+                    </Pressable>
+                    <Text style={styles.stepValue}>{chapterCountNum}</Text>
+                    <Pressable
+                      style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+                      onPress={() => adjustChapterCount(1)}
+                      disabled={runningAction !== null}
+                    >
+                      <Ionicons name="add" size={16} color={ui.colors.primaryStrong} />
+                    </Pressable>
+                  </View>
 
-          <Pressable
-            style={({ pressed }) => [styles.moreBtn, pressed && styles.pressed]}
-            onPress={() => setShowMoreActions((prev) => !prev)}
-          >
-            <Ionicons name={showMoreActions ? 'chevron-down' : 'chevron-up'} size={18} color={ui.colors.textSecondary} />
-            <Text style={styles.moreBtnText}>更多</Text>
-          </Pressable>
-        </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.primaryDockBtn, pressed && styles.pressed]}
+                    onPress={() => (project.outline ? void handleGenerateChapters() : setOutlineModal(true))}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === 'generate' ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryDockBtnText}>{project.outline ? '生成章节' : '先生成大纲'}</Text>
+                    )}
+                  </Pressable>
+                </View>
 
-        {showMoreActions ? (
-          <View style={styles.moreActionGrid}>
-            <Pressable style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]} onPress={() => void loadProject()}>
-              <Text style={styles.ghostButtonText}>刷新数据</Text>
-            </Pressable>
-            <Pressable style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]} onPress={() => setOutlineModal(true)}>
-              <Text style={styles.ghostButtonText}>{project.outline ? '重建大纲' : '生成大纲'}</Text>
-            </Pressable>
-            <Pressable style={({ pressed }) => [styles.warnButton, pressed && styles.pressed]} onPress={handleResetProject} disabled={runningAction !== null}>
-              {runningAction === 'reset' ? <ActivityIndicator color="#fff" /> : <Text style={styles.warnButtonText}>重置项目</Text>}
-            </Pressable>
-            {activeTask ? (
-              <Pressable style={({ pressed }) => [styles.warnButton, styles.stopBtnWide, pressed && styles.pressed]} onPress={handleCancelTask}>
-                <Text style={styles.warnButtonText}>停止任务</Text>
-              </Pressable>
-            ) : (
-              <View style={styles.morePlaceholder} />
-            )}
-          </View>
-        ) : null}
+                <View style={styles.studioRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                    onPress={() => void loadProject()}
+                  >
+                    <Text style={styles.ghostButtonText}>刷新数据</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                    onPress={() => setOutlineModal(true)}
+                  >
+                    <Text style={styles.ghostButtonText}>{project.outline ? '重建大纲' : '生成大纲'}</Text>
+                  </Pressable>
+                </View>
 
-        {runningAction ? <Text style={styles.liveText}>{liveMessage || '处理中...'}</Text> : null}
-      </View>
+                <View style={styles.studioRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.warnButton, pressed && styles.pressed]}
+                    onPress={handleResetProject}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === 'reset' ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.warnButtonText}>重置项目</Text>
+                    )}
+                  </Pressable>
+                  {activeTask ? (
+                    <Pressable
+                      style={({ pressed }) => [styles.warnButton, styles.stopBtnWide, pressed && styles.pressed]}
+                      onPress={handleCancelTask}
+                    >
+                      <Text style={styles.warnButtonText}>停止任务</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={styles.morePlaceholder} />
+                  )}
+                </View>
 
-      <Modal visible={outlineModal} animationType="slide" transparent onRequestClose={() => setOutlineModal(false)}>
-        <View style={styles.modalMask}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>大纲参数</Text>
-            <Text style={styles.inputLabel}>目标章节数</Text>
-            <TextInput
-              value={outlineChapters}
-              onChangeText={setOutlineChapters}
-              style={styles.input}
-              keyboardType="number-pad"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+                {runningAction ? <Text style={styles.liveText}>{liveMessage || '处理中...'}</Text> : null}
+              </View>
+            </View>
+          ) : null}
+        </ScrollView>
 
-            <Text style={styles.inputLabel}>目标字数（万字）</Text>
-            <TextInput
-              value={outlineWordCount}
-              onChangeText={setOutlineWordCount}
-              style={styles.input}
-              keyboardType="number-pad"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+        <Modal visible={outlineModal} animationType="slide" transparent onRequestClose={() => setOutlineModal(false)}>
+          <View style={styles.modalMask}>
+            <View style={styles.modalSheet}>
+              <Text style={styles.modalTitle}>大纲参数</Text>
+              <Text style={styles.inputLabel}>目标章节数</Text>
+              <TextInput
+                value={outlineChapters}
+                onChangeText={setOutlineChapters}
+                style={styles.input}
+                keyboardType="number-pad"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <Text style={styles.inputLabel}>额外要求（可选）</Text>
-            <TextInput
-              value={outlinePrompt}
-              onChangeText={setOutlinePrompt}
-              style={[styles.input, styles.inputArea]}
-              multiline
-              textAlignVertical="top"
-              placeholder="如：增加群像线、提高悬疑感"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>目标字数（万字）</Text>
+              <TextInput
+                value={outlineWordCount}
+                onChangeText={setOutlineWordCount}
+                style={styles.input}
+                keyboardType="number-pad"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <View style={styles.inlineRow}>
-              <Pressable style={styles.ghostButton} onPress={() => setOutlineModal(false)}>
-                <Text style={styles.ghostButtonText}>取消</Text>
-              </Pressable>
-              <Pressable style={styles.primaryButtonCompact} onPress={() => void handleGenerateOutline()} disabled={runningAction !== null}>
-                {runningAction === 'outline' ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>开始生成</Text>}
-              </Pressable>
+              <Text style={styles.inputLabel}>额外要求（可选）</Text>
+              <TextInput
+                value={outlinePrompt}
+                onChangeText={setOutlinePrompt}
+                style={[styles.input, styles.inputArea]}
+                multiline
+                textAlignVertical="top"
+                placeholder="如：增加群像线、提高悬疑感"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+
+              <View style={styles.inlineRow}>
+                <Pressable style={styles.ghostButton} onPress={() => setOutlineModal(false)}>
+                  <Text style={styles.ghostButtonText}>取消</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.primaryButtonCompact}
+                  onPress={() => void handleGenerateOutline()}
+                  disabled={runningAction !== null}
+                >
+                  {runningAction === 'outline' ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>开始生成</Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      <Modal
-        visible={chapterModalOpen}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setChapterModalOpen(false)}
-      >
-        <SafeAreaView style={[styles.chapterSafeArea, { paddingTop: insets.top }]} edges={['bottom']}>
+        <Modal
+          visible={chapterModalOpen}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setChapterModalOpen(false)}
+        >
+          <SafeAreaView style={[styles.chapterSafeArea, { paddingTop: insets.top }]} edges={['bottom']}>
             <View style={styles.chapterHeader}>
-              <Text style={styles.chapterHeaderTitle} numberOfLines={1}>{chapterModalTitle}</Text>
+              <Text style={styles.chapterHeaderTitle} numberOfLines={1}>
+                {chapterModalTitle}
+              </Text>
               <View style={styles.chapterHeaderActions}>
                 <Pressable
                   onPress={() => void openAdjacentChapter('prev')}
@@ -688,8 +926,8 @@ export function ProjectDetailScreen() {
                 <Text style={styles.chapterContent}>{chapterModalContent || '章节内容为空'}</Text>
               )}
             </ScrollView>
-        </SafeAreaView>
-      </Modal>
+          </SafeAreaView>
+        </Modal>
       </LinearGradient>
     </SafeAreaView>
   );
@@ -704,6 +942,42 @@ function Meta({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ModuleEntry({
+  icon,
+  title,
+  desc,
+  tone,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  desc: string;
+  tone: 'warm' | 'accent' | 'sun' | 'primary';
+  onPress: () => void;
+}) {
+  const toneStyle =
+    tone === 'accent'
+      ? styles.moduleCardAccent
+      : tone === 'sun'
+        ? styles.moduleCardSun
+        : tone === 'primary'
+          ? styles.moduleCardPrimary
+          : styles.moduleCardWarm;
+
+  return (
+    <Pressable style={({ pressed }) => [styles.moduleCard, toneStyle, pressed && styles.pressed]} onPress={onPress}>
+      <View style={styles.moduleTopRow}>
+        <View style={styles.moduleIconWrap}>
+          <Ionicons name={icon} size={14} color={ui.colors.primaryStrong} />
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={ui.colors.textTertiary} />
+      </View>
+      <Text style={styles.moduleTitle}>{title}</Text>
+      <Text style={styles.moduleDesc}>{desc}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -714,7 +988,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 14,
-    paddingBottom: 100,
     gap: 12,
   },
   centerBox: {
@@ -727,16 +1000,16 @@ const styles = StyleSheet.create({
     color: ui.colors.textSecondary,
   },
   headerCard: {
-    backgroundColor: '#fff9f1',
+    backgroundColor: ui.colors.surfaceWarm,
     borderRadius: ui.radius.lg,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#e7d7c4',
+    borderColor: ui.colors.border,
     gap: 10,
-    shadowColor: '#1a1712',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    shadowColor: ui.colors.shadow,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
   headerBadge: {
@@ -747,7 +1020,7 @@ const styles = StyleSheet.create({
     borderRadius: ui.radius.pill,
     backgroundColor: ui.colors.primarySoft,
     borderWidth: 1,
-    borderColor: '#e8c3ac',
+    borderColor: ui.colors.primaryBorder,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
@@ -798,218 +1071,180 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 2,
   },
-  taskCard: {
-    backgroundColor: ui.colors.infoSoft,
+  breadcrumbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  breadcrumbText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  panelNavContent: {
+    gap: 8,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+  },
+  panelChip: {
+    minWidth: 118,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.card,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  panelChipActive: {
+    borderColor: ui.colors.primaryBorder,
+    backgroundColor: ui.colors.surfaceSun,
+    shadowColor: ui.colors.primaryStrong,
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  panelChipTextWrap: {
+    flex: 1,
+  },
+  panelChipTitle: {
+    color: ui.colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  panelChipTitleActive: {
+    color: ui.colors.primaryStrong,
+  },
+  panelChipHint: {
+    color: ui.colors.textTertiary,
+    fontSize: 10,
+    marginTop: 1,
+  },
+  errorInline: {
+    borderRadius: ui.radius.md,
+    backgroundColor: ui.colors.danger,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  errorInlineText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  activeTaskHintCard: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.accentBorder,
+    backgroundColor: ui.colors.surfaceAccent,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  activeTaskHintTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  activeTaskHintTitle: {
+    color: ui.colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  activeTaskHintText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+  },
+  activeTaskHintBtn: {
+    borderRadius: ui.radius.sm,
+    backgroundColor: ui.colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: 'center',
+  },
+  activeTaskHintBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  sectionStack: {
+    gap: 12,
+  },
+  moduleGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  moduleCard: {
+    width: '48.5%',
+    minHeight: 118,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    padding: 10,
+    gap: 8,
+  },
+  moduleCardWarm: {
+    backgroundColor: ui.colors.surfaceSoft,
+  },
+  moduleCardAccent: {
+    backgroundColor: ui.colors.surfaceAccent,
+  },
+  moduleCardSun: {
+    backgroundColor: ui.colors.surfaceWarm,
+  },
+  moduleCardPrimary: {
+    backgroundColor: ui.colors.surfaceSun,
+    borderColor: ui.colors.primaryBorder,
+  },
+  moduleTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  moduleIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: ui.colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moduleTitle: {
+    color: ui.colors.text,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  moduleDesc: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  infoCard: {
+    backgroundColor: ui.colors.card,
     borderRadius: ui.radius.lg,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
     padding: 12,
     gap: 8,
-    borderWidth: 1,
-    borderColor: '#c6d8e9',
   },
   cardTitle: {
     color: ui.colors.text,
     fontSize: 16,
     fontWeight: '800',
   },
-  taskText: {
+  infoText: {
     color: ui.colors.textSecondary,
     fontSize: 13,
-  },
-  taskProgressTrack: {
-    height: 9,
-    borderRadius: ui.radius.pill,
-    backgroundColor: '#cddbeb',
-    overflow: 'hidden',
-  },
-  taskProgressFill: {
-    height: '100%',
-    backgroundColor: ui.colors.info,
-  },
-  taskMeta: {
-    color: ui.colors.textSecondary,
-    fontSize: 12,
-  },
-  stopBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: ui.colors.danger,
-    borderRadius: ui.radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    minHeight: 36,
-    justifyContent: 'center',
-  },
-  stopBtnText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  actionCard: {
-    backgroundColor: ui.colors.card,
-    borderRadius: ui.radius.lg,
-    padding: 12,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-  },
-  primaryButton: {
-    backgroundColor: ui.colors.primary,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButtonCompact: {
-    flex: 1,
-    backgroundColor: ui.colors.primary,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButtonText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  inlineRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  countInput: {
-    width: 68,
-    backgroundColor: '#fff',
-    borderRadius: ui.radius.md,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    color: ui.colors.text,
-    textAlign: 'center',
-    fontSize: 16,
-    minHeight: 44,
-  },
-  ghostButton: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    backgroundColor: ui.colors.cardAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ghostButtonText: {
-    color: ui.colors.textSecondary,
-    fontWeight: '700',
-  },
-  warnButton: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    backgroundColor: ui.colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  warnButtonText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  liveText: {
-    color: ui.colors.accent,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  actionDock: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 0,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    backgroundColor: ui.colors.card,
-    paddingTop: 10,
-    paddingHorizontal: 10,
-    gap: 8,
-    shadowColor: '#1a1712',
-    shadowOpacity: 0.09,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 5,
-  },
-  actionTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  countStepper: {
-    width: 96,
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    borderRadius: ui.radius.md,
-    backgroundColor: ui.colors.cardAlt,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 6,
-  },
-  stepBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: ui.colors.card,
-  },
-  stepValue: {
-    color: ui.colors.text,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  primaryDockBtn: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    backgroundColor: ui.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: ui.colors.primaryStrong,
-    shadowOpacity: 0.14,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  primaryDockBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  moreBtn: {
-    width: 58,
-    minHeight: 44,
-    borderRadius: ui.radius.md,
-    borderWidth: 1,
-    borderColor: ui.colors.border,
-    backgroundColor: ui.colors.cardAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-  },
-  moreBtnText: {
-    color: ui.colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  moreActionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  stopBtnWide: {
-    backgroundColor: ui.colors.danger,
-  },
-  morePlaceholder: {
-    flex: 1,
-    minHeight: 44,
+    lineHeight: 20,
   },
   sectionCard: {
     backgroundColor: ui.colors.card,
@@ -1018,14 +1253,11 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: ui.colors.border,
-    shadowColor: '#1a1712',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowColor: ui.colors.shadow,
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
-  },
-  sectionStack: {
-    gap: 12,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -1054,14 +1286,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   sectionOutlineCard: {
-    backgroundColor: '#f6f9fd',
-    borderColor: '#d5e3ee',
+    backgroundColor: ui.colors.surfaceAccent,
+    borderColor: ui.colors.accentBorder,
   },
   sectionChapterCard: {
-    backgroundColor: '#fffdf9',
+    backgroundColor: ui.colors.surfaceSoft,
   },
   sectionSummaryCard: {
-    backgroundColor: '#fffbf4',
+    backgroundColor: ui.colors.surfaceWarm,
   },
   sectionHint: {
     color: ui.colors.textSecondary,
@@ -1128,13 +1360,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chapterItem: {
-    backgroundColor: '#fffdf9',
+    backgroundColor: ui.colors.surfaceSoft,
     borderRadius: ui.radius.sm,
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 56,
     borderWidth: 1,
-    borderColor: '#e3d8ca',
+    borderColor: ui.colors.border,
     overflow: 'hidden',
   },
   chapterMainPressable: {
@@ -1179,17 +1411,180 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontSize: 14,
   },
-  errorBar: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 14,
-    color: '#fff',
-    backgroundColor: ui.colors.danger,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  loopList: {
+    gap: 6,
+  },
+  loopItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  loopText: {
+    flex: 1,
+    color: ui.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  reviewCard: {
+    marginTop: 4,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    padding: 10,
+    gap: 4,
+  },
+  reviewTitle: {
+    color: ui.colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  reviewText: {
+    color: ui.colors.textSecondary,
     fontSize: 12,
+    lineHeight: 18,
+  },
+  taskCard: {
+    backgroundColor: ui.colors.infoSoft,
+    borderRadius: ui.radius.lg,
+    padding: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: ui.colors.accentBorder,
+  },
+  taskText: {
+    color: ui.colors.textSecondary,
+    fontSize: 13,
+  },
+  taskProgressTrack: {
+    height: 9,
+    borderRadius: ui.radius.pill,
+    backgroundColor: ui.colors.accentSoft,
+    overflow: 'hidden',
+  },
+  taskProgressFill: {
+    height: '100%',
+    backgroundColor: ui.colors.info,
+  },
+  taskMeta: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+  },
+  stopBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: ui.colors.danger,
+    borderRadius: ui.radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: 'center',
+  },
+  stopBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  studioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inlineRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  countStepper: {
+    width: 102,
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    borderRadius: ui.radius.md,
+    backgroundColor: ui.colors.cardAlt,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+  },
+  stepBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: ui.colors.card,
+  },
+  stepValue: {
+    color: ui.colors.text,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  primaryDockBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: ui.radius.md,
+    backgroundColor: ui.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: ui.colors.primaryStrong,
+    shadowOpacity: 0.14,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  primaryDockBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  primaryButtonCompact: {
+    flex: 1,
+    backgroundColor: ui.colors.primary,
+    minHeight: 44,
+    borderRadius: ui.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  ghostButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ghostButtonText: {
+    color: ui.colors.textSecondary,
+    fontWeight: '700',
+  },
+  warnButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: ui.radius.md,
+    backgroundColor: ui.colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warnButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  stopBtnWide: {
+    backgroundColor: ui.colors.danger,
+  },
+  morePlaceholder: {
+    flex: 1,
+    minHeight: 44,
+  },
+  liveText: {
+    color: ui.colors.accent,
+    fontSize: 12,
+    marginTop: 2,
   },
   modalMask: {
     flex: 1,
