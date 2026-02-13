@@ -8,7 +8,7 @@ export function useQueuedTasks(params: {
   enabled?: boolean;
   pollIntervalMs?: number;
 }) {
-  const { apiBaseUrl, token, enabled = true, pollIntervalMs = 10000 } = params; // 10 seconds default instead of 4
+  const { apiBaseUrl, token, enabled = true, pollIntervalMs = 10000 } = params; // 10 seconds default instead of 4 seconds
   const [tasks, setTasks] = useState<QueuedTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

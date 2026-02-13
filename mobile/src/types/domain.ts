@@ -89,7 +89,7 @@ export type QueuedTask = {
   projectId: string;
   projectName: string;
   userId: string;
-  params: any;
+  params: ChapterTaskParams | OutlineTaskParams;
   aiConfig: {
     provider: string;
     model: string;
@@ -104,6 +104,16 @@ export type QueuedTask = {
   updatedAt: number;
   startedAt?: number;
   completedAt?: number;
+};
+
+export type ChapterTaskParams = {
+  chaptersToGenerate: number;
+};
+
+export type OutlineTaskParams = {
+  targetChapters: number;
+  targetWordCount: number;
+  customPrompt?: string;
 };
 
 export type AnimeProject = {

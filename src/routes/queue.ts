@@ -16,7 +16,13 @@ function getAIConfigFromHeaders(c: any) {
     return null;
   }
 
-  return { provider: provider as any, model, apiKey, baseUrl };
+  // Validate provider
+  const validProviders = ['gemini', 'openai', 'deepseek', 'custom'];
+  if (!validProviders.includes(provider)) {
+    return null;
+  }
+
+  return { provider: provider as 'gemini' | 'openai' | 'deepseek' | 'custom', model, apiKey, baseUrl };
 }
 
 // Enqueue a chapter generation task
