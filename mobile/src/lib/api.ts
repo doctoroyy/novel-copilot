@@ -1,10 +1,11 @@
 import type {
-  AIConfig,
   AnimeEpisode,
   AnimeProject,
   ApiSuccess,
+  CreditFeature,
   GenerationStreamEvent,
   GenerationTask,
+  ModelRegistry,
   NovelOutline,
   OutlineStreamEvent,
   ProjectDetail,
@@ -23,15 +24,7 @@ function authHeaders(token: string | null): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-function aiHeaders(ai?: AIConfig): Record<string, string> {
-  if (!ai || !ai.provider || !ai.model || !ai.apiKey) return {};
-  return {
-    'X-AI-Provider': ai.provider,
-    'X-AI-Model': ai.model,
-    'X-AI-Key': ai.apiKey,
-    ...(ai.baseUrl ? { 'X-AI-BaseUrl': ai.baseUrl } : {}),
-  };
-}
+// aiHeaders function removed
 
 async function parseJsonResponse<T>(response: Response): Promise<ApiSuccess<T>> {
   const json = (await response.json().catch(() => ({ success: false, error: `HTTP ${response.status}` }))) as ApiSuccess<T>;
@@ -150,6 +143,27 @@ export async function resetProject(
   if (!json.success) throw new Error(json.error || 'Failed to reset project');
 }
 
+export async function generateBible(
+  apiBaseUrl: string,
+  token: string,
+  genre: string,
+  theme: string,
+  keywords: string,
+): Promise<string> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/bible/generate'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({ genre, theme, keywords }),
+  });
+
+  const json = await parseJsonResponse<{ bible: string }>(res);
+  if (!json.success || !json.bible) throw new Error(json.error || 'Failed to generate bible');
+  return json.bible;
+}
+
 async function parseSSE(
   response: Response,
   onEvent: (event: any) => void,
@@ -251,7 +265,6 @@ export async function generateOutlineStream(
     targetWordCount: number;
     customPrompt?: string;
   },
-  ai: AIConfig,
   onEvent: (event: OutlineStreamEvent) => void,
 ): Promise<NovelOutline> {
   const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/outline`), {
@@ -259,7 +272,6 @@ export async function generateOutlineStream(
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(token),
-      ...aiHeaders(ai),
     },
     body: JSON.stringify(payload),
   });
@@ -292,7 +304,6 @@ export async function generateChaptersStream(
   token: string,
   projectName: string,
   payload: { chaptersToGenerate: number },
-  ai: AIConfig,
   onEvent: (event: GenerationStreamEvent) => void,
 ): Promise<{ generated: { chapter: number; title: string }[]; failedChapters: number[] }> {
   const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/generate-stream`), {
@@ -300,7 +311,6 @@ export async function generateChaptersStream(
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(token),
-      ...aiHeaders(ai),
     },
     body: JSON.stringify(payload),
   });
@@ -463,7 +473,6 @@ export async function generateAnimeEpisodes(
   apiBaseUrl: string,
   token: string,
   animeProjectId: string,
-  ai: AIConfig,
   options?: { startEpisode?: number; endEpisode?: number },
 ): Promise<void> {
   const res = await fetch(buildApiUrl(apiBaseUrl, `/anime/projects/${encodeURIComponent(animeProjectId)}/generate`), {
@@ -471,7 +480,6 @@ export async function generateAnimeEpisodes(
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(token),
-      ...aiHeaders(ai),
     },
     body: JSON.stringify({
       ...(options?.startEpisode ? { startEpisode: options.startEpisode } : {}),
@@ -482,3 +490,97 @@ export async function generateAnimeEpisodes(
   const json = await parseJsonResponse<Record<string, never>>(res);
   if (!json.success) throw new Error(json.error || 'Failed to start anime generation');
 }
+
+// Admin API
+
+export async function fetchModelRegistry(
+  apiBaseUrl: string,
+  token: string,
+): Promise<ModelRegistry[]> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/admin/model-registry'), {
+    headers: authHeaders(token),
+  });
+  const json = await parseJsonResponse<{ models: ModelRegistry[] }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch model registry');
+  return json.models || [];
+}
+
+export async function createModel(
+  apiBaseUrl: string,
+  token: string,
+  model: Partial<ModelRegistry>,
+): Promise<{ id: string }> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/admin/model-registry'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(model),
+  });
+  const json = await parseJsonResponse<{ id: string }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to create model');
+  return { id: json.id! };
+}
+
+export async function updateModel(
+  apiBaseUrl: string,
+  token: string,
+  id: string,
+  updates: Partial<ModelRegistry>,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/admin/model-registry/${id}`), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(updates),
+  });
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to update model');
+}
+
+export async function deleteModel(
+  apiBaseUrl: string,
+  token: string,
+  id: string,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/admin/model-registry/${id}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to delete model');
+}
+
+export async function fetchAdminCreditFeatures(
+  apiBaseUrl: string,
+  token: string,
+): Promise<CreditFeature[]> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/admin/credit-features'), {
+    headers: authHeaders(token),
+  });
+  const json = await parseJsonResponse<{ features: CreditFeature[] }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch credit features');
+  return json.features || [];
+}
+
+export async function updateCreditFeature(
+  apiBaseUrl: string,
+  token: string,
+  key: string,
+  updates: Partial<CreditFeature>,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/admin/credit-features/${key}`), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(updates),
+  });
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to update credit feature');
+}
+

@@ -36,6 +36,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
 
     return c.json({ success: true, tasks: formatted });
   } catch (error) {
+    console.error('Active tasks error:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
@@ -216,15 +217,16 @@ export async function updateTaskProgress(
       UPDATE generation_tasks 
       SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(failedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
+    `).bind(JSON.stringify(failedChapters), failedChapters.length + (JSON.parse(task.completed_chapters || '[]').length), message || `第 ${completedChapter} 章生成失败`, taskId).run();
   } else {
     const completedChapters = JSON.parse(task.completed_chapters || '[]');
     completedChapters.push(completedChapter);
+    const progressCount = completedChapters.length;
     await db.prepare(`
       UPDATE generation_tasks 
       SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(completedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
+    `).bind(JSON.stringify(completedChapters), progressCount, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
 }
 
@@ -280,11 +282,16 @@ export async function updateTaskMessage(
   currentChapter?: number
 ): Promise<void> {
   if (currentChapter !== undefined) {
+    // Fetch start_chapter to calculate relative progress
+    const task = await db.prepare('SELECT start_chapter FROM generation_tasks WHERE id = ?').bind(taskId).first() as { start_chapter: number } | null;
+    const startChapter = task?.start_chapter || 1;
+    const relativeProgress = Math.max(0, currentChapter - startChapter);
+
     await db.prepare(`
       UPDATE generation_tasks 
       SET current_message = ?, current_progress = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(message, currentChapter, taskId).run();
+    `).bind(message, relativeProgress, taskId).run();
   } else {
     await db.prepare(`
       UPDATE generation_tasks 

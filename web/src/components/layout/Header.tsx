@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
+import { CreditDisplay } from '@/components/CreditDisplay';
 import type { ProjectDetail } from '@/lib/api';
 import { 
   PanelLeftOpen, 
@@ -89,6 +90,7 @@ export function Header({
               <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
             </>
           )}
+          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline ml-1">设置</span>
@@ -157,6 +159,7 @@ export function Header({
             <span className="hidden lg:inline">删除</span>
           </Button>
           <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1">
             <Settings className="h-4 w-4" />
             <span className="hidden lg:inline">设置</span>

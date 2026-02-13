@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useMemo, t
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import { useGeneration } from '@/contexts/GenerationContext';
-import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import { useAIConfig } from '@/hooks/useAIConfig';
 import {
   fetchProjects,
   fetchProject,
@@ -299,11 +299,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Project handlers
   const handleCreateProject = useCallback(async (name: string, bible: string, chapters: string) => {
     if (!name.trim()) return;
-    if (!isConfigured) {
-      setError('请先配置 AI API Key');
-      setShowSettingsDialog(true);
-      return;
-    }
     
     setLoading(true);
     try {
@@ -347,15 +342,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     setGeneratingOutline(true);
     try {
-      const headers = getAIConfigHeaders(config);
-      await generateOutline(selectedProject.name, parseInt(chapters), parseInt(wordCount), customPrompt, headers);
+      await generateOutline(selectedProject.name, parseInt(chapters), parseInt(wordCount), customPrompt);
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setGeneratingOutline(false);
     }
-  }, [selectedProject, config, isConfigured, loadProject]);
+  }, [selectedProject, isConfigured, loadProject]);
 
   const handleGenerateChapters = useCallback(async (count: string) => {
     if (!selectedProject || !isConfigured) return;
@@ -366,7 +360,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     startGeneration(selectedProject.name, chapterCount);
     
     try {
-      const headers = getAIConfigHeaders(config);
       await generateChaptersWithProgress(
         selectedProject.name,
         chapterCount,
@@ -408,13 +401,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             setError(error);
           },
         },
-        headers
       );
     } catch (err) {
       completeGeneration();
       setError((err as Error).message);
     }
-  }, [selectedProject, config, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime]);
+  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -496,16 +488,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     setLoading(true);
     try {
-      const headers = getAIConfigHeaders(config);
       // generateBible API: (genre?, theme?, keywords?, aiHeaders?)
-      await generateBible(undefined, undefined, undefined, headers);
+      await generateBible(undefined, undefined, undefined);
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [selectedProject, config, isConfigured, loadProject]);
+  }, [selectedProject, isConfigured, loadProject]);
 
   const value: ProjectContextType = {
     projects,

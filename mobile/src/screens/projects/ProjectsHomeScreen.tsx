@@ -21,6 +21,7 @@ import { useAppConfig } from '../../contexts/AppConfigContext';
 import { gradients, ui } from '../../theme/tokens';
 import type { ProjectSummary } from '../../types/domain';
 import type { ProjectsStackParamList } from '../../types/navigation';
+import { generateBible } from '../../lib/api';
 
 export function ProjectsHomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
@@ -38,6 +39,13 @@ export function ProjectsHomeScreen() {
   const [newBible, setNewBible] = useState('');
   const [newChapters, setNewChapters] = useState('120');
   const [creating, setCreating] = useState(false);
+
+  // AI Bible Generation State
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiGenre, setAiGenre] = useState('');
+  const [aiTheme, setAiTheme] = useState('');
+  const [aiKeywords, setAiKeywords] = useState('');
+  const [generatingBible, setGeneratingBible] = useState(false);
 
   const loadProjects = useCallback(async (isRefresh = false) => {
     if (!token) return;
@@ -102,6 +110,29 @@ export function ProjectsHomeScreen() {
       setError((err as Error).message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleGenerateBible = async () => {
+    if (!token) return;
+    if (!aiGenre.trim()) {
+      setError('请输入小说类型');
+      return;
+    }
+
+    setGeneratingBible(true);
+    try {
+      const bible = await generateBible(config.apiBaseUrl, token, aiGenre, aiTheme, aiKeywords);
+      setNewBible(bible);
+      setShowAiModal(false);
+      // Reset AI fields
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setGeneratingBible(false);
     }
   };
 
@@ -262,7 +293,16 @@ export function ProjectsHomeScreen() {
               placeholderTextColor={ui.colors.textTertiary}
             />
 
-            <Text style={styles.inputLabel}>故事设定（Bible）</Text>
+            <View style={styles.labelRow}>
+              <Text style={styles.inputLabel}>故事设定 (Bible)</Text>
+              <Pressable 
+                style={({ pressed }) => [styles.aiBtn, pressed && styles.pressed]} 
+                onPress={() => setShowAiModal(true)}
+              >
+                <Ionicons name="sparkles" size={12} color={ui.colors.primary} />
+                <Text style={styles.aiBtnText}>AI 帮你想象</Text>
+              </Pressable>
+            </View>
             <TextInput
               value={newBible}
               onChangeText={setNewBible}
@@ -279,6 +319,56 @@ export function ProjectsHomeScreen() {
               </Pressable>
               <Pressable style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} onPress={() => void handleCreate()} disabled={creating}>
                 {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>创建</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showAiModal} animationType="slide" transparent onRequestClose={() => setShowAiModal(false)}>
+        <View style={styles.modalMask}>
+          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.modalTitle}>AI 辅助设定</Text>
+            <Text style={styles.modalSubtitle}>输入关键词，AI 帮你生成完整世界观</Text>
+
+            <Text style={styles.inputLabel}>类型 (必填)</Text>
+            <TextInput
+              value={aiGenre}
+              onChangeText={setAiGenre}
+              style={styles.input}
+              placeholder="例如：玄幻、赛博朋克、都市重生..."
+              placeholderTextColor={ui.colors.textTertiary}
+            />
+
+            <Text style={styles.inputLabel}>核心主题</Text>
+            <TextInput
+              value={aiTheme}
+              onChangeText={setAiTheme}
+              style={styles.input}
+              placeholder="例如：复仇、成长、探索..."
+              placeholderTextColor={ui.colors.textTertiary}
+            />
+
+            <Text style={styles.inputLabel}>关键词</Text>
+            <TextInput
+              value={aiKeywords}
+              onChangeText={setAiKeywords}
+              style={styles.input}
+              placeholder="例如：系统、剑道、无敌..."
+              placeholderTextColor={ui.colors.textTertiary}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={() => setShowAiModal(false)}>
+                <Text style={styles.ghostBtnText}>取消</Text>
+              </Pressable>
+              <Pressable 
+                style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} 
+                onPress={() => void handleGenerateBible()} 
+                disabled={generatingBible}
+              >
+                {generatingBible ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>生成设定</Text>}
               </Pressable>
             </View>
           </View>
@@ -689,6 +779,32 @@ const styles = StyleSheet.create({
     color: ui.colors.textSecondary,
     fontSize: 13,
     marginTop: 2,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  aiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: ui.colors.primarySoft,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: ui.radius.sm,
+  },
+  aiBtnText: {
+    color: ui.colors.primaryStrong,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  modalSubtitle: {
+    color: ui.colors.textSecondary,
+    fontSize: 13,
+    marginTop: -4,
+    marginBottom: 8,
   },
   input: {
     backgroundColor: ui.colors.cardAlt,

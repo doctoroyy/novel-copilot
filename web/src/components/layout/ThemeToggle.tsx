@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { useTheme, COLOR_THEMES, type ColorTheme } from '@/hooks/useTheme';
+import { useTheme, COLOR_THEMES, type ColorTheme } from '@/contexts/ThemeContext';
 import { Sun, Moon, Monitor, Check, Palette } from 'lucide-react';
 
 export function ThemeToggle() {

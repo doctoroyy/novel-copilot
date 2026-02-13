@@ -11,6 +11,7 @@ import { ProjectsHomeScreen } from '../screens/projects/ProjectsHomeScreen';
 import { SettingsScreen } from '../screens/settings/SettingsScreen';
 import { useAuth } from '../contexts/AuthContext';
 import { BootScreen } from '../components/BootScreen';
+import { AdminScreen } from '../screens/admin/AdminScreen';
 import { ui } from '../theme/tokens';
 import type {
   MainTabParamList,
@@ -152,7 +153,10 @@ export function AppNavigator() {
     <NavigationContainer theme={appTheme}>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {isLoggedIn ? (
-          <RootStack.Screen name="AppFlow" component={MainTabNavigator} />
+          <>
+            <RootStack.Screen name="AppFlow" component={MainTabNavigator} />
+            <RootStack.Screen name="AdminPanel" component={AdminScreen} options={{ animation: 'slide_from_bottom' }} />
+          </>
         ) : (
           <RootStack.Screen name="AuthFlow" component={AuthScreen} />
         )}

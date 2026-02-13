@@ -18,7 +18,6 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { useState } from 'react';
-import { getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { generateBible as apiBible } from '@/lib/api';
 
 function ProjectLayoutInner() {
@@ -50,8 +49,6 @@ function ProjectLayoutInner() {
     handleDeleteProject,
     handleRefresh,
     handleDownloadBook,
-    config,
-    isConfigured,
   } = useProject();
 
   // New project form state (local to layout)
@@ -68,8 +65,7 @@ function ProjectLayoutInner() {
     if (!aiGenre.trim()) return;
     setGeneratingBible(true);
     try {
-      const headers = getAIConfigHeaders(config);
-      const result = await apiBible(aiGenre, aiTheme, aiKeywords, headers);
+      const result = await apiBible(aiGenre, aiTheme, aiKeywords);
       if (result) {
         setNewProjectBible(result);
       }
@@ -246,7 +242,7 @@ function ProjectLayoutInner() {
                 variant="outline" 
                 size="sm"
                 onClick={handleGenerateBibleForNew}
-                disabled={generatingBible || !aiGenre.trim() || !isConfigured}
+                disabled={generatingBible || !aiGenre.trim()}
                 className="flex items-center gap-2"
               >
                 <Sparkles className="h-4 w-4" />

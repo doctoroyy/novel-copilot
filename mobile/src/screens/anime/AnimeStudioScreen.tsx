@@ -23,7 +23,7 @@ import {
   fetchProjects,
   generateAnimeEpisodes,
 } from '../../lib/api';
-import { isAIConfigured } from '../../lib/storage';
+// isAIConfigured import removed
 import { gradients, ui } from '../../theme/tokens';
 import type { AnimeEpisode, AnimeProject, ProjectSummary } from '../../types/domain';
 
@@ -46,7 +46,7 @@ export function AnimeStudioScreen() {
   const [episodesInput, setEpisodesInput] = useState('60');
   const [error, setError] = useState<string | null>(null);
 
-  const aiReady = useMemo(() => isAIConfigured(config.ai), [config.ai]);
+  // aiReady removed as AI is server-side
   const animeProjectName = useMemo(
     () => (selectedProjectName ? `anime-${selectedProjectName}` : ''),
     [selectedProjectName],
@@ -120,10 +120,7 @@ export function AnimeStudioScreen() {
 
   const handleCreateAnimeProject = async () => {
     if (!token || !selectedProjectName) return;
-    if (!aiReady) {
-      setError('请先在设置中完成 AI 配置');
-      return;
-    }
+    // aiReady check removed
 
     setCreating(true);
     setError(null);
@@ -161,14 +158,11 @@ export function AnimeStudioScreen() {
 
   const handleGenerateAll = async () => {
     if (!token || !animeProject) return;
-    if (!aiReady) {
-      setError('请先在设置中完成 AI 配置');
-      return;
-    }
+    // aiReady check removed
 
     setGeneratingAll(true);
     try {
-      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id, config.ai);
+      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id);
       await loadAll(true);
     } catch (err) {
       setError((err as Error).message);
@@ -179,14 +173,11 @@ export function AnimeStudioScreen() {
 
   const handleGenerateEpisode = async (episodeNum: number) => {
     if (!token || !animeProject) return;
-    if (!aiReady) {
-      setError('请先在设置中完成 AI 配置');
-      return;
-    }
+    // aiReady check removed
 
     setGeneratingEpisode(episodeNum);
     try {
-      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id, config.ai, {
+      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id, {
         startEpisode: episodeNum,
         endEpisode: episodeNum,
       });
@@ -215,6 +206,8 @@ export function AnimeStudioScreen() {
     if (status === 'pending') return styles.statusPending;
     return styles.statusRunning;
   };
+  
+  // ... (rest of the file)
 
   if (loading) {
     return (

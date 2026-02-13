@@ -1,8 +1,5 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -11,16 +8,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { useAIConfig, PROVIDER_MODELS, type AIProvider } from '@/hooks/useAIConfig';
 import { useAuth } from '@/contexts/AuthContext';
-import { testAIConnection } from '@/lib/api';
+import { Bot, Shield, Zap } from 'lucide-react';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -28,219 +17,45 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { config, saveConfig, getProviderSettings, loaded } = useAIConfig();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  
-  // Form state
-  const [provider, setProvider] = useState<AIProvider>('gemini');
-  const [model, setModel] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
-
-  // Load from config when dialog opens (only once when opened)
-  useEffect(() => {
-    if (open && loaded) {
-      setProvider(config.provider);
-      setModel(config.model);
-      setBaseUrl(config.baseUrl || '');
-      setApiKey(config.apiKey || ''); // Pre-fill with current key
-      setTestResult(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, loaded]); // Removed config dependency - we only want to load on dialog open
-
-  const handleSave = () => {
-    // Save the key exactly as entered/shown
-    const keyToSave = apiKey.trim();
-    
-    if (!keyToSave) {
-      setTestResult({ success: false, message: '请输入 API Key' });
-      return;
-    }
-    
-    const newConfig = {
-      provider,
-      model,
-      apiKey: keyToSave,
-      baseUrl: baseUrl || undefined,
-    };
-    saveConfig(newConfig);
-    setTestResult({ success: true, message: '配置已保存到本地' });
-    // Auto-close the dialog after successful save
-    setTimeout(() => onOpenChange(false), 500);
-  };
-
-  const handleTest = async () => {
-    try {
-      setTesting(true);
-      setTestResult(null);
-      
-      const testApiKey = apiKey.trim();
-      
-      if (!testApiKey) {
-        setTestResult({ success: false, message: '请先输入 API Key' });
-        return;
-      }
-      
-      const result = await testAIConnection({
-        provider,
-        model,
-        apiKey: testApiKey,
-        baseUrl: baseUrl || undefined,
-      });
-      setTestResult(result);
-    } catch (err) {
-      setTestResult({ success: false, message: (err as Error).message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  // Get available models for current provider
-  const availableModels = PROVIDER_MODELS[provider] || [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg glass-card w-[95vw] sm:w-full">
+      <DialogContent className="max-w-md glass-card w-[95vw] sm:w-full">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
             <span>⚙️</span>
-            <span>AI 设置</span>
+            <span>设置</span>
           </DialogTitle>
           <DialogDescription className="text-sm">
-            配置 AI Provider 和 API Key（保存在本地浏览器）
+            AI 配置由管理员统一管理
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Provider Selection */}
-          <div className="space-y-2">
-            <Label className="text-sm">Provider</Label>
-            <Select 
-              value={provider} 
-              onValueChange={(val) => {
-                const newProvider = val as AIProvider;
-                setProvider(newProvider);
-                // Restore saved settings for this provider
-                const savedSettings = getProviderSettings(newProvider);
-                setModel(savedSettings.model || PROVIDER_MODELS[newProvider]?.[0] || '');
-                setBaseUrl(savedSettings.baseUrl || '');
-                setApiKey(savedSettings.apiKey || ''); // Restore API key
-              }}
-            >
-              <SelectTrigger className="bg-muted/50 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="gemini">🔷 Gemini (Google)</SelectItem>
-                <SelectItem value="openai">🟢 OpenAI</SelectItem>
-                <SelectItem value="deepseek">🔵 DeepSeek</SelectItem>
-                <SelectItem value="custom">⚡ Custom (OpenAI 兼容)</SelectItem>
-              </SelectContent>
-            </Select>
+          {/* AI Status */}
+          <div className="p-4 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-3 mb-2">
+              <Bot className="h-5 w-5 text-primary" />
+              <span className="font-medium text-sm">AI 模型配置</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              AI 模型和 API Key 由管理员在后台统一配置，
+              无需手动设置。如需调整模型，请联系管理员。
+            </p>
           </div>
 
-          {/* Model Selection */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm">Model</Label>
-              <span className="text-xs text-muted-foreground">可选择或自定义输入</span>
+          {/* Credit Info */}
+          <div className="p-4 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-3 mb-2">
+              <Zap className="h-5 w-5 text-amber-500" />
+              <span className="font-medium text-sm">创作能量</span>
             </div>
-            <div className="flex gap-2">
-              <Input
-                placeholder="输入或选择模型名称"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="flex-1 bg-muted/50 text-sm"
-                list="model-options"
-              />
-              {availableModels.length > 0 && (
-                <datalist id="model-options">
-                  {availableModels.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              )}
-            </div>
-            {availableModels.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {availableModels.slice(0, 5).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setModel(m)}
-                    className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-                      model === m 
-                        ? 'bg-primary text-primary-foreground' 
-                        : 'bg-muted/50 hover:bg-muted text-muted-foreground'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-                {availableModels.length > 5 && (
-                  <span className="text-xs text-muted-foreground px-2">+{availableModels.length - 5} more</span>
-                )}
-              </div>
-            )}
+            <p className="text-xs text-muted-foreground">
+              使用 AI 功能会消耗创作能量。点击顶栏的⚡图标可查看余额和消费记录。
+            </p>
           </div>
-
-          {/* Base URL (for custom/openai-compatible) */}
-          {(provider === 'custom' || provider === 'openai' || provider === 'deepseek') && (
-            <div className="space-y-2">
-              <Label className="text-sm">Base URL（可选）</Label>
-              <Input
-                placeholder={
-                  provider === 'openai' ? 'https://api.openai.com/v1' :
-                  provider === 'deepseek' ? 'https://api.deepseek.com/v1' :
-                  'https://your-api.com/v1'
-                }
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                className="bg-muted/50 text-sm"
-              />
-            </div>
-          )}
-
-          {/* API Key */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm">API Key</Label>
-            </div>
-            <div className="flex gap-2">
-              <Input
-                type={showApiKey ? 'text' : 'password'}
-                placeholder="请输入 API Key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="flex-1 bg-muted/50 text-sm"
-                list="api-key-history"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="shrink-0"
-              >
-                {showApiKey ? '🙈' : '👁️'}
-              </Button>
-            </div>
-          </div>
-
-          {/* Test Result */}
-          {testResult && (
-            <div className={`p-3 rounded-lg text-xs sm:text-sm ${
-              testResult.success 
-                ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
-                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-            }`}>
-              {testResult.success ? '✅' : '❌'} {testResult.message}
-            </div>
-          )}
         </div>
 
         <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -253,22 +68,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               }}
               className="w-full sm:w-auto text-sm mr-auto"
             >
-              🛡️ 管理后台
+              <Shield className="h-4 w-4 mr-1.5" />
+              管理后台
             </Button>
           )}
           <Button
             variant="outline"
-            onClick={handleTest}
-            disabled={testing}
+            onClick={() => onOpenChange(false)}
             className="w-full sm:w-auto text-sm"
           >
-            {testing ? '⏳ 测试中...' : '🔌 测试连接'}
-          </Button>
-          <Button
-            onClick={handleSave}
-            className="gradient-bg hover:opacity-90 w-full sm:w-auto text-sm"
-          >
-            💾 保存配置
+            关闭
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -171,8 +171,8 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
     ? `${config.apiKey.slice(0, 8)}...${config.apiKey.slice(-4)}`
     : '';
 
-  // Check if config is valid
-  const isConfigured = !!(config.apiKey && config.model);
+  // AI config is now server-managed via Model Registry — always considered configured
+  const isConfigured = true;
 
   return (
     <AIConfigContext.Provider value={{ 
@@ -197,15 +197,10 @@ export function useAIConfig() {
   return context;
 }
 
-// Helper to get config headers for API requests
-export function getAIConfigHeaders(config: AIConfig): Record<string, string> {
-  const headers: Record<string, string> = {};
-  
-  if (config.provider) headers['X-AI-Provider'] = config.provider;
-  if (config.model) headers['X-AI-Model'] = config.model;
-  if (config.apiKey) headers['X-AI-Key'] = config.apiKey;
-  if (config.baseUrl) headers['X-AI-BaseUrl'] = config.baseUrl;
-  
-  return headers;
+// AI config is now managed server-side via Model Registry.
+// This function returns empty headers to maintain backward compatibility
+// with existing call sites across the frontend.
+export function getAIConfigHeaders(_config?: AIConfig): Record<string, string> {
+  return {};
 }
 

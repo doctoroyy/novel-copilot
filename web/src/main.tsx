@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { GenerationProvider } from './contexts/GenerationContext'
 import { ServerEventsProvider } from './contexts/ServerEventsContext'
 import { WebMCPProvider } from './components/WebMCPProvider'
+import { ThemeProvider } from './contexts/ThemeContext'
 import './index.css'
 
 // Layout and pages
@@ -107,8 +108,9 @@ createRoot(document.getElementById('root')!).render(
       <AIConfigProvider>
         <GenerationProvider>
           <ServerEventsProvider>
-            <WebMCPProvider />
-            <BrowserRouter>
+            <ThemeProvider>
+              <WebMCPProvider />
+              <BrowserRouter>
               <Routes>
                 <Route path="/login" element={<LoginRoute />} />
                 <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
@@ -128,6 +130,7 @@ createRoot(document.getElementById('root')!).render(
                 </Route>
               </Routes>
             </BrowserRouter>
+            </ThemeProvider>
           </ServerEventsProvider>
         </GenerationProvider>
       </AIConfigProvider>

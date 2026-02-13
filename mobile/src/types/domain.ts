@@ -2,6 +2,7 @@ export type User = {
   id: string;
   username: string;
   role?: string;
+  credit_balance?: number;
   createdAt?: string;
   lastLoginAt?: string;
 };
@@ -114,7 +115,6 @@ export type AIConfig = {
 
 export type AppConfig = {
   apiBaseUrl: string;
-  ai: AIConfig;
 };
 
 export type ApiSuccess<T> =
@@ -181,3 +181,29 @@ export type OutlineStreamEvent = {
   outline?: NovelOutline;
   success?: boolean;
 };
+
+export type ModelRegistry = {
+  id: string;
+  provider: string;
+  model_name: string;
+  display_name: string;
+  api_key?: string;
+  base_url?: string;
+  credit_multiplier: number;
+  is_active: boolean; // SQLite stores boolean as 0/1, but API might return boolean or number. Let's assume API normalizes it or check usage.
+  is_default: boolean;
+  capabilities: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreditFeature = {
+  key: string;
+  name: string;
+  description: string;
+  base_cost: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+

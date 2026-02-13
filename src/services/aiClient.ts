@@ -521,3 +521,40 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
     baseUrl,
   };
 }
+
+/**
+ * Get AI config from Model Registry (server-side, admin-configured)
+ * Returns the default active model's config
+ */
+export async function getAIConfigFromRegistry(db: D1Database): Promise<AIConfig | null> {
+  try {
+    const model = await db.prepare(
+      'SELECT * FROM model_registry WHERE is_default = 1 AND is_active = 1 LIMIT 1'
+    ).first() as any;
+
+    if (!model) {
+      // Fallback to any active model
+      const fallback = await db.prepare(
+        'SELECT * FROM model_registry WHERE is_active = 1 LIMIT 1'
+      ).first() as any;
+      if (!fallback) return null;
+      return {
+        provider: fallback.provider as AIProvider,
+        model: fallback.model_name,
+        apiKey: fallback.api_key_encrypted || '',
+        baseUrl: fallback.base_url || undefined,
+      };
+    }
+
+    return {
+      provider: model.provider as AIProvider,
+      model: model.model_name,
+      apiKey: model.api_key_encrypted || '',
+      baseUrl: model.base_url || undefined,
+    };
+  } catch (error) {
+    console.error('Failed to get AI config from registry:', error);
+    return null;
+  }
+}
+
