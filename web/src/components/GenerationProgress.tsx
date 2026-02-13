@@ -61,7 +61,18 @@ export function GenerationProgress({
   
   if (!isGenerating) return null;
   
-  const progress = total > 0 ? (current / total) * 100 : 0;
+  // Calculate progress based on completed chapters (current - 1)
+  // If status is 'done', force 100%
+  let percentage = 0;
+  if (status === 'done') {
+    percentage = 100;
+  } else if (total > 0) {
+    // current is 1-based index of the chapter being generated
+    const completed = Math.max(0, current - 1);
+    percentage = (completed / total) * 100;
+  }
+  
+  const progress = Math.min(100, Math.max(0, percentage));
   const estimatedTotalTime = current > 0 ? (elapsedTime / current) * total : 0;
   const remainingTime = Math.max(0, Math.floor(estimatedTotalTime - elapsedTime));
   
