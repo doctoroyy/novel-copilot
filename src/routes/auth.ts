@@ -86,7 +86,7 @@ authRoutes.post('/login', async (c) => {
 
     // Find user
     const user = await c.env.DB.prepare(`
-      SELECT id, username, password_hash, role FROM users WHERE username = ?
+      SELECT id, username, password_hash, role, allow_custom_provider FROM users WHERE username = ?
     `).bind(username).first();
 
     if (!user) {
@@ -113,7 +113,12 @@ authRoutes.post('/login', async (c) => {
 
     return c.json({
       success: true,
-      user: { id: (user as any).id, username: (user as any).username, role: (user as any).role || 'user' },
+      user: { 
+        id: (user as any).id, 
+        username: (user as any).username, 
+        role: (user as any).role || 'user',
+        allowCustomProvider: !!(user as any).allow_custom_provider,
+      },
       token,
     });
   } catch (error) {
