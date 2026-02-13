@@ -2,10 +2,10 @@
 -- Run with: wrangler d1 execute novel-copilot-db --local --file=migrations/0005_credit_system.sql
 
 -- 1. Add credit fields to users table
-ALTER TABLE users ADD COLUMN credit_balance INTEGER DEFAULT 150;
-ALTER TABLE users ADD COLUMN vip_type TEXT DEFAULT 'free';
-ALTER TABLE users ADD COLUMN vip_expire_at DATETIME DEFAULT NULL;
-ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1;
+-- ALTER TABLE users ADD COLUMN credit_balance INTEGER DEFAULT 150;
+-- ALTER TABLE users ADD COLUMN vip_type TEXT DEFAULT 'free';
+-- ALTER TABLE users ADD COLUMN vip_expire_at DATETIME DEFAULT NULL;
+-- ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1;
 
 -- 2. Credit Features table (功能定价配置)
 CREATE TABLE IF NOT EXISTS credit_features (

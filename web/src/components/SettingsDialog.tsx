@@ -34,17 +34,81 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* AI Status */}
-          <div className="p-4 rounded-lg border bg-muted/30">
-            <div className="flex items-center gap-3 mb-2">
-              <Bot className="h-5 w-5 text-primary" />
-              <span className="font-medium text-sm">AI 模型配置</span>
+          {/* Custom AI Config (Only for whitelisted users) */}
+          {user?.allowCustomProvider && (
+            <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
+              <div className="flex items-center gap-3">
+                <Bot className="h-5 w-5 text-primary" />
+                <span className="font-medium text-sm">自定义模型配置</span>
+              </div>
+              
+              <div className="grid gap-3">
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium">提供商 (Provider)</label>
+                  <input
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="openai, anthropic"
+                    defaultValue={localStorage.getItem('ai_provider') || ''}
+                    onChange={(e) => {
+                      if (e.target.value) localStorage.setItem('ai_provider', e.target.value);
+                      else localStorage.removeItem('ai_provider');
+                    }}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium">模型名称 (Model)</label>
+                  <input
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="gpt-4o, claude-3-5-sonnet"
+                    defaultValue={localStorage.getItem('ai_model') || ''}
+                    onChange={(e) => {
+                      if (e.target.value) localStorage.setItem('ai_model', e.target.value);
+                      else localStorage.removeItem('ai_model');
+                    }}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium">API Base URL</label>
+                  <input
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="https://api.openai.com/v1"
+                    defaultValue={localStorage.getItem('ai_base_url') || ''}
+                    onChange={(e) => {
+                      if (e.target.value) localStorage.setItem('ai_base_url', e.target.value);
+                      else localStorage.removeItem('ai_base_url');
+                    }}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium">API Key</label>
+                  <input
+                    type="password"
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="sk-..."
+                    defaultValue={localStorage.getItem('ai_api_key') || ''}
+                    onChange={(e) => {
+                      if (e.target.value) localStorage.setItem('ai_api_key', e.target.value);
+                      else localStorage.removeItem('ai_api_key');
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              AI 模型和 API Key 由管理员在后台统一配置，
-              无需手动设置。如需调整模型，请联系管理员。
-            </p>
-          </div>
+          )}
+
+          {/* AI Status (Default - only show if NOT using custom or for non-whitelisted) */}
+          {(!user?.allowCustomProvider) && (
+            <div className="p-4 rounded-lg border bg-muted/30">
+              <div className="flex items-center gap-3 mb-2">
+                <Bot className="h-5 w-5 text-primary" />
+                <span className="font-medium text-sm">AI 模型配置</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                AI 模型和 API Key 由管理员在后台统一配置，
+                无需手动设置。如需调整模型，请联系管理员。
+              </p>
+            </div>
+          )}
 
           {/* Credit Info */}
           <div className="p-4 rounded-lg border bg-muted/30">

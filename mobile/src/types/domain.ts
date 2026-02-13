@@ -3,6 +3,7 @@ export type User = {
   username: string;
   role?: string;
   credit_balance?: number;
+  allow_custom_provider?: boolean;
   createdAt?: string;
   lastLoginAt?: string;
 };
@@ -115,6 +116,12 @@ export type AIConfig = {
 
 export type AppConfig = {
   apiBaseUrl: string;
+  ai?: {
+    provider: string;
+    model: string;
+    baseUrl?: string;
+    apiKey?: string;
+  };
 };
 
 export type ApiSuccess<T> =

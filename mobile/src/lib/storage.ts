@@ -41,14 +41,67 @@ export async function clearToken(): Promise<void> {
 
 export async function loadAppConfig(): Promise<AppConfig> {
   const apiBaseUrlRaw = await AsyncStorage.getItem(STORAGE_KEYS.apiBaseUrl);
+  
+  // Load AI config
+  const aiProvider = await AsyncStorage.getItem(STORAGE_KEYS.aiProvider);
+  const aiModel = await AsyncStorage.getItem(STORAGE_KEYS.aiModel);
+  const aiBaseUrl = await AsyncStorage.getItem(STORAGE_KEYS.aiBaseUrl);
+  const aiApiKey = Platform.OS === 'web' 
+    ? await AsyncStorage.getItem(SECURE_KEYS.aiApiKey)
+    : await SecureStore.getItemAsync(SECURE_KEYS.aiApiKey);
 
-  return {
+  const config: AppConfig = {
     apiBaseUrl: normalizeApiBaseUrl(apiBaseUrlRaw || DEFAULT_API_BASE_URL),
   };
+
+  if (aiProvider && aiModel) {
+    config.ai = {
+      provider: aiProvider,
+      model: aiModel,
+      baseUrl: aiBaseUrl || undefined,
+      apiKey: aiApiKey || undefined,
+    };
+  }
+
+  return config;
 }
 
 export async function saveAppConfig(config: AppConfig): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEYS.apiBaseUrl, normalizeApiBaseUrl(config.apiBaseUrl));
+  
+  if (config.ai) {
+    await AsyncStorage.setItem(STORAGE_KEYS.aiProvider, config.ai.provider);
+    await AsyncStorage.setItem(STORAGE_KEYS.aiModel, config.ai.model);
+    if (config.ai.baseUrl) {
+      await AsyncStorage.setItem(STORAGE_KEYS.aiBaseUrl, config.ai.baseUrl);
+    } else {
+      await AsyncStorage.removeItem(STORAGE_KEYS.aiBaseUrl);
+    }
+    
+    if (config.ai.apiKey) {
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(SECURE_KEYS.aiApiKey, config.ai.apiKey);
+      } else {
+        await SecureStore.setItemAsync(SECURE_KEYS.aiApiKey, config.ai.apiKey);
+      }
+    } else {
+      if (Platform.OS === 'web') {
+        await AsyncStorage.removeItem(SECURE_KEYS.aiApiKey);
+      } else {
+        await SecureStore.deleteItemAsync(SECURE_KEYS.aiApiKey);
+      }
+    }
+  } else {
+     // If ai config is removed/cleared, clean up storage
+    await AsyncStorage.removeItem(STORAGE_KEYS.aiProvider);
+    await AsyncStorage.removeItem(STORAGE_KEYS.aiModel);
+    await AsyncStorage.removeItem(STORAGE_KEYS.aiBaseUrl);
+    if (Platform.OS === 'web') {
+      await AsyncStorage.removeItem(SECURE_KEYS.aiApiKey);
+    } else {
+      await SecureStore.deleteItemAsync(SECURE_KEYS.aiApiKey);
+    }
+  }
 }
 
 export function sanitizeAppConfig(config: AppConfig): AppConfig {

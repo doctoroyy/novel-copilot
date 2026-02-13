@@ -6,6 +6,8 @@ export interface User {
   id: string;
   username: string;
   role?: string;
+  creditBalance?: number;
+  allowCustomProvider?: boolean;
   createdAt?: string;
   lastLoginAt?: string;
 }
@@ -46,10 +48,26 @@ export function isAuthenticated(): boolean {
 // Get auth headers
 export function getAuthHeaders(): Record<string, string> {
   const token = getToken();
-  if (!token) return {};
-  return {
-    'Authorization': `Bearer ${token}`,
-  };
+  const headers: Record<string, string> = {};
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Add custom AI config if exists
+  if (typeof window !== 'undefined') {
+    const aiProvider = localStorage.getItem('ai_provider');
+    const aiModel = localStorage.getItem('ai_model');
+    const aiBaseUrl = localStorage.getItem('ai_base_url');
+    const aiApiKey = localStorage.getItem('ai_api_key');
+
+    if (aiProvider) headers['x-custom-provider'] = aiProvider;
+    if (aiModel) headers['x-custom-model'] = aiModel;
+    if (aiBaseUrl) headers['x-custom-base-url'] = aiBaseUrl;
+    if (aiApiKey) headers['x-custom-api-key'] = aiApiKey;
+  }
+  
+  return headers;
 }
 
 // Register with invitation code

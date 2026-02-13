@@ -122,7 +122,14 @@ export function ProjectsHomeScreen() {
 
     setGeneratingBible(true);
     try {
-      const bible = await generateBible(config.apiBaseUrl, token, aiGenre, aiTheme, aiKeywords);
+      const bible = await generateBible(
+        config.apiBaseUrl,
+        token,
+        aiGenre,
+        aiTheme,
+        aiKeywords,
+        config.ai
+      );
       setNewBible(bible);
       setShowAiModal(false);
       // Reset AI fields
