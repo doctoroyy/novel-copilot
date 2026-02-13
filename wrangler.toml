@@ -9,6 +9,7 @@ compatibility_flags = ["nodejs_compat", "no_handle_cross_request_promise_resolut
 binding = "DB"
 database_name = "novel-copilot-db"
 database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
+migrations_dir = "migrations"
 
 # Development settings
 [dev]
