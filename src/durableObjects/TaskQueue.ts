@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import type { Env } from '../worker.js';
 
 export interface QueuedTask {
   id: string;
@@ -23,11 +24,11 @@ export interface QueuedTask {
   completedAt?: number;
 }
 
-export class TaskQueue extends DurableObject {
+export class TaskQueue extends DurableObject<Env> {
   private tasks: Map<string, QueuedTask> = new Map();
   private processingTaskId: string | null = null;
 
-  constructor(state: DurableObjectState, env: any) {
+  constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.ctx.blockConcurrencyWhile(async () => {
       const stored = await this.ctx.storage.get<Map<string, QueuedTask>>('tasks');
@@ -52,8 +53,8 @@ export class TaskQueue extends DurableObject {
       } else if (path === '/dequeue' && request.method === 'POST') {
         return this.dequeue();
       } else if (path === '/update' && request.method === 'POST') {
-        const { taskId, updates } = await request.json();
-        return this.updateTask(taskId, updates);
+        const body = await request.json() as { taskId: string; updates: Partial<QueuedTask> };
+        return this.updateTask(body.taskId, body.updates);
       } else if (path === '/get' && request.method === 'GET') {
         const taskId = url.searchParams.get('taskId');
         return this.getTask(taskId);
@@ -61,11 +62,11 @@ export class TaskQueue extends DurableObject {
         const userId = url.searchParams.get('userId');
         return this.listTasks(userId);
       } else if (path === '/delete' && request.method === 'POST') {
-        const { taskId } = await request.json();
-        return this.deleteTask(taskId);
+        const body = await request.json() as { taskId: string };
+        return this.deleteTask(body.taskId);
       } else if (path === '/cancel' && request.method === 'POST') {
-        const { taskId } = await request.json();
-        return this.cancelTask(taskId);
+        const body = await request.json() as { taskId: string };
+        return this.cancelTask(body.taskId);
       }
 
       return new Response('Not found', { status: 404 });

@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { QueuedTask } from './TaskQueue.js';
 import type { Env } from '../worker.js';
+import type { AIConfig } from '../services/aiClient.js';
 
 export class TaskProcessor extends DurableObject<Env> {
   private isProcessing = false;
@@ -125,7 +126,7 @@ export class TaskProcessor extends DurableObject<Env> {
     const { projectId, userId } = task;
 
     // Import generation logic
-    const { writeEnhancedChapter } = await import('../enhancedChapterEngine.js');
+    const { writeOneChapter } = await import('../generateChapter.js');
     const { createGenerationTask, updateTaskProgress, completeTask, updateTaskMessage } = await import('../routes/tasks.js');
 
     // Get project with state and outline
@@ -207,49 +208,38 @@ export class TaskProcessor extends DurableObject<Env> {
 
         const recentChaptersText = (lastChapters as any[])
           .reverse()
-          .map((c: any) => c.content)
-          .join('\n\n---\n\n');
+          .map((c: any) => c.content);
 
         // Generate chapter
-        const newChapter = await writeEnhancedChapter({
-          aiConfig: task.aiConfig,
-          projectName: task.projectName,
+        const result = await writeOneChapter({
+          aiConfig: task.aiConfig as AIConfig,
           bible: project.bible,
+          rollingSummary: project.rolling_summary || '',
+          openLoops: JSON.parse(project.open_loops || '[]'),
+          lastChapters: recentChaptersText,
           chapterIndex,
-          currentState: {
-            bookTitle: project.book_title,
-            totalChapters: project.total_chapters,
-            nextChapterIndex: project.next_chapter_index,
-            rollingSummary: project.rolling_summary,
-            openLoops: JSON.parse(project.open_loops || '[]'),
-            needHuman: !!project.need_human,
-            needHumanReason: project.need_human_reason || undefined,
-          },
-          recentChaptersText,
+          totalChapters: project.total_chapters,
           chapterGoalHint,
-          outlineTitle,
-          outline: outline || undefined,
+          chapterTitle: outlineTitle,
           characters,
-          db: this.env.DB,
         });
 
         // Save chapter
         await this.env.DB.prepare(`
           INSERT INTO chapters (project_id, chapter_index, content)
           VALUES (?, ?, ?)
-        `).bind(project.id, chapterIndex, newChapter.content).run();
+        `).bind(project.id, chapterIndex, result.chapterText).run();
 
-        // Update state
+        // Update state - compute next state
+        const nextChapterIndex = chapterIndex + 1;
         await this.env.DB.prepare(`
           UPDATE states 
-          SET next_chapter_index = ?, rolling_summary = ?, open_loops = ?, need_human = ?, need_human_reason = ?
+          SET next_chapter_index = ?, rolling_summary = ?, open_loops = ?
           WHERE project_id = ?
         `).bind(
-          newChapter.newState.nextChapterIndex,
-          newChapter.newState.rollingSummary,
-          JSON.stringify(newChapter.newState.openLoops),
-          newChapter.newState.needHuman ? 1 : 0,
-          newChapter.newState.needHumanReason || null,
+          nextChapterIndex,
+          result.updatedSummary,
+          JSON.stringify(result.updatedOpenLoops),
           project.id
         ).run();
 
@@ -295,7 +285,7 @@ export class TaskProcessor extends DurableObject<Env> {
 
     // Phase 1: Generate master outline
     console.log('Phase 1: Generating master outline...');
-    const masterOutline = await generateMasterOutline(task.aiConfig, { bible, targetChapters, targetWordCount });
+    const masterOutline = await generateMasterOutline(task.aiConfig as AIConfig, { bible, targetChapters, targetWordCount });
     const totalVolumes = masterOutline.volumes?.length || 0;
     console.log(`Master outline generated: ${totalVolumes} volumes`);
 
@@ -316,7 +306,7 @@ export class TaskProcessor extends DurableObject<Env> {
 
       console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
       
-      const chapters = await generateVolumeChapters(task.aiConfig, { 
+      const chapters = await generateVolumeChapters(task.aiConfig as AIConfig, { 
         bible, 
         masterOutline, 
         volume: vol, 
@@ -348,10 +338,10 @@ export class TaskProcessor extends DurableObject<Env> {
       VALUES (?, ?)
     `).bind(project.id, JSON.stringify(finalOutline)).run();
 
-    // Update state
+    // Update state - use projectName as fallback since masterOutline doesn't have bookTitle
     await this.env.DB.prepare(`
       UPDATE states SET book_title = ? WHERE project_id = ?
-    `).bind(masterOutline.bookTitle || projectName, project.id).run();
+    `).bind(projectName, project.id).run();
 
     // Update progress
     await this.updateTaskStatus(task.id, {
