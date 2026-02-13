@@ -208,6 +208,7 @@ export function ProjectDetailScreen() {
           }
           if (event.type === 'done') setLiveMessage('大纲生成完成');
         },
+        config.ai
       );
 
       setOutlineModal(false);
@@ -250,6 +251,7 @@ export function ProjectDetailScreen() {
             setLiveMessage('批量生成完成');
           }
         },
+        config.ai
       );
 
       setActivePanel('chapters');

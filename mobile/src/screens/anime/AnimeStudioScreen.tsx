@@ -146,7 +146,7 @@ export function AnimeStudioScreen() {
         name: `anime-${detail.name}`,
         novelText,
         totalEpisodes,
-      });
+      }, config.ai);
 
       await loadAll(true);
     } catch (err) {
@@ -162,7 +162,7 @@ export function AnimeStudioScreen() {
 
     setGeneratingAll(true);
     try {
-      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id);
+      await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id, undefined, config.ai);
       await loadAll(true);
     } catch (err) {
       setError((err as Error).message);
@@ -180,7 +180,7 @@ export function AnimeStudioScreen() {
       await generateAnimeEpisodes(config.apiBaseUrl, token, animeProject.id, {
         startEpisode: episodeNum,
         endEpisode: episodeNum,
-      });
+      }, config.ai);
       await loadAll(true);
     } catch (err) {
       setError((err as Error).message);

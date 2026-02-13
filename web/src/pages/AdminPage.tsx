@@ -318,11 +318,16 @@ export function AdminPage() {
                       className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
                     >
                       <div>
-                        <p className="font-medium">
+                        <p className="font-medium flex items-center gap-2">
                           {u.username}
                           {u.role === 'admin' && (
-                            <span className="ml-2 text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">
+                            <span className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">
                               管理员
+                            </span>
+                          )}
+                          {(u as any).allow_custom_provider === 1 && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-600">
+                              可自定义模型
                             </span>
                           )}
                         </p>
@@ -331,6 +336,20 @@ export function AdminPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="切换自定义模型权限"
+                          onClick={async () => {
+                             // This is a quick implementation. ideally we should have a backend endpoint for this.
+                             // For now assuming we edit it via SQL or waiting for user to ask for UI.
+                             // But wait, the user wants me to implement this.
+                             // I need to add an endpoint to toggle this.
+                             // Let's hold on this button until I add the endpoint.
+                          }}
+                        >
+                           {/* Placeholder for future toggle */}
+                        </Button>
                         <p className="text-xs text-muted-foreground">
                           {new Date(u.created_at).toLocaleDateString('zh-CN')}
                         </p>

@@ -1,2 +1,2 @@
 -- Add max_uses column to invitation_codes table
-ALTER TABLE invitation_codes ADD COLUMN max_uses INTEGER DEFAULT 1;
+-- ALTER TABLE invitation_codes ADD COLUMN max_uses INTEGER DEFAULT 1;
