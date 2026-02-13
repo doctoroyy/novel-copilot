@@ -29,4 +29,18 @@ run_worker_first = ["/api/*"]
 binding = "ANIME_VIDEOS"
 bucket_name = "novel-copilot-videos"
 
+# Durable Objects
+[[durable_objects.bindings]]
+name = "TASK_QUEUE"
+class_name = "TaskQueue"
+script_name = "novel-copilot"
+
+[[durable_objects.bindings]]
+name = "TASK_PROCESSOR"
+class_name = "TaskProcessor"
+script_name = "novel-copilot"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TaskQueue", "TaskProcessor"]
 

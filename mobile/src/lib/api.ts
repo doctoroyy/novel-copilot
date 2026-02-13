@@ -9,6 +9,7 @@ import type {
   OutlineStreamEvent,
   ProjectDetail,
   ProjectSummary,
+  QueuedTask,
   User,
 } from '../types/domain';
 
@@ -410,6 +411,112 @@ export async function cancelAllActiveTasks(
   const json = await parseJsonResponse<Record<string, never>>(res);
   if (!json.success) throw new Error(json.error || 'Failed to cancel active tasks');
 }
+
+// ============================================================
+// Queue API - for Durable Objects queue
+// ============================================================
+
+export async function queueChapterGeneration(
+  apiBaseUrl: string,
+  token: string,
+  projectName: string,
+  chaptersToGenerate: number,
+  aiConfig: AIConfig,
+): Promise<{ taskId: string }> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/queue-chapters`), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+      ...aiHeaders(aiConfig),
+    },
+    body: JSON.stringify({ chaptersToGenerate }),
+  });
+
+  const json = await parseJsonResponse<{ taskId: string }>(res);
+  if (!json.success || !json.taskId) throw new Error(json.error || 'Failed to queue chapter generation');
+  return { taskId: json.taskId };
+}
+
+export async function queueOutlineGeneration(
+  apiBaseUrl: string,
+  token: string,
+  projectName: string,
+  targetChapters: number,
+  targetWordCount: number,
+  customPrompt: string | undefined,
+  aiConfig: AIConfig,
+): Promise<{ taskId: string }> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/queue-outline`), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+      ...aiHeaders(aiConfig),
+    },
+    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
+  });
+
+  const json = await parseJsonResponse<{ taskId: string }>(res);
+  if (!json.success || !json.taskId) throw new Error(json.error || 'Failed to queue outline generation');
+  return { taskId: json.taskId };
+}
+
+export async function fetchQueuedTasks(
+  apiBaseUrl: string,
+  token: string,
+): Promise<QueuedTask[]> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/queue/tasks'), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ tasks: QueuedTask[] }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch queued tasks');
+  return json.tasks || [];
+}
+
+export async function fetchQueuedTask(
+  apiBaseUrl: string,
+  token: string,
+  taskId: string,
+): Promise<QueuedTask> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/queue/tasks/${encodeURIComponent(taskId)}`), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ task: QueuedTask }>(res);
+  if (!json.success || !json.task) throw new Error(json.error || 'Failed to fetch queued task');
+  return json.task;
+}
+
+export async function cancelQueuedTask(
+  apiBaseUrl: string,
+  token: string,
+  taskId: string,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/queue/tasks/${encodeURIComponent(taskId)}/cancel`), {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to cancel queued task');
+}
+
+export async function deleteQueuedTask(
+  apiBaseUrl: string,
+  token: string,
+  taskId: string,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/queue/tasks/${encodeURIComponent(taskId)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to delete queued task');
+}
+
 
 export async function fetchAnimeProjects(
   apiBaseUrl: string,

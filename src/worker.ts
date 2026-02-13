@@ -10,11 +10,14 @@ import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { editingRoutes } from './routes/editing.js';
+import { queueRoutes } from './routes/queue.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
   DB: D1Database;
   ANIME_VIDEOS: R2Bucket;
+  TASK_QUEUE: DurableObjectNamespace;
+  TASK_PROCESSOR: DurableObjectNamespace;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -41,6 +44,7 @@ app.use('/api/anime/*', async (c, next) => {
 });
 app.use('/api/admin/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
+app.use('/api/queue/*', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
@@ -48,6 +52,7 @@ app.route('/api/config', configRoutes);
 app.route('/api', generationRoutes);
 app.route('/api', tasksRoutes);
 app.route('/api', editingRoutes);
+app.route('/api', queueRoutes);
 app.route('/api/characters', charactersRoutes);
 app.route('/api/context', contextRoutes);
 app.route('/api/anime', animeRoutes);
@@ -149,5 +154,9 @@ app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
 // SPA routing is handled by wrangler.toml: not_found_handling = "single-page-application"
 
 export default app;
+
+// Export Durable Objects
+export { TaskQueue } from './durableObjects/TaskQueue.js';
+export { TaskProcessor } from './durableObjects/TaskProcessor.js';
 
 
