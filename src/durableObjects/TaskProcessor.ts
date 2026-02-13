@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { QueuedTask } from './TaskQueue.js';
+import type { QueuedTask, ChapterTaskParams, OutlineTaskParams } from './TaskQueue.js';
 import type { Env } from '../worker.js';
 import type { AIConfig } from '../services/aiClient.js';
 
@@ -112,17 +112,21 @@ export class TaskProcessor extends DurableObject<Env> {
       await this.ctx.storage.put('isProcessing', false);
       await this.ctx.storage.put('currentTaskId', null);
 
-      // Trigger processing of next task
-      const queueId = this.env.TASK_QUEUE.idFromName('global-queue');
-      const queue = this.env.TASK_QUEUE.get(queueId);
-      queue.fetch('https://task-queue/process-next').catch((err: Error) => {
+      // Trigger processing of next task by calling ourselves
+      // This is safe because we cleared isProcessing first
+      this.fetch(new Request('https://task-processor/process-next')).catch((err: Error) => {
         console.error('Failed to trigger next task:', err);
       });
     }
   }
 
   private async processChapterTask(task: QueuedTask): Promise<void> {
-    const { chaptersToGenerate = 1 } = task.params;
+    if (task.type !== 'chapter') {
+      throw new Error('Invalid task type for processChapterTask');
+    }
+    
+    const params = task.params as ChapterTaskParams;
+    const { chaptersToGenerate = 1 } = params;
     const { projectId, userId } = task;
 
     // Import generation logic
@@ -257,7 +261,12 @@ export class TaskProcessor extends DurableObject<Env> {
   }
 
   private async processOutlineTask(task: QueuedTask): Promise<void> {
-    const { targetChapters = 400, targetWordCount = 100, customPrompt } = task.params;
+    if (task.type !== 'outline') {
+      throw new Error('Invalid task type for processOutlineTask');
+    }
+    
+    const params = task.params as OutlineTaskParams;
+    const { targetChapters = 400, targetWordCount = 100, customPrompt } = params;
     const { projectId, projectName, userId } = task;
 
     // Import generation logic

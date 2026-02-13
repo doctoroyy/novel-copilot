@@ -1,13 +1,23 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../worker.js';
 
+export type ChapterTaskParams = {
+  chaptersToGenerate: number;
+};
+
+export type OutlineTaskParams = {
+  targetChapters: number;
+  targetWordCount: number;
+  customPrompt?: string;
+};
+
 export interface QueuedTask {
   id: string;
   type: 'chapter' | 'outline';
   projectId: string;
   projectName: string;
   userId: string;
-  params: any;
+  params: ChapterTaskParams | OutlineTaskParams;
   aiConfig: {
     provider: string;
     model: string;
@@ -35,8 +45,9 @@ export class TaskQueue extends DurableObject<Env> {
       if (stored) {
         this.tasks = new Map(stored);
       }
-      const processing = await this.ctx.storage.get<string | null>('processingTaskId');
-      if (processing !== undefined) {
+      const processing = await this.ctx.storage.get<string>('processingTaskId');
+      // Handle empty string as null
+      if (processing && processing !== '') {
         this.processingTaskId = processing;
       }
     });
@@ -145,7 +156,7 @@ export class TaskQueue extends DurableObject<Env> {
       task.completedAt = Date.now();
       if (this.processingTaskId === taskId) {
         this.processingTaskId = null;
-        await this.ctx.storage.put('processingTaskId', null);
+        await this.ctx.storage.put('processingTaskId', ''); // Use empty string instead of null
         // Trigger processing of next task
         await this.processNext();
       }
@@ -212,7 +223,7 @@ export class TaskQueue extends DurableObject<Env> {
     
     if (this.processingTaskId === taskId) {
       this.processingTaskId = null;
-      await this.ctx.storage.put('processingTaskId', null);
+      await this.ctx.storage.put('processingTaskId', ''); // Use empty string instead of null
     }
 
     await this.ctx.storage.put('tasks', Array.from(this.tasks.entries()));
