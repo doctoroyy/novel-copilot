@@ -864,3 +864,134 @@ export async function checkConsistency(
   if (!json.success) throw new Error(json.error);
   return json.report;
 }
+
+// ==========================================
+// Credit API
+// ==========================================
+
+export async function fetchCreditBalance(): Promise<{
+  creditBalance: number;
+  vipType: string;
+  vipExpireAt: string | null;
+  level: number;
+}> {
+  const res = await fetch(`${API_BASE}/credit/balance`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data;
+}
+
+export async function fetchCreditTransactions(
+  limit: number = 20,
+  offset: number = 0
+): Promise<{ transactions: any[]; total: number }> {
+  const res = await fetch(`${API_BASE}/credit/transactions?limit=${limit}&offset=${offset}`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { transactions: data.transactions, total: data.total };
+}
+
+export async function fetchCreditFeatures(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/credit/features`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.features;
+}
+
+// ==========================================
+// Admin Credit & Model Registry API
+// ==========================================
+
+export async function fetchAdminCreditFeatures(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/admin/credit-features`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.features;
+}
+
+export async function updateCreditFeature(key: string, updates: any): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/credit-features/${key}`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(updates),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function createCreditFeature(feature: any): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/credit-features`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(feature),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function rechargeUserCredit(userId: string, amount: number, description?: string): Promise<{ balanceAfter: number }> {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}/credit`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ amount, description }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { balanceAfter: data.balanceAfter };
+}
+
+export async function fetchModelRegistry(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/admin/model-registry`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.models;
+}
+
+export async function createModel(model: any): Promise<{ id: string }> {
+  const res = await fetch(`${API_BASE}/admin/model-registry`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(model),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { id: data.id };
+}
+
+export async function updateModel(id: string, updates: any): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/model-registry/${id}`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(updates),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function deleteModel(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/model-registry/${id}`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function fetchCreditStats(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/credit-stats`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.stats;
+}

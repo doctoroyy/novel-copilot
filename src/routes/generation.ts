@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, type AIConfig } from '../services/aiClient.js';
+import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { writeOneChapter } from '../generateChapter.js';
 import { generateMasterOutline, generateVolumeChapters } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
@@ -14,18 +14,9 @@ import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTas
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
-// Helper to get AI config from headers
-function getAIConfigFromHeaders(c: any): AIConfig | null {
-  const provider = c.req.header('X-AI-Provider');
-  const model = c.req.header('X-AI-Model');
-  const apiKey = c.req.header('X-AI-Key');
-  const baseUrl = c.req.header('X-AI-BaseUrl');
-
-  if (!provider || !model || !apiKey) {
-    return null;
-  }
-
-  return { provider: provider as AIConfig['provider'], model, apiKey, baseUrl };
+// Helper to get AI config from Model Registry (server-side)
+async function getAIConfig(db: D1Database): Promise<AIConfig | null> {
+  return getAIConfigFromRegistry(db);
 }
 
 // Normalize chapter data from LLM output to consistent structure
@@ -113,7 +104,7 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -259,7 +250,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -412,7 +403,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
   
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -555,7 +546,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -884,7 +875,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1131,7 +1122,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
 // Generate bible
 generationRoutes.post('/generate-bible', async (c) => {
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1255,7 +1246,7 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfig(c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);

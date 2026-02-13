@@ -17,4 +17,5 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   AuthFlow: undefined;
   AppFlow: undefined;
+  AdminPanel: undefined;
 };

@@ -1,22 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, type AIConfig } from '../services/aiClient.js';
+import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 
 export const editingRoutes = new Hono<{ Bindings: Env }>();
-
-// Helper to get AI config from headers
-function getAIConfigFromHeaders(c: any): AIConfig | null {
-  const provider = c.req.header('x-ai-provider');
-  const model = c.req.header('x-ai-model');
-  const apiKey = c.req.header('x-ai-key');
-  const baseUrl = c.req.header('x-ai-baseurl');
-  
-  if (!provider || !model || !apiKey) {
-    return null;
-  }
-  
-  return { provider, model, apiKey, baseUrl };
-}
 
 // Create a new chapter (user-scoped)
 editingRoutes.post('/projects/:name/chapters', async (c) => {
@@ -145,10 +131,10 @@ editingRoutes.post('/projects/:name/chapters/:index/refine', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
   
   if (!aiConfig) {
-    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+    return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
   }
   
   try {
@@ -262,10 +248,10 @@ editingRoutes.post('/projects/:name/chapters/:index/suggest', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
   
   if (!aiConfig) {
-    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+    return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
   }
   
   try {
@@ -323,10 +309,10 @@ editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = getAIConfigFromHeaders(c);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
   
   if (!aiConfig) {
-    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+    return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
   }
   
   try {
@@ -432,21 +418,11 @@ editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
   
-  // Get AI config from request header
-  const aiConfig = await (async () => {
-      const provider = c.req.header('x-ai-provider');
-      const model = c.req.header('x-ai-model');
-      const apiKey = c.req.header('x-ai-api-key');
-      const imageModel = c.req.header('x-ai-image-model');
-      
-      if (provider && model && apiKey) {
-          return { provider, model, apiKey, imageModel };
-      }
-      return null;
-  })();
+  // Get AI config from Model Registry
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
 
   if (!aiConfig) {
-      return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+      return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
   }
 
   try {
@@ -507,7 +483,6 @@ ${content.substring(0, 5000)}
 【上下文 (可选)】
 ${context || '无'}`;
 
-    const { generateText } = await import('../aiClient.js');
     const response = await generateText(aiConfig as any, {
       system: systemPrompt,
       prompt: userPrompt,

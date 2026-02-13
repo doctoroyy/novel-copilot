@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { AppConfig } from '../types/domain';
 import { loadAppConfig, sanitizeAppConfig, saveAppConfig } from '../lib/storage';
-import { DEFAULT_AI_MODEL, DEFAULT_AI_PROVIDER, DEFAULT_API_BASE_URL } from '../lib/constants';
+import { DEFAULT_API_BASE_URL } from '../lib/constants';
 
 type AppConfigContextValue = {
   config: AppConfig;
@@ -15,12 +15,6 @@ const AppConfigContext = createContext<AppConfigContextValue | null>(null);
 
 const DEFAULT_CONFIG: AppConfig = {
   apiBaseUrl: DEFAULT_API_BASE_URL,
-  ai: {
-    provider: DEFAULT_AI_PROVIDER,
-    model: DEFAULT_AI_MODEL,
-    apiKey: '',
-    baseUrl: undefined,
-  },
 };
 
 export function AppConfigProvider({ children }: { children: ReactNode }) {

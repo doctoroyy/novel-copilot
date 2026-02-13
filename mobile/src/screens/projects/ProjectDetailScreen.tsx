@@ -29,7 +29,7 @@ import {
   resetProject,
 } from '../../lib/api';
 import type { GenerationTask, ProjectDetail } from '../../types/domain';
-import { isAIConfigured } from '../../lib/storage';
+// isAIConfigured import removed
 import { gradients, ui } from '../../theme/tokens';
 
 type ScreenRoute = RouteProp<ProjectsStackParamList, 'ProjectDetail'>;
@@ -82,6 +82,7 @@ export function ProjectDetailScreen() {
   const taskPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadProject = useCallback(async () => {
+    // ... (loadProject logic)
     if (!token) return;
 
     try {
@@ -98,6 +99,7 @@ export function ProjectDetailScreen() {
   }, [config.apiBaseUrl, projectName, token]);
 
   const loadTask = useCallback(async () => {
+    // ... (loadTask logic)
     if (!token) return;
     try {
       const task = await fetchProjectActiveTask(config.apiBaseUrl, token, projectName);
@@ -174,14 +176,9 @@ export function ProjectDetailScreen() {
       setError('登录状态已失效，请重新登录');
       return false;
     }
-
-    if (!isAIConfigured(config.ai)) {
-      Alert.alert('缺少 AI 配置', '请先到“设置”中填写 provider/model/api key。');
-      return false;
-    }
-
+    // AI config check removed as it is now server-side
     return true;
-  }, [config.ai, token]);
+  }, [token]);
 
   const handleGenerateOutline = async () => {
     if (!project || !ensureReady() || !token) return;
@@ -204,7 +201,6 @@ export function ProjectDetailScreen() {
           targetWordCount: Math.max(1, parseInt(outlineWordCount, 10) || 30),
           customPrompt: outlinePrompt.trim() || undefined,
         },
-        config.ai,
         (event) => {
           if (event.type === 'progress' && event.message) setLiveMessage(event.message);
           if (event.type === 'volume_complete') {
@@ -243,7 +239,6 @@ export function ProjectDetailScreen() {
         token,
         project.name,
         { chaptersToGenerate: count },
-        config.ai,
         (event) => {
           if (event.type === 'progress' && event.message) {
             setLiveMessage(event.message);
@@ -271,6 +266,8 @@ export function ProjectDetailScreen() {
     const next = Math.max(1, Math.min(20, chapterCountNum + delta));
     setChapterCount(String(next));
   };
+  
+  // ... (rest of the file)
 
   const handleResetProject = () => {
     if (!project || !token) return;

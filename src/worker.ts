@@ -10,6 +10,7 @@ import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { editingRoutes } from './routes/editing.js';
+import { creditRoutes } from './routes/credit.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
@@ -40,6 +41,7 @@ app.use('/api/anime/*', async (c, next) => {
   return authMiddleware()(c, next);
 });
 app.use('/api/admin/*', authMiddleware());
+app.use('/api/credit/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 
 // Mount routes
@@ -52,6 +54,7 @@ app.route('/api/characters', charactersRoutes);
 app.route('/api/context', contextRoutes);
 app.route('/api/anime', animeRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/credit', creditRoutes);
 
 // SSE endpoint (stub - Workers have limited SSE support)
 // For real-time updates, clients should poll or use Durable Objects

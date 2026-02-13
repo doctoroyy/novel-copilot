@@ -132,7 +132,7 @@ authRoutes.get('/me', authMiddleware(), async (c) => {
 
   // Get full user info from DB
   const dbUser = await c.env.DB.prepare(`
-    SELECT id, username, role, created_at, last_login_at FROM users WHERE id = ?
+    SELECT id, username, role, credit_balance, vip_type, level, created_at, last_login_at FROM users WHERE id = ?
   `).bind(user.userId).first();
 
   if (!dbUser) {
@@ -145,6 +145,9 @@ authRoutes.get('/me', authMiddleware(), async (c) => {
       id: (dbUser as any).id,
       username: (dbUser as any).username,
       role: (dbUser as any).role || 'user',
+      creditBalance: (dbUser as any).credit_balance ?? 150,
+      vipType: (dbUser as any).vip_type || 'free',
+      level: (dbUser as any).level ?? 1,
       createdAt: (dbUser as any).created_at,
       lastLoginAt: (dbUser as any).last_login_at,
     },

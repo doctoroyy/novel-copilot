@@ -200,4 +200,256 @@ adminRoutes.get('/stats', async (c) => {
   }
 });
 
+// ==========================================
+// Credit Features Management
+// ==========================================
+
+// Get all credit features
+adminRoutes.get('/credit-features', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM credit_features ORDER BY category, feature_key'
+    ).all();
+    return c.json({ success: true, features: results });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Create credit feature
+adminRoutes.post('/credit-features', async (c) => {
+  try {
+    const { featureKey, name, description, baseCost, category, isVipOnly, modelMultiplierEnabled } = await c.req.json();
+    if (!featureKey || !name) {
+      return c.json({ success: false, error: '功能标识和名称不能为空' }, 400);
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO credit_features (feature_key, name, description, base_cost, category, is_vip_only, model_multiplier_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(featureKey, name, description || '', baseCost || 10, category || 'basic', isVipOnly ? 1 : 0, modelMultiplierEnabled !== false ? 1 : 0).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Update credit feature
+adminRoutes.put('/credit-features/:key', async (c) => {
+  const key = c.req.param('key');
+  try {
+    const { name, description, baseCost, category, isVipOnly, isActive, modelMultiplierEnabled } = await c.req.json();
+
+    await c.env.DB.prepare(`
+      UPDATE credit_features 
+      SET name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          base_cost = COALESCE(?, base_cost),
+          category = COALESCE(?, category),
+          is_vip_only = COALESCE(?, is_vip_only),
+          is_active = COALESCE(?, is_active),
+          model_multiplier_enabled = COALESCE(?, model_multiplier_enabled),
+          updated_at = datetime('now')
+      WHERE feature_key = ?
+    `).bind(
+      name ?? null, description ?? null, baseCost ?? null, category ?? null,
+      isVipOnly !== undefined ? (isVipOnly ? 1 : 0) : null,
+      isActive !== undefined ? (isActive ? 1 : 0) : null,
+      modelMultiplierEnabled !== undefined ? (modelMultiplierEnabled ? 1 : 0) : null,
+      key
+    ).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Delete credit feature
+adminRoutes.delete('/credit-features/:key', async (c) => {
+  const key = c.req.param('key');
+  try {
+    await c.env.DB.prepare('DELETE FROM credit_features WHERE feature_key = ?').bind(key).run();
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
+// Model Registry Management
+// ==========================================
+
+// Get all models
+adminRoutes.get('/model-registry', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM model_registry ORDER BY is_default DESC, provider, model_name'
+    ).all();
+    // Mask API keys for display
+    const masked = (results || []).map((m: any) => ({
+      ...m,
+      api_key_encrypted: m.api_key_encrypted
+        ? `${m.api_key_encrypted.slice(0, 8)}...${m.api_key_encrypted.slice(-4)}`
+        : null,
+    }));
+    return c.json({ success: true, models: masked });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Create model
+adminRoutes.post('/model-registry', async (c) => {
+  try {
+    const { provider, modelName, displayName, apiKey, baseUrl, creditMultiplier, capabilities, configJson } = await c.req.json();
+    if (!provider || !modelName || !displayName) {
+      return c.json({ success: false, error: 'provider, modelName, displayName 不能为空' }, 400);
+    }
+
+    const id = crypto.randomUUID();
+    await c.env.DB.prepare(`
+      INSERT INTO model_registry (id, provider, model_name, display_name, api_key_encrypted, base_url, credit_multiplier, capabilities, config_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id, provider, modelName, displayName,
+      apiKey || null, baseUrl || null,
+      creditMultiplier || 1.0,
+      JSON.stringify(capabilities || []),
+      JSON.stringify(configJson || {})
+    ).run();
+
+    return c.json({ success: true, id });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Update model
+adminRoutes.put('/model-registry/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const body = await c.req.json();
+
+    // Build dynamic update
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (body.displayName !== undefined) { updates.push('display_name = ?'); values.push(body.displayName); }
+    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(body.provider); }
+    if (body.modelName !== undefined) { updates.push('model_name = ?'); values.push(body.modelName); }
+    if (body.apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(body.apiKey || null); }
+    if (body.baseUrl !== undefined) { updates.push('base_url = ?'); values.push(body.baseUrl || null); }
+    if (body.creditMultiplier !== undefined) { updates.push('credit_multiplier = ?'); values.push(body.creditMultiplier); }
+    if (body.capabilities !== undefined) { updates.push('capabilities = ?'); values.push(JSON.stringify(body.capabilities)); }
+    if (body.isActive !== undefined) { updates.push('is_active = ?'); values.push(body.isActive ? 1 : 0); }
+    if (body.configJson !== undefined) { updates.push('config_json = ?'); values.push(JSON.stringify(body.configJson)); }
+
+    // Handle default model: only one can be default
+    if (body.isDefault !== undefined) {
+      if (body.isDefault) {
+        await c.env.DB.prepare('UPDATE model_registry SET is_default = 0').run();
+      }
+      updates.push('is_default = ?');
+      values.push(body.isDefault ? 1 : 0);
+    }
+
+    updates.push("updated_at = datetime('now')");
+    values.push(id);
+
+    await c.env.DB.prepare(`
+      UPDATE model_registry SET ${updates.join(', ')} WHERE id = ?
+    `).bind(...values).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Delete model
+adminRoutes.delete('/model-registry/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    await c.env.DB.prepare('DELETE FROM model_registry WHERE id = ?').bind(id).run();
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
+// Credit Stats & User Management
+// ==========================================
+
+// Get credit stats
+adminRoutes.get('/credit-stats', async (c) => {
+  try {
+    const totalCredit = await c.env.DB.prepare(
+      'SELECT SUM(credit_balance) as total FROM users'
+    ).first() as any;
+
+    const totalConsumed = await c.env.DB.prepare(
+      "SELECT COALESCE(SUM(ABS(amount)), 0) as total FROM credit_transactions WHERE type = 'consume'"
+    ).first() as any;
+
+    const totalRecharged = await c.env.DB.prepare(
+      "SELECT COALESCE(SUM(amount), 0) as total FROM credit_transactions WHERE type IN ('recharge', 'reward')"
+    ).first() as any;
+
+    const topFeatures = await c.env.DB.prepare(`
+      SELECT feature_key, COUNT(*) as usage_count, SUM(ABS(amount)) as total_cost
+      FROM credit_transactions WHERE type = 'consume'
+      GROUP BY feature_key ORDER BY usage_count DESC LIMIT 10
+    `).all();
+
+    return c.json({
+      success: true,
+      stats: {
+        totalCreditInCirculation: totalCredit?.total || 0,
+        totalConsumed: totalConsumed?.total || 0,
+        totalRecharged: totalRecharged?.total || 0,
+        topFeatures: topFeatures.results || [],
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Recharge user credit
+adminRoutes.post('/users/:id/credit', async (c) => {
+  const userId = c.req.param('id');
+  try {
+    const { amount, description } = await c.req.json();
+    if (!amount || amount <= 0) {
+      return c.json({ success: false, error: '充值金额必须大于 0' }, 400);
+    }
+
+    // Get current balance
+    const user = await c.env.DB.prepare(
+      'SELECT credit_balance FROM users WHERE id = ?'
+    ).bind(userId).first() as any;
+
+    if (!user) {
+      return c.json({ success: false, error: '用户不存在' }, 404);
+    }
+
+    const balanceAfter = (user.credit_balance || 0) + amount;
+
+    await c.env.DB.batch([
+      c.env.DB.prepare('UPDATE users SET credit_balance = ? WHERE id = ?').bind(balanceAfter, userId),
+      c.env.DB.prepare(`
+        INSERT INTO credit_transactions (user_id, feature_key, amount, balance_after, type, description)
+        VALUES (?, NULL, ?, ?, 'recharge', ?)
+      `).bind(userId, amount, balanceAfter, description || '管理员充值'),
+    ]);
+
+    return c.json({ success: true, balanceAfter });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 export { adminRoutes };
