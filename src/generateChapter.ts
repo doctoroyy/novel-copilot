@@ -85,11 +85,11 @@ function buildSystemPrompt(isFinal: boolean, chapterIndex: number, chapterTitle?
 - 每章字数建议 2500~3500 汉字
 
 输出格式：
-- 第一行必须是章节标题：${titleText}
-- 章节号必须是 ${chapterIndex}，**严禁使用其他数字**
-- 其后是正文
-- **严禁**写任何解释、元说明、目标完成提示
-- **严禁**在正文中出现如下内容：【本章写作目标】、【已完成】、（本章结束）等任何形式的编辑备注
+请仅输出严格的 JSON 格式，不要包含任何 Markdown 代码块标记（如 \`\`\`json）：
+{
+  "title": "${titleText}",
+  "content": "章节正文内容...（不要包含标题，不要包含任何【本章写作目标】等元数据）"
+}
 
 当前是否为最终章：${isFinal ? 'true - 可以写结局' : 'false - 禁止收尾'}
 `.trim();
@@ -157,7 +157,10 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
 
   // 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
-  let chapterText = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.85 });
+  const rawResponse = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.85 });
+  
+  let chapterText = parseChapterResponse(rawResponse, chapterIndex);
+
   let wasRewritten = false;
   let rewriteCount = 0;
 
@@ -184,7 +187,8 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
       });
 
       const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
-      chapterText = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
+      const rawRewriteResponse = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
+      chapterText = parseChapterResponse(rawRewriteResponse, chapterIndex);
       wasRewritten = true;
       rewriteCount++;
     }
@@ -277,3 +281,31 @@ ${chapterText}
     };
   }
 }
+
+/**
+ * 解析章节生成响应 (JSON -> Text)
+ */
+function parseChapterResponse(rawResponse: string, chapterIndex: number): string {
+  try {
+    // 1. 尝试直接解析 (去掉代码块标记后)
+    let jsonStr = rawResponse.replace(/```json\s*|```\s*/g, '').trim();
+    
+    // 2. 如果还有多余字符，尝试提取最外层的 {} 
+    const match = jsonStr.match(/(\{[\s\S]*\})/);
+    if (match) {
+        jsonStr = match[1];
+    }
+    
+    const parsed = JSON.parse(jsonStr);
+    
+    // 构建标准全文格式: 标题 + 换行 + 正文
+    const safeTitle = parsed.title || `第${chapterIndex}章`;
+    const finalTitle = safeTitle.startsWith('第') ? safeTitle : `第${chapterIndex}章 ${safeTitle}`;
+    
+    return `${finalTitle}\n\n${parsed.content}`;
+  } catch (e) {
+    console.warn(`JSON parsing failed for chapter ${chapterIndex}, falling back to raw text.`);
+    return rawResponse.replace(/```json\s*|```\s*/g, '').trim();
+  }
+}
+
