@@ -83,6 +83,39 @@ export type GenerationTask = {
   updatedAtMs: number;
 };
 
+export type QueuedTask = {
+  id: string;
+  type: 'chapter' | 'outline';
+  projectId: string;
+  projectName: string;
+  userId: string;
+  params: ChapterTaskParams | OutlineTaskParams;
+  aiConfig: {
+    provider: string;
+    model: string;
+    apiKey: string;
+    baseUrl?: string;
+  };
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  message?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+};
+
+export type ChapterTaskParams = {
+  chaptersToGenerate: number;
+};
+
+export type OutlineTaskParams = {
+  targetChapters: number;
+  targetWordCount: number;
+  customPrompt?: string;
+};
+
 export type AnimeProject = {
   id: string;
   name: string;
