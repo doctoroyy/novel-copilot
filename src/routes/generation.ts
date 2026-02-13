@@ -15,7 +15,35 @@ import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTas
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
 // Helper to get AI config from Model Registry (server-side)
-async function getAIConfig(db: D1Database): Promise<AIConfig | null> {
+// Helper to get AI config from Model Registry (server-side) or Custom Headers
+async function getAIConfig(c: any, db: D1Database): Promise<AIConfig | null> {
+  const userId = c.get('userId');
+  
+  // 1. Check if user has permission for custom provider
+  if (userId) {
+    const user = await db.prepare('SELECT allow_custom_provider FROM users WHERE id = ?').bind(userId).first() as any;
+    if (user?.allow_custom_provider) {
+       // 2. Try to get config from headers
+       // Note: headers in Hono are accessible via c.req.header()
+       // We map x-custom-* headers to what getAIConfigFromHeaders expects (x-ai-*) or just read them directly here
+       const headers = c.req.header();
+       const customProvider = headers['x-custom-provider'];
+       const customModel = headers['x-custom-model'];
+       const customBaseUrl = headers['x-custom-base-url'];
+       const customApiKey = headers['x-custom-api-key'];
+
+       if (customProvider && customModel && customApiKey) {
+         return {
+           provider: customProvider as any,
+           model: customModel,
+           apiKey: customApiKey,
+           baseUrl: customBaseUrl,
+         };
+       }
+    }
+  }
+
+  // 3. Fallback to registry
   return getAIConfigFromRegistry(db);
 }
 
@@ -104,7 +132,7 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -250,7 +278,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -403,7 +431,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
   
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -546,7 +574,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -875,7 +903,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1122,7 +1150,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
 // Generate bible
 generationRoutes.post('/generate-bible', async (c) => {
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1246,7 +1274,7 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB);
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
