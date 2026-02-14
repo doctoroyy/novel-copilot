@@ -208,7 +208,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Initial load
   useEffect(() => {
     loadProjects();
-    document.documentElement.classList.add('dark');
   }, [loadProjects]);
 
   // Check for running tasks on mount
