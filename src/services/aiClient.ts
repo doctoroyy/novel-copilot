@@ -526,24 +526,38 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
  * Get AI config from Model Registry (server-side, admin-configured)
  * Returns the default active model's config
  */
-export async function getAIConfigFromRegistry(db: D1Database): Promise<AIConfig | null> {
+export async function getAIConfigFromRegistry(db: D1Database, featureKey?: string): Promise<AIConfig | null> {
   try {
-    const model = await db.prepare(
-      'SELECT * FROM model_registry WHERE is_default = 1 AND is_active = 1 LIMIT 1'
-    ).first() as any;
+    let model: any = null;
+
+    // 1. If featureKey provided, check feature_model_mappings
+    if (featureKey) {
+      const mapping = await db.prepare(
+        `SELECT m.*, fmm.temperature as override_temperature 
+         FROM feature_model_mappings fmm
+         JOIN model_registry m ON fmm.model_id = m.id
+         WHERE fmm.feature_key = ? AND m.is_active = 1`
+      ).bind(featureKey).first();
+      
+      if (mapping) {
+        model = mapping;
+      }
+    }
+
+    // 2. If no mapping found or no featureKey, get default model
+    if (!model) {
+      model = await db.prepare(
+        'SELECT * FROM model_registry WHERE is_default = 1 AND is_active = 1 LIMIT 1'
+      ).first();
+    }
 
     if (!model) {
-      // Fallback to any active model
-      const fallback = await db.prepare(
+      // 3. Fallback to any active model
+      model = await db.prepare(
         'SELECT * FROM model_registry WHERE is_active = 1 LIMIT 1'
-      ).first() as any;
-      if (!fallback) return null;
-      return {
-        provider: fallback.provider as AIProvider,
-        model: fallback.model_name,
-        apiKey: fallback.api_key_encrypted || '',
-        baseUrl: fallback.base_url || undefined,
-      };
+      ).first();
+      
+      if (!model) return null;
     }
 
     return {
@@ -551,6 +565,10 @@ export async function getAIConfigFromRegistry(db: D1Database): Promise<AIConfig 
       model: model.model_name,
       apiKey: model.api_key_encrypted || '',
       baseUrl: model.base_url || undefined,
+      // We could add temperature here if AIConfig supported it as a default, 
+      // but currently generateText takes temp as arg. 
+      // We might want to return it so the caller can use it?
+      // For now, let's stick to returning basic config.
     };
   } catch (error) {
     console.error('Failed to get AI config from registry:', error);

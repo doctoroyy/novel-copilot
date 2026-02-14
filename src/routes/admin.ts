@@ -278,6 +278,49 @@ adminRoutes.delete('/credit-features/:key', async (c) => {
 });
 
 // ==========================================
+// Feature Model Mappings Management
+// ==========================================
+
+// Get all feature model mappings
+adminRoutes.get('/feature-models', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT fmm.*, m.model_name, m.provider, cf.name as feature_name
+      FROM feature_model_mappings fmm
+      JOIN model_registry m ON fmm.model_id = m.id
+      JOIN credit_features cf ON fmm.feature_key = cf.feature_key
+    `).all();
+    return c.json({ success: true, mappings: results });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Update feature model mapping
+adminRoutes.post('/feature-models', async (c) => {
+  try {
+    const { featureKey, modelId, temperature } = await c.req.json();
+    
+    if (!featureKey || !modelId) {
+      return c.json({ success: false, error: 'featureKey and modelId are required' }, 400);
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO feature_model_mappings (feature_key, model_id, temperature)
+      VALUES (?, ?, ?)
+      ON CONFLICT(feature_key) DO UPDATE SET
+        model_id = excluded.model_id,
+        temperature = excluded.temperature,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(featureKey, modelId, temperature || 0.7).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
 // Model Registry Management
 // ==========================================
 

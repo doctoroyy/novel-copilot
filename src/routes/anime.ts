@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { getAIConfigFromHeaders, generateText, type AIConfig } from '../services/aiClient.js';
+import { getAIConfigFromHeaders, getAIConfigFromRegistry, generateText, type AIConfig } from '../services/aiClient.js';
+import { consumeCredit } from '../services/creditService.js';
 
 
 
@@ -201,13 +202,19 @@ animeRoutes.get('/projects/:id/script', async (c) => {
 // Generate series script
 animeRoutes.post('/projects/:id/script', async (c) => {
   const projectId = c.req.param('id');
-  const aiConfig = getAIConfigFromHeaders(c.req);
+  let aiConfig = getAIConfigFromHeaders(c.req);
+  if (!aiConfig) {
+      aiConfig = await getAIConfigFromRegistry(c.env.DB, 'generate_outline');
+  }
 
   if (!aiConfig?.apiKey) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 401);
   }
 
   try {
+    const userId = c.get('userId') as string; // Assuming auth middleware adds this
+    if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+
     // 1. Get Project Data
     const project = await c.env.DB.prepare(`
       SELECT * FROM anime_projects WHERE id = ?
@@ -224,6 +231,13 @@ animeRoutes.post('/projects/:id/script', async (c) => {
     // We should warn or implement chained generation. 
     // For this MVP step, we will assume it fits or truncate/summarize.
     
+    // 0. Consume Credit
+    try {
+        await consumeCredit(c.env.DB, userId, 'generate_outline', `生成动画脚本: ${project.name}`); // reusing outline key or add new one? Using outline for now as it's similar effort
+    } catch (error) {
+        return c.json({ success: false, error: (error as Error).message }, 402);
+    }
+
     const scriptContent = await generateGlobalScript(project.novel_text, aiConfig);
 
     // 3. Save Script
@@ -259,7 +273,10 @@ animeRoutes.get('/projects/:id/characters', async (c) => {
 // Extract and Generate Characters
 animeRoutes.post('/projects/:id/characters/generate', async (c) => {
   const projectId = c.req.param('id');
-  const aiConfig = getAIConfigFromHeaders(c.req);
+  let aiConfig = getAIConfigFromHeaders(c.req);
+  if (!aiConfig) {
+      aiConfig = await getAIConfigFromRegistry(c.env.DB, 'generate_characters');
+  }
 
   if (!aiConfig?.apiKey) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 401);
@@ -310,7 +327,11 @@ animeRoutes.post('/projects/:id/characters/generate', async (c) => {
 // Generate Image for specific character
 animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
   const { id: projectId, charId } = c.req.param();
-  const aiConfig = getAIConfigFromHeaders(c.req);
+  const userId = c.get('userId');
+  let aiConfig = getAIConfigFromHeaders(c.req);
+  if (!aiConfig) {
+      aiConfig = await getAIConfigFromRegistry(c.env.DB, 'ai_imagine');
+  }
 
   if (!aiConfig?.apiKey) {
       return c.json({ success: false, error: 'Missing AI configuration' }, 401);
@@ -322,6 +343,13 @@ animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
       `).bind(charId, projectId).first();
 
       if (!char) return c.json({ success: false, error: 'Character not found' }, 404);
+
+      // 0. Consume Credit
+      try {
+          await consumeCredit(c.env.DB, userId, 'ai_imagine', `生成角色图片: ${(char as any).name}`);
+      } catch (error) {
+          return c.json({ success: false, error: (error as Error).message }, 402);
+      }
 
       const { generateCharacterImage } = await import('../services/imageGen.js');
       
@@ -531,7 +559,12 @@ animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/audio', async 
 animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', async (c) => {
     const { projectId, num, shotId: shotIdStr } = c.req.param();
     const shotId = parseInt(shotIdStr, 10);
-    const aiConfig = getAIConfigFromHeaders(c.req);
+    const userId = c.get('userId') as string;
+    if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+    let aiConfig = getAIConfigFromHeaders(c.req);
+    if (!aiConfig) {
+        aiConfig = await getAIConfigFromRegistry(c.env.DB, 'generate_video');
+    }
 
     if (!aiConfig?.apiKey) {
         return c.json({ success: false, error: 'Missing AI Key' }, 401);
@@ -599,6 +632,9 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         if (shot.dialogue || shot.narration_text || shot.narration) {
             const text = shot.dialogue || shot.narration_text || shot.narration;
             try {
+                // Consume Credit for TTS
+                await consumeCredit(c.env.DB, userId, 'generate_speech', `生成Shot ${shotId}配音`);
+
                  let voiceId = 'Puck'; 
                  const colonIndex = text.indexOf('：');
                  if (colonIndex > -1 && colonIndex < 10) {
@@ -622,6 +658,9 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         // --- Video ---
         if (shot.status !== 'error') { // Only proceed if TTS didn't fail hard (or allow partial?)
              try {
+                // Consume Credit for Video
+                await consumeCredit(c.env.DB, userId, 'generate_video', `生成Shot ${shotId}视频`);
+
                 // Sanitize prompt
                 const promptParts = [
                     'Cinematic Chinese Manhua Animation',
@@ -669,8 +708,11 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
   const projectId = c.req.param('id');
 
   try {
-    // Read API config from headers
-    const aiConfig = getAIConfigFromHeaders(c.req);
+    // Read API config from headers or registry
+    let aiConfig = getAIConfigFromHeaders(c.req);
+    if (!aiConfig) {
+        aiConfig = await getAIConfigFromRegistry(c.env.DB, 'generate_outline');
+    }
     
     const { startEpisode = 1, endEpisode } = await c.req.json();
 

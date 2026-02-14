@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateCharacterGraph } from '../generateCharacters.js';
-import { getAIConfigFromHeaders } from '../services/aiClient.js';
+import { getAIConfigFromHeaders, getAIConfigFromRegistry } from '../services/aiClient.js';
+import { consumeCredit } from '../services/creditService.js';
 
 export const charactersRoutes = new Hono<{ Bindings: Env }>();
 
@@ -34,7 +35,13 @@ charactersRoutes.get('/:name', async (c) => {
 // Generate character graph
 charactersRoutes.post('/:name/generate', async (c) => {
   const name = c.req.param('name');
-  const aiConfig = getAIConfigFromHeaders(c.req.header());
+  const userId = c.get('userId') as string;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  let aiConfig = getAIConfigFromHeaders(c.req.header());
+
+  if (!aiConfig) {
+    aiConfig = await getAIConfigFromRegistry(c.env.DB, 'generate_characters');
+  }
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 401);
@@ -55,6 +62,13 @@ charactersRoutes.post('/:name/generate', async (c) => {
 
     if (!project.outline_json) {
       return c.json({ success: false, error: 'Outline not found. Please generate outline first.' }, 400);
+    }
+
+    // 0. Consume Credit
+    try {
+        await consumeCredit(c.env.DB, userId, 'generate_characters', `生成角色设定: ${name}`);
+    } catch (error) {
+        return c.json({ success: false, error: (error as Error).message }, 402);
     }
 
     // 2. Generate CRG

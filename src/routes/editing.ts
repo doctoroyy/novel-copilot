@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
+import { consumeCredit } from '../services/creditService.js';
 
 export const editingRoutes = new Hono<{ Bindings: Env }>();
 
@@ -130,8 +131,10 @@ editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
 editingRoutes.post('/projects/:name/chapters/:index/refine', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
-  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
+
+  const userId = c.get('userId') as string;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB, 'rewrite_chapter');
   
   if (!aiConfig) {
     return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
@@ -139,6 +142,13 @@ editingRoutes.post('/projects/:name/chapters/:index/refine', async (c) => {
   
   try {
     const { selectedText, instruction, context } = await c.req.json();
+    
+    // 0. Consume Credit
+    try {
+        await consumeCredit(c.env.DB, userId, 'rewrite_chapter', `重写章节内容`);
+    } catch (error) {
+        return c.json({ success: false, error: (error as Error).message }, 402);
+    }
     
     if (!selectedText || !instruction) {
       return c.json({ success: false, error: 'selectedText and instruction are required' }, 400);
@@ -247,8 +257,10 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
 editingRoutes.post('/projects/:name/chapters/:index/suggest', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
-  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
+
+  const userId = c.get('userId') as string;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB, 'ai_suggest');
   
   if (!aiConfig) {
     return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
@@ -308,8 +320,10 @@ ${contextBefore.slice(-1000)}`;
 editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
-  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
+
+  const userId = c.get('userId') as string;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB, 'ai_chat');
   
   if (!aiConfig) {
     return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);
@@ -416,10 +430,12 @@ editingRoutes.put('/projects/:name', async (c) => {
 editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
+
+  const userId = c.get('userId') as string;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
   
   // Get AI config from Model Registry
-  const aiConfig = await getAIConfigFromRegistry(c.env.DB);
+  const aiConfig = await getAIConfigFromRegistry(c.env.DB, 'consistency_check');
 
   if (!aiConfig) {
       return c.json({ success: false, error: '未配置 AI 模型，请联系管理员' }, 400);

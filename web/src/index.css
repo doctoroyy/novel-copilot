@@ -66,8 +66,9 @@
 */
 
 /* Light Theme (Default: Ember 🔥) */
-:root {
+:root, .light {
   --radius: 0.75rem;
+  color-scheme: light;
 
   /* Clean White base with subtle warmth */
   --background: #ffffff; 
