@@ -227,8 +227,6 @@ function App() {
 
   useEffect(() => {
     loadProjects();
-    // Set dark mode by default
-    // document.documentElement.classList.add('dark'); // Removed to respect user preference
   }, [loadProjects]);
 
   // Global task check: Only run ONCE on mount to detect any running tasks
