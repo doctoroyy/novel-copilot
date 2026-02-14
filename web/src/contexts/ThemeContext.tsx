@@ -36,7 +36,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const root = window.document.documentElement;
+    const body = window.document.body;
+    
+    // Clean up both root and body to avoid conflicts
     root.classList.remove('light', 'dark');
+    body.classList.remove('light', 'dark');
 
     if (theme === 'system') {
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

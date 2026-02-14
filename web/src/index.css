@@ -66,7 +66,7 @@
 */
 
 /* Light Theme (Default: Ember 🔥) */
-:root, .light {
+:root, :root.light, .light {
   --radius: 0.75rem;
   color-scheme: light;
 
@@ -134,7 +134,7 @@
 }
 
 /* Dark Theme - Deep Space */
-.dark {
+:root.dark, .dark {
   /* Rich, deep dark background - not just gray, but slightly cool/void black */
   --background: #09090b; /* zinc-950 */
   --foreground: #fafafa; /* zinc-50 */
