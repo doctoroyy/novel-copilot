@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
+import { consumeCredit } from '../services/creditService.js';
 import { writeOneChapter } from '../generateChapter.js';
 import { generateMasterOutline, generateVolumeChapters } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
@@ -16,7 +17,8 @@ export const generationRoutes = new Hono<{ Bindings: Env }>();
 
 // Helper to get AI config from Model Registry (server-side)
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
-async function getAIConfig(c: any, db: D1Database): Promise<AIConfig | null> {
+// Helper to get AI config from Model Registry (server-side) or Custom Headers
+async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise<AIConfig | null> {
   const userId = c.get('userId');
   
   // 1. Check if user has permission for custom provider
@@ -44,7 +46,7 @@ async function getAIConfig(c: any, db: D1Database): Promise<AIConfig | null> {
   }
 
   // 3. Fallback to registry
-  return getAIConfigFromRegistry(db);
+  return getAIConfigFromRegistry(db, featureKey || 'generate_chapter'); 
 }
 
 // Normalize chapter data from LLM output to consistent structure
@@ -132,7 +134,7 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -185,7 +187,18 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         // Phase 1: Generate master outline
         sendEvent('progress', { phase: 1, message: '正在生成总体大纲...' });
         console.log('Phase 1: Generating master outline...');
-        const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
+      // 0. Consume Credit
+    try {
+        await consumeCredit(c.env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
+    } catch (error) {
+        sendEvent('error', { error: (error as Error).message, status: 402 });
+        controller.close();
+        clearInterval(heartbeatInterval);
+        return;
+    }
+
+    // 1. Generate Outline
+    const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
         const totalVolumes = masterOutline.volumes?.length || 0;
         console.log(`Master outline generated: ${totalVolumes} volumes`);
         sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
@@ -278,7 +291,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -366,6 +379,15 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
         sendEvent('start', { index, title: outlineTitle });
         sendEvent('progress', { message: '正在调用 AI 生成...' });
 
+        // 0. Consume Credit
+        try {
+            await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${index} 章`);
+        } catch (error) {
+            sendEvent('error', { error: (error as Error).message, status: 402 }); // 402 Payment Required
+            controller.close();
+            return;
+        }
+
         // Generate chapter
         const result = await writeOneChapter({
           aiConfig,
@@ -431,7 +453,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
   
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -501,6 +523,13 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
             break;
           }
         }
+      }
+
+      // 0. Consume Credit
+      try {
+          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+      } catch (error) {
+          return c.json({ success: false, error: (error as Error).message }, 402); // 402 Payment Required
       }
 
       // Generate chapter
@@ -574,7 +603,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -903,7 +932,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1150,7 +1179,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
 // Generate bible
 generationRoutes.post('/generate-bible', async (c) => {
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
@@ -1274,7 +1303,7 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB);
+  const aiConfig = await getAIConfig(c, c.env.DB, 'refine_outline');
 
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);

@@ -41,19 +41,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (theme === 'system') {
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(systemTheme);
+      root.style.colorScheme = systemTheme;
     } else {
       root.classList.add(theme);
+      root.style.colorScheme = theme;
     }
     localStorage.setItem('theme', theme);
   }, [theme]);
 
   useEffect(() => {
     const root = window.document.documentElement;
-    if (colorTheme === 'ember') {
-      delete root.dataset.theme;
-    } else {
-      root.dataset.theme = colorTheme;
-    }
+    // Apply granular color theme (ember, jade, etc.) via data attribute
+    root.dataset.theme = colorTheme;
     localStorage.setItem('color-theme', colorTheme);
   }, [colorTheme]);
 
