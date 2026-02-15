@@ -18,7 +18,6 @@
 
 <p>
   <img src="./docs/images/app-home-project-list.png" alt="NovelCopilot App 项目列表页" width="220" />
-  <img src="./docs/images/app-project-home.png" alt="NovelCopilot App 项目主页" width="220" />
   <img src="./docs/images/app-chapter-list.png" alt="NovelCopilot App 章节列表页" width="220" />
   <img src="./docs/images/app-chapter-content.png" alt="NovelCopilot App 正文页" width="220" />
 </p>
