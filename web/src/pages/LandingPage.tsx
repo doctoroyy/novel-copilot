@@ -9,11 +9,16 @@ import {
   Clapperboard, 
   ArrowRight,
   ChevronRight,
+  Download,
   Zap,
   Brain,
   FileText,
   Bot
 } from 'lucide-react';
+
+const ANDROID_DIRECT_DOWNLOAD_URL =
+  'https://github.com/doctoroyy/novel-copilot/releases/download/mobile-builds/NovelCopilot-android-universal.apk';
+const ANDROID_ACCELERATED_DOWNLOAD_URL = `https://ghproxy.net/${ANDROID_DIRECT_DOWNLOAD_URL}`;
 
 export function LandingPage() {
   return (
@@ -82,6 +87,23 @@ export function LandingPage() {
             >
               了解更多
             </Button>
+          </div>
+
+          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Button asChild variant="secondary" size="sm" className="h-10">
+              <a href={ANDROID_ACCELERATED_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+                <Download className="h-4 w-4 mr-2" />
+                Android 下载（国内加速）
+              </a>
+            </Button>
+            <a
+              href={ANDROID_DIRECT_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+            >
+              GitHub 直链
+            </a>
           </div>
           
           {/* Stats */}
