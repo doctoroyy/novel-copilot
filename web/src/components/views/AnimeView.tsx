@@ -284,7 +284,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
         .sort((a, b) => a - b);
       for (const index of chapterIndices) {
         const data = await requestJson<{ success: boolean; content?: string; error?: string }>(
-          `/api/projects/${encodeURIComponent(project.name)}/chapters/${index}`,
+          `/api/projects/${encodeURIComponent(project.id)}/chapters/${index}`,
           { headers: getAuthHeaders() }
         );
         if (data.success && typeof data.content === 'string') {

@@ -45,7 +45,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     try {
       setLoading(true);
       setError(null);
-      const crg = await fetchCharacters(project.name);
+      const crg = await fetchCharacters(project.id);
       setData(crg);
       setSelectedNode(null);
       setHoverNode(null);
@@ -54,7 +54,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [project.name]);
+  }, [project.id]);
 
   useEffect(() => {
     void loadData();
@@ -64,7 +64,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     try {
       setLoading(true);
       setError(null);
-      const crg = await generateCharacters(project.name, getAIConfigHeaders(aiConfig));
+      const crg = await generateCharacters(project.id, getAIConfigHeaders(aiConfig));
       setData(crg);
     } catch (err) {
       setError((err as Error).message);

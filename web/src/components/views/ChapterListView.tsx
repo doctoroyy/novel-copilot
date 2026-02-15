@@ -63,9 +63,19 @@ interface ChapterListViewProps {
   onDeleteChapter?: (index: number) => Promise<void>;
   onBatchDeleteChapters?: (indices: number[]) => Promise<void>;
   onProjectRefresh?: () => Promise<void> | void;
+  onGenerateNextChapter?: () => Promise<void>;
+  isProjectGenerating?: boolean;
 }
 
-export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters, onProjectRefresh }: ChapterListViewProps) {
+export function ChapterListView({
+  project,
+  onViewChapter,
+  onDeleteChapter,
+  onBatchDeleteChapters,
+  onProjectRefresh,
+  onGenerateNextChapter,
+  isProjectGenerating = false,
+}: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -95,8 +105,8 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const nextChapterIndex = project.state.nextChapterIndex;
   const generatedChapters = Math.max(0, nextChapterIndex - 1);
   const remainingChapters = Math.max(0, project.state.totalChapters - generatedChapters);
-  const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && generatingChapter === null;
-  const isGeneratingNextChapter = generatingChapter === nextChapterIndex;
+  const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && generatingChapter === null && !isProjectGenerating;
+  const isGeneratingNextChapter = isProjectGenerating || generatingChapter === nextChapterIndex;
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -188,8 +198,12 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     setActionError(null);
     setGeneratingChapter(nextIndex);
     try {
-      await generateSingleChapter(project.name, nextIndex, false);
-      await onProjectRefresh?.();
+      if (onGenerateNextChapter) {
+        await onGenerateNextChapter();
+      } else {
+        await generateSingleChapter(project.id, nextIndex, false);
+        await onProjectRefresh?.();
+      }
     } catch (err) {
       console.error('Generation failed:', err);
       setActionError(`生成失败：${(err as Error).message}`);
@@ -205,7 +219,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     setActionError(null);
     setGeneratingChapter(index);
     try {
-      await generateSingleChapter(project.name, index, true);
+      await generateSingleChapter(project.id, index, true);
       await onProjectRefresh?.();
     } catch (err) {
       console.error('Regeneration failed:', err);
@@ -740,7 +754,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
       {/* Chapter Editor (Full-screen overlay) */}
       {editingChapter && (
         <ChapterEditor
-          projectName={project.name}
+          projectName={project.id}
           chapterIndex={editingChapter.index}
           initialContent={editingChapter.content}
           onClose={() => {

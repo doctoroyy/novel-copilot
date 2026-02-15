@@ -804,9 +804,9 @@ function App() {
         <div className="w-[280px] h-full">
           <Sidebar
             projects={projects}
-            selectedProject={selectedProject?.name || null}
-            onSelectProject={(name) => {
-              handleSelectProject(name);
+            selectedProjectId={selectedProject?.id || selectedProject?.path || null}
+            onSelectProject={(projectId) => {
+              handleSelectProject(projectId);
               setMobileSidebarOpen(false);
             }}
             onNewProject={() => {

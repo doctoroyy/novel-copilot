@@ -81,7 +81,7 @@ export function ActivityPanel({
 
 
   const progressPercent = progress && progress.total > 0
-    ? Math.min(100, Math.max(0, Math.round((Math.max(0, progress.current - 1) / progress.total) * 100)))
+    ? Math.min(100, Math.max(0, Math.round((Math.max(0, progress.current) / progress.total) * 100)))
     : 0;
 
   return (

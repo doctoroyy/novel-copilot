@@ -118,15 +118,15 @@ createRoot(document.getElementById('root')!).render(
                 {/* Main app with nested routes */}
                 <Route element={<ProtectedRoute><ProjectLayout /></ProtectedRoute>}>
                   <Route index element={<DashboardPage />} />
-                  <Route path="project/:projectName" element={<Navigate to="dashboard" replace />} />
-                  <Route path="project/:projectName/dashboard" element={<DashboardPage />} />
-                  <Route path="project/:projectName/outline" element={<OutlinePage />} />
-                  <Route path="project/:projectName/generate" element={<GeneratePage />} />
-                  <Route path="project/:projectName/chapters" element={<ChaptersPage />} />
-                  <Route path="project/:projectName/bible" element={<BiblePage />} />
-                  <Route path="project/:projectName/characters" element={<CharactersPage />} />
-                  <Route path="project/:projectName/anime" element={<AnimePage />} />
-                  <Route path="project/:projectName/anime/episode/:episodeId" element={<AnimePage />} />
+                  <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
+                  <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
+                  <Route path="project/:projectId/outline" element={<OutlinePage />} />
+                  <Route path="project/:projectId/generate" element={<GeneratePage />} />
+                  <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
+                  <Route path="project/:projectId/bible" element={<BiblePage />} />
+                  <Route path="project/:projectId/characters" element={<CharactersPage />} />
+                  <Route path="project/:projectId/anime" element={<AnimePage />} />
+                  <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
                 </Route>
               </Routes>
             </BrowserRouter>
@@ -137,5 +137,4 @@ createRoot(document.getElementById('root')!).render(
     </AuthProvider>
   </StrictMode>,
 )
-
 

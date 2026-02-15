@@ -9,10 +9,16 @@ export const charactersRoutes = new Hono<{ Bindings: Env }>();
 // Get character graph
 charactersRoutes.get('/:name', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId') as string | null;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -50,11 +56,13 @@ charactersRoutes.post('/:name/generate', async (c) => {
   try {
     // 1. 获取项目信息
     const project = await c.env.DB.prepare(`
-      SELECT p.id, p.bible, o.outline_json
+      SELECT p.id, p.name, p.bible, o.outline_json
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
-      WHERE p.name = ? AND p.deleted_at IS NULL
-    `).bind(name).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -62,7 +70,7 @@ charactersRoutes.post('/:name/generate', async (c) => {
 
     // 0. 消耗积分
     try {
-        await consumeCredit(c.env.DB, userId, 'generate_characters', `生成角色设定: ${name}`);
+        await consumeCredit(c.env.DB, userId, 'generate_characters', `生成角色设定: ${(project as any).name}`);
     } catch (error) {
         return c.json({ success: false, error: (error as Error).message }, 402);
     }
@@ -103,12 +111,18 @@ charactersRoutes.post('/:name/generate', async (c) => {
 // Manual update
 charactersRoutes.put('/:name', async (c) => {
   const name = c.req.param('name');
+  const userId = c.get('userId') as string | null;
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
   const { characters } = await c.req.json();
 
   try {
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first();
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
