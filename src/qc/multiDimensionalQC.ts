@@ -264,6 +264,21 @@ function checkStructuralIntegrity(
   const issues: QCIssue[] = [];
   let score = 100;
 
+  const trimmed = chapterText.trim();
+  const looksLikeJsonPayload = (
+    (/^```json/i.test(trimmed) && /"content"\s*:/.test(trimmed))
+    || ((trimmed.startsWith('{') || trimmed.startsWith('[')) && /"content"\s*:/.test(trimmed) && /"title"\s*:/.test(trimmed))
+  );
+  if (looksLikeJsonPayload) {
+    issues.push({
+      type: 'structure',
+      severity: 'critical',
+      description: '章节内容是 JSON 结构而非正文文本',
+      suggestion: '请仅输出章节正文（含标题），不要输出 JSON 或代码块',
+    });
+    return { score: 0, issues };
+  }
+
   // 检查字数
   const charCount = chapterText.length;
   if (charCount < 1500) {
