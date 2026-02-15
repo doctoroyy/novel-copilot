@@ -11,6 +11,8 @@ export default function GeneratePage() {
     generationState,
     handleGenerateOutline,
     handleGenerateChapters,
+    handleCancelGeneration,
+    cancelingGeneration,
     handleResetProject,
   } = useProject();
 
@@ -51,6 +53,8 @@ export default function GeneratePage() {
       generateCount={generateCount}
       onGenerateCountChange={setGenerateCount}
       onGenerateChapters={() => handleGenerateChapters(generateCount)}
+      onCancelGeneration={handleCancelGeneration}
+      cancelingGeneration={cancelingGeneration}
       onResetState={handleResetProject}
     />
   );

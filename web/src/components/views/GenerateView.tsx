@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine } from 'lucide-react';
+import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine, Square } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -43,6 +43,8 @@ interface GenerateViewProps {
   generateCount: string;
   onGenerateCountChange: (value: string) => void;
   onGenerateChapters: () => void;
+  onCancelGeneration?: () => void;
+  cancelingGeneration?: boolean;
   onResetState: () => void;
 }
 
@@ -61,6 +63,8 @@ export function GenerateView({
   generateCount,
   onGenerateCountChange,
   onGenerateChapters,
+  onCancelGeneration,
+  cancelingGeneration,
   onResetState,
 }: GenerateViewProps) {
   const chaptersGenerated = Math.max(0, project.state.nextChapterIndex - 1);
@@ -213,6 +217,19 @@ export function GenerateView({
           >
             {(loading || generatingCurrentProject) ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
           </Button>
+
+          {generatingCurrentProject && onCancelGeneration && (
+            <Button
+              onClick={onCancelGeneration}
+              disabled={Boolean(cancelingGeneration)}
+              variant="destructive"
+              className="w-full text-sm lg:text-base"
+            >
+              {cancelingGeneration
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> 正在取消...</>
+                : <><Square className="h-4 w-4" /> 取消生成</>}
+            </Button>
+          )}
 
           {!project.outline && (
             <p className="text-xs lg:text-sm text-muted-foreground text-center">
