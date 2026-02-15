@@ -89,19 +89,49 @@ jobs:
 
   ios-package:
     name: iOS IPA
-    if: ${{ secrets.IOS_CERT_BASE64 != '' && secrets.IOS_CERT_PASSWORD != '' && secrets.IOS_PROVISION_PROFILE_BASE64 != '' && secrets.IOS_TEAM_ID != '' && secrets.IOS_KEYCHAIN_PASSWORD != '' }}
     runs-on: macos-15
     timeout-minutes: 70
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check iOS signing secrets
+        id: ios_secrets
+        env:
+          IOS_CERT_BASE64: ${{ secrets.IOS_CERT_BASE64 }}
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          missing=0
+          for key in IOS_CERT_BASE64 IOS_CERT_PASSWORD IOS_PROVISION_PROFILE_BASE64 IOS_TEAM_ID IOS_KEYCHAIN_PASSWORD; do
+            if [ -z "${!key}" ]; then
+              echo "[warn] missing required secret: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -eq 1 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip iOS build (secrets missing)
+        if: ${{ steps.ios_secrets.outputs.ready != 'true' }}
+        run: |
+          echo "Skipping iOS build because required signing secrets are not set."
+          echo "Required secrets: IOS_CERT_BASE64, IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE_BASE64, IOS_TEAM_ID, IOS_KEYCHAIN_PASSWORD."
+
       - name: Setup pnpm
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         uses: pnpm/action-setup@v4
         with:
           version: "9"
 
       - name: Setup Node.js
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -111,15 +141,19 @@ jobs:
             mobile/pnpm-lock.yaml
 
       - name: Install root dependencies
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         run: pnpm install --frozen-lockfile
 
       - name: Install mobile dependencies
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         run: pnpm -C mobile install --frozen-lockfile
 
       - name: Install CocoaPods dependencies
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         run: cd mobile/ios && pod install
 
       - name: Configure signing assets
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         id: signing
         env:
           IOS_CERT_BASE64: ${{ secrets.IOS_CERT_BASE64 }}
@@ -152,6 +186,7 @@ jobs:
           echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Build and export IPA
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         id: build_ios
         env:
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -177,6 +212,7 @@ jobs:
           echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload IPA
+        if: ${{ steps.ios_secrets.outputs.ready == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
@@ -184,14 +220,5 @@ jobs:
           if-no-files-found: error
 
       - name: Cleanup temporary keychain
-        if: always()
+        if: ${{ always() && steps.ios_secrets.outputs.ready == 'true' }}
         run: security delete-keychain "$RUNNER_TEMP/build-signing.keychain-db" || true
-
-  ios-signing-not-configured:
-    name: iOS signing not configured
-    if: ${{ !(secrets.IOS_CERT_BASE64 != '' && secrets.IOS_CERT_PASSWORD != '' && secrets.IOS_PROVISION_PROFILE_BASE64 != '' && secrets.IOS_TEAM_ID != '' && secrets.IOS_KEYCHAIN_PASSWORD != '') }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "Skipping iOS build because required signing secrets are not set."
-          echo "Required secrets: IOS_CERT_BASE64, IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE_BASE64, IOS_TEAM_ID, IOS_KEYCHAIN_PASSWORD."
