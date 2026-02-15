@@ -217,16 +217,15 @@ export async function updateTaskProgress(
       UPDATE generation_tasks 
       SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(failedChapters), failedChapters.length + (JSON.parse(task.completed_chapters || '[]').length), message || `第 ${completedChapter} 章生成失败`, taskId).run();
+    `).bind(JSON.stringify(failedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
   } else {
     const completedChapters = JSON.parse(task.completed_chapters || '[]');
     completedChapters.push(completedChapter);
-    const progressCount = completedChapters.length;
     await db.prepare(`
       UPDATE generation_tasks 
       SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(JSON.stringify(completedChapters), progressCount, message || `第 ${completedChapter} 章完成`, taskId).run();
+    `).bind(JSON.stringify(completedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
 }
 
@@ -243,18 +242,25 @@ export async function completeTask(
   `).bind(success ? 'completed' : 'failed', errorMessage || null, taskId).run();
 }
 
-// Check if there's a recently active running task (within last 2 minutes)
+// Check if there is a running task for a project (optionally scoped to a user)
 export async function checkRunningTask(
   db: D1Database,
-  projectId: string
+  projectId: string,
+  userId?: string
 ): Promise<{ isRunning: boolean; taskId?: number; task?: any }> {
-  const task = await db.prepare(`
-    SELECT * FROM generation_tasks 
-    WHERE project_id = ? AND status = 'running'
-    AND updated_at > datetime('now', '-2 minutes')
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `).bind(projectId).first() as any;
+  const task = (userId
+    ? await db.prepare(`
+        SELECT * FROM generation_tasks
+        WHERE project_id = ? AND user_id = ? AND status = 'running'
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).bind(projectId, userId).first()
+    : await db.prepare(`
+        SELECT * FROM generation_tasks
+        WHERE project_id = ? AND status = 'running'
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).bind(projectId).first()) as any;
 
   if (task) {
     return { 
@@ -282,16 +288,11 @@ export async function updateTaskMessage(
   currentChapter?: number
 ): Promise<void> {
   if (currentChapter !== undefined) {
-    // Fetch start_chapter to calculate relative progress
-    const task = await db.prepare('SELECT start_chapter FROM generation_tasks WHERE id = ?').bind(taskId).first() as { start_chapter: number } | null;
-    const startChapter = task?.start_chapter || 1;
-    const relativeProgress = Math.max(0, currentChapter - startChapter);
-
     await db.prepare(`
       UPDATE generation_tasks 
       SET current_message = ?, current_progress = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(message, relativeProgress, taskId).run();
+    `).bind(message, currentChapter, taskId).run();
   } else {
     await db.prepare(`
       UPDATE generation_tasks 
@@ -299,4 +300,38 @@ export async function updateTaskMessage(
       WHERE id = ?
     `).bind(message, taskId).run();
   }
+}
+
+export async function getTaskById(
+  db: D1Database,
+  taskId: number,
+  userId: string
+): Promise<GenerationTask | null> {
+  const task = await db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM generation_tasks t
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.id = ? AND t.user_id = ?
+    LIMIT 1
+  `).bind(taskId, userId).first() as any;
+
+  if (!task) return null;
+
+  return {
+    id: task.id,
+    projectId: task.project_id,
+    projectName: task.project_name,
+    userId: task.user_id,
+    targetCount: task.target_count,
+    startChapter: task.start_chapter,
+    completedChapters: JSON.parse(task.completed_chapters || '[]'),
+    failedChapters: JSON.parse(task.failed_chapters || '[]'),
+    currentProgress: task.current_progress || 0,
+    currentMessage: task.current_message || null,
+    status: task.status,
+    errorMessage: task.error_message,
+    createdAt: task.created_at,
+    updatedAt: task.updated_at,
+    updatedAtMs: new Date(task.updated_at + 'Z').getTime(),
+  };
 }

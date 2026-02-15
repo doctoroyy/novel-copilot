@@ -499,7 +499,7 @@ export async function generateChaptersWithProgress(
             break;
           case 'done':
             callbacks.onDone?.(event.generated || results, event.failedChapters || []);
-            return results;
+            return event.generated || results;
           case 'error':
             callbacks.onError?.(event.error || 'Unknown error');
             throw new Error(event.error || 'Generation failed');

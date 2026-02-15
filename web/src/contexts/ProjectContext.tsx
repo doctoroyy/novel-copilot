@@ -120,6 +120,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadProjectRequestIdRef = useRef(0);
+  const lastTaskSnapshotRef = useRef<{ id: number; completed: number; failed: number } | null>(null);
 
   // AI Config
   const { config, isConfigured } = useAIConfig();
@@ -218,35 +219,91 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
-  // Check for running tasks on mount
+  // Poll active tasks globally so refresh/reopen can recover running progress
   useEffect(() => {
-    const checkActiveTasks = async () => {
+    let stopped = false;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const syncActiveTasks = async () => {
       try {
         const tasks = await getAllActiveTasks();
-        const runningTask = tasks.find(t => t.status === 'running');
-        if (runningTask) {
-          const threeMinutesMs = 3 * 60 * 1000;
-          const isHealthy = runningTask.updatedAtMs && (Date.now() - runningTask.updatedAtMs < threeMinutesMs);
-          
-          if (isHealthy) {
-            setGenerationState({
-              isGenerating: true,
-              current: runningTask.completedChapters.length,
-              total: runningTask.targetCount,
-              currentChapter: runningTask.currentProgress,
-              status: 'generating',
-              message: runningTask.currentMessage || `正在生成第 ${runningTask.currentProgress} 章...`,
-              startTime: runningTask.updatedAtMs - (runningTask.completedChapters.length * 60 * 1000),
-              projectName: runningTask.projectName,
-            });
+        if (stopped) return;
+
+        const runningTask = tasks.find((task) => task.status === 'running');
+        const pausedTask = tasks.find((task) => task.status === 'paused');
+        const activeTask = runningTask || pausedTask || null;
+
+        if (!activeTask) {
+          lastTaskSnapshotRef.current = null;
+          setGenerationState((prev) => (
+            prev.isGenerating
+              ? {
+                ...prev,
+                isGenerating: false,
+                status: prev.status === 'error' ? 'error' : 'done',
+                message: prev.message || '任务已结束',
+              }
+              : prev
+          ));
+          return;
+        }
+
+        const completedCount = activeTask.completedChapters.length;
+        const failedCount = activeTask.failedChapters.length;
+        const currentChapter = activeTask.currentProgress || activeTask.startChapter;
+
+        setGenerationState((prev) => ({
+          ...prev,
+          isGenerating: activeTask.status === 'running',
+          current: completedCount,
+          total: activeTask.targetCount,
+          currentChapter,
+          status: activeTask.status === 'running' ? 'generating' : 'preparing',
+          message: activeTask.currentMessage || (
+            activeTask.status === 'running'
+              ? `正在生成第 ${currentChapter} 章...`
+              : '任务已暂停'
+          ),
+          projectName: activeTask.projectName,
+          startTime: prev.startTime || activeTask.updatedAtMs || Date.now(),
+        }));
+
+        if (selectedProject?.name === activeTask.projectName && activeTask.status === 'running') {
+          const previous = lastTaskSnapshotRef.current;
+          const changed = !previous
+            || previous.id !== activeTask.id
+            || previous.completed !== completedCount
+            || previous.failed !== failedCount;
+          lastTaskSnapshotRef.current = {
+            id: activeTask.id,
+            completed: completedCount,
+            failed: failedCount,
+          };
+          if (changed && !loading) {
+            void loadProject(selectedProject.name);
           }
+        } else {
+          lastTaskSnapshotRef.current = {
+            id: activeTask.id,
+            completed: completedCount,
+            failed: failedCount,
+          };
         }
       } catch (err) {
         console.warn('Failed to check active tasks:', err);
       }
     };
-    checkActiveTasks();
-  }, [setGenerationState]);
+
+    void syncActiveTasks();
+    pollTimer = setInterval(() => {
+      void syncActiveTasks();
+    }, 2500);
+
+    return () => {
+      stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [setGenerationState, selectedProject?.name, loadProject, loading]);
 
   // Load project when URL changes
   useEffect(() => {
