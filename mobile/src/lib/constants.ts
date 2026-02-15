@@ -1,4 +1,4 @@
-export const DEFAULT_API_BASE_URL = 'http://localhost:5173/api';
+export const DEFAULT_API_BASE_URL = 'https://novel-copilot.doctoroyy.net';
 
 export const DEFAULT_AI_PROVIDER = 'gemini';
 export const DEFAULT_AI_MODEL = 'gemini-2.5-pro';
