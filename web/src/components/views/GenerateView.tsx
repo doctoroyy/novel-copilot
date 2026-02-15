@@ -73,7 +73,7 @@ export function GenerateView({
     ? Math.min(100, Math.max(0, (chaptersGenerated / project.state.totalChapters) * 100))
     : 0;
   const generatingCurrentProject = Boolean(
-    generationState?.isGenerating && generationState.projectName === project.name
+    generationState?.isGenerating && (!generationState.projectName || generationState.projectName === project.name)
   );
   const selectedGenerateCount = Number.parseInt(generateCount, 10);
   const normalizedGenerateCount = remainingChapters > 0
