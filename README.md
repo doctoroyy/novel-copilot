@@ -19,6 +19,7 @@ A full-stack AI novel creation platform powered by Cloudflare Workers, with both
 <p>
   <img src="./docs/images/app-home-project-list.png" alt="NovelCopilot App Home" width="220" />
   <img src="./docs/images/app-project-home.png" alt="NovelCopilot App Project Home" width="220" />
+  <img src="./docs/images/app-chapter-list.png" alt="NovelCopilot App Chapter List" width="220" />
   <img src="./docs/images/app-chapter-content.png" alt="NovelCopilot App Chapter Content" width="220" />
 </p>
 
