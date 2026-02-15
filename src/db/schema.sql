@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   failed_chapters TEXT DEFAULT '[]',
   current_progress INTEGER DEFAULT 0,
   current_message TEXT DEFAULT NULL,
+  cancel_requested INTEGER DEFAULT 0,
   status TEXT DEFAULT 'running' CHECK(status IN ('running', 'paused', 'completed', 'failed')),
   error_message TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

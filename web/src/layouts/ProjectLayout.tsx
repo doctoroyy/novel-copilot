@@ -17,7 +17,7 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { generateBible as apiBible } from '@/lib/api';
 
 function ProjectLayoutInner() {
@@ -62,7 +62,6 @@ function ProjectLayoutInner() {
 
   // AI Bible generation for new project
   const handleGenerateBibleForNew = async () => {
-    if (!aiGenre.trim()) return;
     setGeneratingBible(true);
     try {
       const result = await apiBible(aiGenre, aiTheme, aiKeywords);
@@ -71,25 +70,49 @@ function ProjectLayoutInner() {
       }
     } catch (err) {
       console.error('Failed to generate bible:', err);
+      setError(`生成设定失败：${(err as Error).message}`);
     } finally {
       setGeneratingBible(false);
     }
   };
 
-  const submitNewProject = () => {
-    handleCreateProject(newProjectName, newProjectBible, newProjectChapters);
-    setNewProjectName('');
-    setNewProjectBible('');
-    setNewProjectChapters('400');
-    setAiGenre('');
-    setAiTheme('');
-    setAiKeywords('');
+  const submitNewProject = async () => {
+    const trimmedName = newProjectName.trim();
+    const trimmedBible = newProjectBible.trim();
+    const parsedChapters = Number.parseInt(newProjectChapters, 10);
+
+    if (!trimmedName) {
+      setError('请输入项目名称');
+      return;
+    }
+    if (!trimmedBible) {
+      setError('请输入小说设定（Bible）或先使用 AI 生成');
+      return;
+    }
+    if (!Number.isInteger(parsedChapters) || parsedChapters <= 0) {
+      setError('目标章节数必须是大于 0 的整数');
+      return;
+    }
+
+    try {
+      await handleCreateProject(trimmedName, trimmedBible, String(parsedChapters));
+      setNewProjectName('');
+      setNewProjectBible('');
+      setNewProjectChapters('400');
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+    } catch {
+      // Error is already surfaced by ProjectContext.
+    }
   };
 
-  // Clear error after 5 seconds
-  if (error) {
-    setTimeout(() => setError(null), 5000);
-  }
+  // Clear error toast after 5 seconds
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [error, setError]);
 
   return (
     <div className="h-screen flex overflow-hidden bg-background text-foreground">
@@ -242,7 +265,7 @@ function ProjectLayoutInner() {
                 variant="outline" 
                 size="sm"
                 onClick={handleGenerateBibleForNew}
-                disabled={generatingBible || !aiGenre.trim()}
+                disabled={generatingBible}
                 className="flex items-center gap-2"
               >
                 <Sparkles className="h-4 w-4" />
@@ -267,8 +290,14 @@ function ProjectLayoutInner() {
               <Button variant="outline">取消</Button>
             </DialogClose>
             <Button 
-              onClick={submitNewProject}
-              disabled={!newProjectName.trim() || loading}
+              onClick={() => { void submitNewProject(); }}
+              disabled={
+                !newProjectName.trim() ||
+                !newProjectBible.trim() ||
+                !Number.isInteger(Number.parseInt(newProjectChapters, 10)) ||
+                Number.parseInt(newProjectChapters, 10) <= 0 ||
+                loading
+              }
             >
               创建项目
             </Button>

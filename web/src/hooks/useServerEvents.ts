@@ -33,15 +33,35 @@ interface UseServerEventsOptions {
 export function useServerEvents({ onLog, onProgress, enabled = true }: UseServerEventsOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const enabledRef = useRef(enabled);
+  const onLogRef = useRef(onLog);
+  const onProgressRef = useRef(onProgress);
+  const connectRef = useRef<() => void>(() => {});
 
   const [connected, setConnected] = useState(false);
 
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
+
+  useEffect(() => {
+    onLogRef.current = onLog;
+  }, [onLog]);
+
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
   const connect = useCallback(() => {
-    if (!enabled) return;
+    if (!enabledRef.current) return;
     
     // Close existing connection
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = undefined;
     }
 
     // EventSource doesn't support custom headers, so pass token via query param
@@ -59,10 +79,10 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
       try {
         const data = JSON.parse(event.data) as ServerEvent;
         
-        if (data.type === 'log' && onLog) {
-          onLog(data);
-        } else if (data.type === 'progress' && onProgress) {
-          onProgress(data);
+        if (data.type === 'log' && onLogRef.current) {
+          onLogRef.current(data);
+        } else if (data.type === 'progress' && onProgressRef.current) {
+          onProgressRef.current(data);
         }
       } catch (err) {
         console.error('Failed to parse SSE event:', err);
@@ -73,25 +93,45 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
       console.log('SSE connection lost, reconnecting...');
       setConnected(false);
       eventSource.close();
+      if (!enabledRef.current) return;
       // Reconnect after 3 seconds
-      reconnectTimeoutRef.current = setTimeout(connect, 3000);
+      reconnectTimeoutRef.current = setTimeout(() => {
+        connectRef.current();
+      }, 3000);
     };
 
-  }, [enabled, onLog, onProgress]);
+  }, []);
 
   useEffect(() => {
-    connect();
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    if (!enabled) {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = undefined;
+      }
+      return;
+    }
+
+    connectRef.current();
 
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = undefined;
       }
     };
-  }, [connect]);
+  }, [enabled]);
 
-  return { connected };
+  return { connected: enabled ? connected : false };
 }
-

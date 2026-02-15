@@ -11,9 +11,11 @@ interface DashboardViewProps {
 }
 
 export function DashboardView({ project, onGenerateOutline, onGenerateChapters, loading }: DashboardViewProps) {
-  const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
-  const chaptersGenerated = project.state.nextChapterIndex - 1;
-  const chaptersRemaining = project.state.totalChapters - chaptersGenerated;
+  const chaptersGenerated = Math.max(0, project.state.nextChapterIndex - 1);
+  const progress = project.state.totalChapters > 0
+    ? Math.min(100, Math.max(0, (chaptersGenerated / project.state.totalChapters) * 100))
+    : 0;
+  const chaptersRemaining = Math.max(0, project.state.totalChapters - chaptersGenerated);
 
   // SVG circle constants
   const MOBILE_CIRCLE = { cx: 64, cy: 64, r: 56 };
@@ -166,10 +168,10 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
             {project.outline && (
               <Button 
                 onClick={onGenerateChapters} 
-                disabled={loading}
+                disabled={loading || chaptersRemaining <= 0}
                 className="gradient-bg hover:opacity-90 text-sm lg:text-base"
               >
-                {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><Wand2 className="h-4 w-4" /> 生成下一章</>}
+                {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : chaptersRemaining <= 0 ? <><CheckCircle className="h-4 w-4" /> 已达目标</> : <><Wand2 className="h-4 w-4" /> 生成下一章</>}
               </Button>
             )}
           </div>

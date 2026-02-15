@@ -41,21 +41,24 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     return () => window.removeEventListener('resize', updateDims);
   }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const crg = await fetchCharacters(project.name);
       setData(crg);
+      setSelectedNode(null);
+      setHoverNode(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [project.name]);
 
   useEffect(() => {
-    loadData();
-  }, [project.name]);
+    void loadData();
+  }, [loadData]);
 
   const handleGenerate = async () => {
     try {
@@ -244,6 +247,11 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     <div className="flex h-full relative overflow-hidden bg-slate-950">
       {/* Graph Area */}
       <div className="flex-1 relative" ref={containerRef}>
+        {error && (
+          <div className="absolute top-4 right-4 z-20 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive max-w-sm">
+            {error}
+          </div>
+        )}
         <ForceGraph2D
           ref={graphRef}
           width={dimensions.width}

@@ -346,6 +346,7 @@ export type GenerationEvent = {
   wordCount?: number;
   // chapter_error event
   error?: string;
+  cancelled?: boolean;
   // done event
   success?: boolean;
   generated?: { chapter: number; title: string }[];
@@ -499,8 +500,12 @@ export async function generateChaptersWithProgress(
             break;
           case 'done':
             callbacks.onDone?.(event.generated || results, event.failedChapters || []);
-            return results;
+            return event.generated || results;
           case 'error':
+            if (event.cancelled) {
+              callbacks.onError?.(event.error || '任务已取消');
+              return results;
+            }
             callbacks.onError?.(event.error || 'Unknown error');
             throw new Error(event.error || 'Generation failed');
         }
@@ -542,6 +547,7 @@ export type GenerationTask = {
   failedChapters: number[];
   currentProgress: number;  // Current chapter being processed
   currentMessage: string | null;  // Status message for sync
+  cancelRequested: boolean;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
   createdAt: string;
@@ -563,18 +569,26 @@ export async function getActiveTask(name: string): Promise<GenerationTask | null
 
 // Cancel/delete a generation task
 export async function cancelTask(name: string, taskId: number): Promise<void> {
-  await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/tasks/${taskId}`, {
-    method: 'DELETE',
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/tasks/${taskId}/cancel`, {
+    method: 'POST',
     headers: defaultHeaders(),
   });
+  const data = await res.json().catch(() => ({ success: res.ok }));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || '取消任务失败');
+  }
 }
 
-// Cancel/delete ALL active generation tasks for a project
+// Request cancellation for ALL active generation tasks for a project
 export async function cancelAllActiveTasks(name: string): Promise<void> {
-  await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-tasks`, {
-    method: 'DELETE',
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/active-tasks/cancel`, {
+    method: 'POST',
     headers: defaultHeaders(),
   });
+  const data = await res.json().catch(() => ({ success: res.ok }));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || '批量取消任务失败');
+  }
 }
 
 // Get all active generation tasks for the current user (global)
@@ -817,6 +831,12 @@ export async function createChapter(
     body: JSON.stringify({ content, insertAfter }),
   });
   const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || '创建章节失败');
+  }
+  if (typeof data.chapterIndex !== 'number') {
+    throw new Error('创建章节失败：未返回章节编号');
+  }
   return { chapterIndex: data.chapterIndex };
 }
 

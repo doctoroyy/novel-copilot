@@ -11,7 +11,7 @@ import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
-import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTask, updateTaskMessage } from './tasks.js';
+import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTask, updateTaskMessage, getTaskById } from './tasks.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -133,7 +133,10 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 // Generate outline (streaming SSE to avoid Workers timeout)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
 
   if (!aiConfig) {
@@ -296,7 +299,10 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
@@ -458,7 +464,10 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 // Generate chapters
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
   
   if (!aiConfig) {
@@ -605,322 +614,634 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
   }
 });
 
-// Streaming chapter generation with SSE
+type RealtimeProgressStatus =
+  | 'starting'
+  | 'analyzing'
+  | 'planning'
+  | 'generating'
+  | 'reviewing'
+  | 'repairing'
+  | 'saving'
+  | 'updating_summary'
+  | 'done'
+  | 'error';
+
+let eventBusModulePromise: Promise<typeof import('../eventBus.js')> | null = null;
+
+function normalizeRealtimeStatus(status?: string): RealtimeProgressStatus {
+  if (!status) return 'generating';
+  if (status === 'preparing') return 'starting';
+  const known = new Set<RealtimeProgressStatus>([
+    'starting',
+    'analyzing',
+    'planning',
+    'generating',
+    'reviewing',
+    'repairing',
+    'saving',
+    'updating_summary',
+    'done',
+    'error',
+  ]);
+  return known.has(status as RealtimeProgressStatus)
+    ? (status as RealtimeProgressStatus)
+    : 'generating';
+}
+
+async function emitProgressEvent(data: {
+  projectName: string;
+  current: number;
+  total: number;
+  chapterIndex: number;
+  status?: string;
+  message?: string;
+}) {
+  try {
+    if (!eventBusModulePromise) {
+      eventBusModulePromise = import('../eventBus.js');
+    }
+    const { eventBus } = await eventBusModulePromise;
+    eventBus.progress({
+      projectName: data.projectName,
+      current: data.current,
+      total: data.total,
+      chapterIndex: data.chapterIndex,
+      status: normalizeRealtimeStatus(data.status),
+      message: data.message,
+    });
+  } catch (err) {
+    console.warn('Failed to emit progress event:', (err as Error).message);
+  }
+}
+
+type TaskRuntimeControl = {
+  exists: boolean;
+  status: string | null;
+  cancelRequested: boolean;
+};
+
+async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<TaskRuntimeControl> {
+  const row = await db.prepare(`
+    SELECT status, cancel_requested
+    FROM generation_tasks
+    WHERE id = ?
+  `).bind(taskId).first() as { status: string; cancel_requested: number | null } | null;
+
+  if (!row) {
+    return { exists: false, status: null, cancelRequested: false };
+  }
+
+  return {
+    exists: true,
+    status: row.status,
+    cancelRequested: Boolean(row.cancel_requested),
+  };
+}
+
+async function handleTaskCancellationIfNeeded(params: {
+  db: D1Database;
+  taskId: number;
+  projectName: string;
+  total: number;
+  chapterIndex: number;
+  current: number;
+}): Promise<{ shouldStop: boolean; cancelled: boolean }> {
+  const runtime = await getTaskRuntimeControl(params.db, params.taskId);
+
+  if (!runtime.exists || runtime.status !== 'running') {
+    return { shouldStop: true, cancelled: false };
+  }
+
+  if (!runtime.cancelRequested) {
+    return { shouldStop: false, cancelled: false };
+  }
+
+  await completeTask(params.db, params.taskId, false, '任务已取消');
+  await emitProgressEvent({
+    projectName: params.projectName,
+    current: params.current,
+    total: params.total,
+    chapterIndex: params.chapterIndex,
+    status: 'error',
+    message: '任务已取消',
+  });
+
+  return { shouldStop: true, cancelled: true };
+}
+
+async function runChapterGenerationTaskInBackground(params: {
+  env: Env;
+  aiConfig: AIConfig;
+  userId: string;
+  projectName: string;
+  projectId: string;
+  taskId: number;
+  chaptersToGenerate: number;
+  startingChapterIndex: number;
+}) {
+  const {
+    env,
+    aiConfig,
+    userId,
+    projectName,
+    projectId,
+    taskId,
+    chaptersToGenerate,
+    startingChapterIndex,
+  } = params;
+
+  try {
+    const project = await env.DB.prepare(`
+      SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+      FROM projects p
+      JOIN states s ON p.id = s.project_id
+      LEFT JOIN outlines o ON p.id = o.project_id
+      LEFT JOIN characters c ON p.id = c.project_id
+      WHERE p.id = ? AND p.user_id = ?
+    `).bind(projectId, userId).first() as any;
+
+    if (!project) {
+      await completeTask(env.DB, taskId, false, 'Project not found');
+      return;
+    }
+
+    const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+    const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+    const failedChapters: number[] = [];
+    let completedCount = 0;
+
+    for (let i = 0; i < chaptersToGenerate; i++) {
+      const chapterIndex = startingChapterIndex + i;
+      if (chapterIndex > project.total_chapters) break;
+
+      const startControl = await handleTaskCancellationIfNeeded({
+        db: env.DB,
+        taskId,
+        projectName,
+        total: chaptersToGenerate,
+        chapterIndex,
+        current: completedCount,
+      });
+      if (startControl.shouldStop) {
+        return;
+      }
+
+      await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
+      await emitProgressEvent({
+        projectName,
+        current: completedCount,
+        total: chaptersToGenerate,
+        chapterIndex,
+        status: 'starting',
+        message: `准备生成第 ${chapterIndex} 章...`,
+      });
+
+      try {
+        const { results: lastChapters } = await env.DB.prepare(`
+          SELECT content FROM chapters
+          WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
+          ORDER BY chapter_index DESC LIMIT 2
+        `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+
+        let chapterGoalHint: string | undefined;
+        let outlineTitle: string | undefined;
+        if (outline) {
+          for (const vol of outline.volumes) {
+            const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
+            if (ch) {
+              outlineTitle = ch.title;
+              chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+              break;
+            }
+          }
+        }
+
+        const CHAPTER_MAX_RETRIES = 3;
+        let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
+        let lastChapterError: unknown;
+
+        for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
+          try {
+            if (retryAttempt > 0) {
+              const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
+              const retryMessage = `第 ${chapterIndex} 章生成失败，${retryDelay / 1000}秒后重试 (${retryAttempt}/${CHAPTER_MAX_RETRIES})...`;
+              await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
+              await emitProgressEvent({
+                projectName,
+                current: completedCount,
+                total: chaptersToGenerate,
+                chapterIndex,
+                status: 'generating',
+                message: retryMessage,
+              });
+              await new Promise((resolve) => setTimeout(resolve, retryDelay));
+            }
+
+            const retryControl = await handleTaskCancellationIfNeeded({
+              db: env.DB,
+              taskId,
+              projectName,
+              total: chaptersToGenerate,
+              chapterIndex,
+              current: completedCount,
+            });
+            if (retryControl.shouldStop) {
+              return;
+            }
+
+            await updateTaskMessage(env.DB, taskId, `正在调用 AI 生成第 ${chapterIndex} 章...`, chapterIndex);
+
+            result = await writeOneChapter({
+              aiConfig,
+              bible: project.bible,
+              rollingSummary: project.rolling_summary || '',
+              openLoops: JSON.parse(project.open_loops || '[]'),
+              lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
+              chapterIndex,
+              totalChapters: project.total_chapters,
+              chapterGoalHint,
+              chapterTitle: outlineTitle,
+              characters,
+              onProgress: (message, status) => {
+                updateTaskMessage(env.DB, taskId, message, chapterIndex).catch((err) => {
+                  console.warn('Failed to update task message:', err);
+                });
+                void emitProgressEvent({
+                  projectName,
+                  current: completedCount,
+                  total: chaptersToGenerate,
+                  chapterIndex,
+                  status,
+                  message,
+                });
+              },
+            });
+
+            await updateTaskMessage(env.DB, taskId, `第 ${chapterIndex} 章 AI 生成完成，正在保存...`, chapterIndex);
+            break;
+          } catch (retryError) {
+            lastChapterError = retryError;
+            if (retryAttempt === CHAPTER_MAX_RETRIES - 1) {
+              throw retryError;
+            }
+          }
+        }
+
+        if (!result) {
+          throw lastChapterError || new Error('Unknown error during chapter generation');
+        }
+
+        const beforeSaveControl = await handleTaskCancellationIfNeeded({
+          db: env.DB,
+          taskId,
+          projectName,
+          total: chaptersToGenerate,
+          chapterIndex,
+          current: completedCount,
+        });
+        if (beforeSaveControl.shouldStop) {
+          return;
+        }
+
+        const chapterText = result.chapterText;
+
+        await env.DB.prepare(`
+          INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+        `).bind(project.id, chapterIndex, chapterText).run();
+
+        await env.DB.prepare(`
+          UPDATE states SET
+            next_chapter_index = ?,
+            rolling_summary = ?,
+            open_loops = ?
+          WHERE project_id = ?
+        `).bind(
+          chapterIndex + 1,
+          result.updatedSummary,
+          JSON.stringify(result.updatedOpenLoops),
+          project.id
+        ).run();
+
+        project.rolling_summary = result.updatedSummary;
+        project.open_loops = JSON.stringify(result.updatedOpenLoops);
+        project.next_chapter_index = chapterIndex + 1;
+
+        await updateTaskProgress(env.DB, taskId, chapterIndex, false);
+        completedCount += 1;
+        await emitProgressEvent({
+          projectName,
+          current: completedCount,
+          total: chaptersToGenerate,
+          chapterIndex,
+          status: 'saving',
+          message: `第 ${chapterIndex} 章已完成`,
+        });
+      } catch (chapterError) {
+        failedChapters.push(chapterIndex);
+        await updateTaskProgress(env.DB, taskId, chapterIndex, true);
+        await emitProgressEvent({
+          projectName,
+          current: completedCount + failedChapters.length,
+          total: chaptersToGenerate,
+          chapterIndex,
+          status: 'error',
+          message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
+        });
+      }
+    }
+
+    const finishControl = await handleTaskCancellationIfNeeded({
+      db: env.DB,
+      taskId,
+      projectName,
+      total: chaptersToGenerate,
+      chapterIndex: Math.max(startingChapterIndex, project.next_chapter_index || startingChapterIndex),
+      current: completedCount,
+    });
+    if (!finishControl.shouldStop) {
+      await completeTask(env.DB, taskId, true);
+      await emitProgressEvent({
+        projectName,
+        current: chaptersToGenerate,
+        total: chaptersToGenerate,
+        chapterIndex: startingChapterIndex + chaptersToGenerate - 1,
+        status: 'done',
+        message: `生成完成：成功 ${chaptersToGenerate - failedChapters.length} 章，失败 ${failedChapters.length} 章`,
+      });
+    }
+  } catch (error) {
+    console.error(`Background generation task ${taskId} failed:`, error);
+    try {
+      await completeTask(env.DB, taskId, false, (error as Error).message);
+    } catch (dbError) {
+      console.warn('Failed to mark task as failed:', dbError);
+    }
+    await emitProgressEvent({
+      projectName,
+      current: 0,
+      total: chaptersToGenerate,
+      chapterIndex: startingChapterIndex,
+      status: 'error',
+      message: `生成失败: ${(error as Error).message}`,
+    });
+  }
+}
+
+// Streaming chapter generation monitor (task runs in background)
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
-  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
 
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
+  const body = await c.req.json().catch(() => ({} as { chaptersToGenerate?: unknown }));
+  const requestedCountRaw = Number.parseInt(String(body.chaptersToGenerate ?? '1'), 10);
+  const requestedCount = Number.isInteger(requestedCountRaw) && requestedCountRaw > 0 ? requestedCountRaw : 1;
+
+  const project = await c.env.DB.prepare(`
+    SELECT p.id, p.name, s.next_chapter_index, s.total_chapters
+    FROM projects p
+    JOIN states s ON p.id = s.project_id
+    WHERE p.name = ? AND p.user_id = ? AND p.deleted_at IS NULL
+  `).bind(name, userId).first() as {
+    id: string;
+    name: string;
+    next_chapter_index: number;
+    total_chapters: number;
+  } | null;
+
+  if (!project) {
+    return c.json({ success: false, error: 'Project not found' }, 404);
+  }
+
+  const maxChapterResult = await c.env.DB.prepare(`
+    SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
+  `).bind(project.id).first() as { max_index: number | null } | null;
+
+  const actualMaxChapter = maxChapterResult?.max_index || 0;
+  const expectedNextIndex = actualMaxChapter + 1;
+  if (project.next_chapter_index !== expectedNextIndex) {
+    project.next_chapter_index = expectedNextIndex;
+    await c.env.DB.prepare(`
+      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+    `).bind(expectedNextIndex, project.id).run();
+  }
+
+  const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
+  if (remaining <= 0) {
+    return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
+  }
+  const chaptersToGenerate = Math.min(requestedCount, remaining);
+
+  const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
+  const runningTaskUpdatedAt = runningTaskCheck.task?.updated_at
+    ? new Date(`${runningTaskCheck.task.updated_at}Z`).getTime()
+    : 0;
+  const runningTaskFreshThresholdMs = 30 * 60 * 1000;
+  const isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
+  const isResumed = Boolean(runningTaskCheck.isRunning && runningTaskCheck.taskId && isRunningTaskFresh);
+
+  if (runningTaskCheck.isRunning && runningTaskCheck.taskId && !isRunningTaskFresh) {
+    await completeTask(
+      c.env.DB,
+      runningTaskCheck.taskId,
+      false,
+      '任务长时间无进展，已标记失败，请重新发起'
+    );
+  }
+
+  const taskId = isResumed
+    ? (runningTaskCheck.taskId as number)
+    : await createGenerationTask(
+      c.env.DB,
+      project.id,
+      userId,
+      chaptersToGenerate,
+      project.next_chapter_index
+    );
+
+  if (!isResumed) {
+    c.executionCtx.waitUntil(
+      runChapterGenerationTaskInBackground({
+        env: c.env,
+        aiConfig,
+        userId,
+        projectName: name,
+        projectId: project.id,
+        taskId,
+        chaptersToGenerate,
+        startingChapterIndex: project.next_chapter_index,
+      })
+    );
+  }
+
+  const initialTask = await getTaskById(c.env.DB, taskId, userId);
   const encoder = new TextEncoder();
 
-  // Create a readable stream for SSE
   const stream = new ReadableStream({
-    async start(controller) {
-      // Track if client is still connected
-      let clientConnected = true;
+    start(controller) {
+      let closed = false;
+      let pollInFlight = false;
+      let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+      let pollInterval: ReturnType<typeof setInterval> | undefined;
+      let lastMessage = initialTask?.currentMessage || null;
+      let lastProgress = initialTask?.currentProgress || 0;
 
-      // Helper to send SSE event - silently fails if client disconnected
-      const sendEvent = (type: string, data: any) => {
-        if (!clientConnected) return; // Skip if already disconnected
+      const seenCompleted = new Set<number>(initialTask?.completedChapters || []);
+      const seenFailed = new Set<number>(initialTask?.failedChapters || []);
+
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        if (pollInterval) clearInterval(pollInterval);
+        try {
+          controller.close();
+        } catch {
+          // no-op
+        }
+      };
+
+      const sendEvent = (type: string, data: Record<string, unknown> = {}) => {
+        if (closed) return;
         try {
           const payload = JSON.stringify({ type, ...data });
           controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
         } catch {
-          // Client disconnected, mark as disconnected but continue generation
-          clientConnected = false;
-          console.log(`Client disconnected, continuing generation in background...`);
+          close();
         }
       };
 
-      // Heartbeat to keep connection alive
-      const heartbeatInterval = setInterval(() => {
-        if (!clientConnected) {
-          clearInterval(heartbeatInterval);
-          return;
-        }
+      const emitTaskSnapshot = async () => {
+        if (pollInFlight || closed) return;
+        pollInFlight = true;
         try {
-          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
-        } catch {
-          clientConnected = false;
-          clearInterval(heartbeatInterval);
-        }
-      }, 5000);
-      
-      let dbHeartbeatInterval: ReturnType<typeof setInterval> | undefined;
+          const task = await getTaskById(c.env.DB, taskId, userId);
+          if (!task) {
+            sendEvent('error', { error: '任务已取消或不存在', taskId });
+            close();
+            return;
+          }
 
-      try {
-        const { chaptersToGenerate = 1 } = await c.req.json();
-
-        sendEvent('start', { total: chaptersToGenerate });
-
-        // Get project with state and outline (user-scoped)
-        const project = await c.env.DB.prepare(`
-          SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
-          FROM projects p
-          JOIN states s ON p.id = s.project_id
-          LEFT JOIN outlines o ON p.id = o.project_id
-          LEFT JOIN characters c ON p.id = c.project_id
-          WHERE p.name = ? AND p.user_id = ?
-        `).bind(name, userId).first() as any;
-
-        if (!project) {
-          sendEvent('error', { error: 'Project not found' });
-          controller.close();
-          clearInterval(heartbeatInterval);
-          return;
-        }
-
-        // Validate state
-        const maxChapterResult = await c.env.DB.prepare(`
-          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-        `).bind(project.id).first() as any;
-
-        const actualMaxChapter = maxChapterResult?.max_index || 0;
-        const expectedNextIndex = actualMaxChapter + 1;
-
-        if (project.next_chapter_index !== expectedNextIndex) {
-          project.next_chapter_index = expectedNextIndex;
-          await c.env.DB.prepare(`
-            UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-          `).bind(expectedNextIndex, project.id).run();
-        }
-
-        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
-        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-        const results: { chapter: number; title: string }[] = [];
-        const failedChapters: number[] = [];
-
-        const startingChapterIndex = project.next_chapter_index;
-
-        // Check if there's already a running task
-        // If so, and we are here, it implies the client wants to start fresh (or we should error)
-        // But since we simplified the frontend to cancel old tasks, we can assume we are good to go.
-        // However, just in case, we can check.
-        const { isRunning } = await checkRunningTask(c.env.DB, project.id);
-        if (isRunning) {
-           // If a task is still appearing as running, we should just let the new one proceed
-           // (Assuming user clicked "Continue" which executed cancelAllActiveTasks)
-           // But if cancel failed, we might have 2 running tasks.
-           // Let's just log it.
-           console.warn('Starting new task while another might be running');
-        }
-
-        // Create generation task for persistence
-        const taskId = await createGenerationTask(
-          c.env.DB,
-          project.id,
-          userId!,
-          chaptersToGenerate,
-          startingChapterIndex
-        );
-        sendEvent('task_created', { taskId });
-
-        // No more heartbeat interval needed for simple generation (unless preventing timeout?)
-        // Standard generation logic follows
-
-
-
-        for (let i = 0; i < chaptersToGenerate; i++) {
-          const chapterIndex = startingChapterIndex + i;
-          if (chapterIndex > project.total_chapters) break;
-
-          sendEvent('progress', {
-            current: i + 1,
-            total: chaptersToGenerate,
-            chapterIndex,
-            status: 'preparing',
-            message: `准备生成第 ${chapterIndex} 章...`,
-          });
-
-          // Update task progress in DB for cross-device sync
-          await updateTaskMessage(c.env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
-
-          try {
-            // Get last 2 chapters
-            const { results: lastChapters } = await c.env.DB.prepare(`
-              SELECT content FROM chapters 
-              WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
-              ORDER BY chapter_index DESC LIMIT 2
-            `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
-
-            // Get chapter goal from outline
-            let chapterGoalHint: string | undefined;
-            let outlineTitle: string | undefined;
-            if (outline) {
-              for (const vol of outline.volumes) {
-                const ch = vol.chapters?.find((c: any) => c.index === chapterIndex);
-                if (ch) {
-                  outlineTitle = ch.title;
-                  chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
-                  break;
-                }
-              }
-            }
-
-            sendEvent('progress', {
-              current: i + 1,
-              total: chaptersToGenerate,
-              chapterIndex,
-              status: 'generating',
-              message: `正在生成第 ${chapterIndex} 章: ${outlineTitle || '未命名'}...`,
-            });
-
-            // Generate chapter with per-chapter retry logic
-            const CHAPTER_MAX_RETRIES = 3;
-            let result;
-            let lastChapterError;
-            
-            for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
-              try {
-                if (retryAttempt > 0) {
-                  const retryDelay = 5000 * Math.pow(2, retryAttempt - 1); // 5s, 10s, 20s
-                  sendEvent('progress', {
-                    current: i + 1,
-                    total: chaptersToGenerate,
-                    chapterIndex,
-                    status: 'generating',
-                    message: `第 ${chapterIndex} 章生成失败，${retryDelay/1000}秒后重试 (${retryAttempt}/${CHAPTER_MAX_RETRIES})...`,
-                  });
-                  await new Promise(resolve => setTimeout(resolve, retryDelay));
-                }
-                
-                // Heartbeat before AI call
-                await updateTaskMessage(c.env.DB, taskId, `正在调用 AI 生成第 ${chapterIndex} 章...`, chapterIndex);
-                
-                result = await writeOneChapter({
-                  aiConfig,
-                  bible: project.bible,
-                  rollingSummary: project.rolling_summary || '',
-                  openLoops: JSON.parse(project.open_loops || '[]'),
-                  lastChapters: lastChapters.map((c: any) => c.content).reverse(),
-                  chapterIndex,
-                  totalChapters: project.total_chapters,
-                  chapterGoalHint,
-                  chapterTitle: outlineTitle,
-                  characters,
-                  onProgress: (message, status) => {
-                    sendEvent('progress', {
-                      current: i + 1,
-                      total: chaptersToGenerate,
-                      chapterIndex,
-                      status: status || 'generating',
-                      message,
-                    });
-                    // Also update DB heartbeat on certain progress events
-                    // Also update DB heartbeat on all progress events for resumption support
-                    updateTaskMessage(c.env.DB, taskId, message, chapterIndex).catch(err => {
-                       console.warn('Failed to update task message', err);
-                    });
-                  },
-                });
-                
-                // Heartbeat after AI call completes
-                await updateTaskMessage(c.env.DB, taskId, `第 ${chapterIndex} 章 AI 生成完成，正在保存...`, chapterIndex);
-                
-                // Success, break out of retry loop
-                break;
-              } catch (retryError) {
-                lastChapterError = retryError;
-                console.warn(`Chapter ${chapterIndex} attempt ${retryAttempt + 1} failed:`, (retryError as Error).message);
-                
-                // If this is the last retry, throw to trigger the outer catch
-                if (retryAttempt === CHAPTER_MAX_RETRIES - 1) {
-                  throw lastChapterError;
-                }
-              }
-            }
-            
-            if (!result) {
-              throw lastChapterError || new Error('Unknown error during chapter generation');
-            }
-
-            const chapterText = result.chapterText;
-
-            // Save chapter
-            await c.env.DB.prepare(`
-              INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-            `).bind(project.id, chapterIndex, chapterText).run();
-
-            // Extract title
-            const titleMatch = chapterText.match(/^第?\d*[章回节]?\s*[：:.]?\s*(.+)/m);
-            const title = titleMatch ? titleMatch[1] : (outlineTitle || `Chapter ${chapterIndex}`);
-
-            results.push({ chapter: chapterIndex, title });
-
-            // Update state
-            await c.env.DB.prepare(`
-              UPDATE states SET 
-                next_chapter_index = ?,
-                rolling_summary = ?,
-                open_loops = ?
-              WHERE project_id = ?
-            `).bind(
-              chapterIndex + 1,
-              result.updatedSummary,
-              JSON.stringify(result.updatedOpenLoops),
-              project.id
-            ).run();
-
-            // Update project object for next iteration
-            project.rolling_summary = result.updatedSummary;
-            project.open_loops = JSON.stringify(result.updatedOpenLoops);
-            project.next_chapter_index = chapterIndex + 1;
-
-            // Update task progress
-            await updateTaskProgress(c.env.DB, taskId, chapterIndex, false);
-
-            // Send chapter complete event with content snippet
+          const newlyCompleted = task.completedChapters
+            .filter((chapterIndex) => !seenCompleted.has(chapterIndex))
+            .sort((a, b) => a - b);
+          for (const chapterIndex of newlyCompleted) {
+            seenCompleted.add(chapterIndex);
             sendEvent('chapter_complete', {
               chapterIndex,
-              title,
-              preview: chapterText.slice(0, 200) + '...',
-              wordCount: chapterText.length,
+              title: `第 ${chapterIndex} 章`,
+              preview: '',
+              wordCount: 0,
             });
+          }
 
-          } catch (chapterError) {
-            // Single chapter failed after all retries
-            console.error(`Failed to generate chapter ${chapterIndex} after all retries:`, chapterError);
-            failedChapters.push(chapterIndex);
-            // Update task with failed chapter
-            await updateTaskProgress(c.env.DB, taskId, chapterIndex, true);
+          const newlyFailed = task.failedChapters
+            .filter((chapterIndex) => !seenFailed.has(chapterIndex))
+            .sort((a, b) => a - b);
+          for (const chapterIndex of newlyFailed) {
+            seenFailed.add(chapterIndex);
             sendEvent('chapter_error', {
               chapterIndex,
-              error: (chapterError as Error).message,
-              retriesExhausted: true,
+              error: `第 ${chapterIndex} 章生成失败`,
             });
-            // Continue to next chapter instead of stopping
           }
+
+          if (task.currentMessage !== lastMessage || task.currentProgress !== lastProgress) {
+            lastMessage = task.currentMessage;
+            lastProgress = task.currentProgress;
+            sendEvent('progress', {
+              current: task.completedChapters.length,
+              total: task.targetCount,
+              chapterIndex: task.currentProgress || undefined,
+              status: 'generating',
+              message: task.currentMessage || '任务执行中...',
+            });
+          }
+
+          if (task.status === 'completed') {
+            const generated = [...task.completedChapters]
+              .sort((a, b) => a - b)
+              .map((chapter) => ({ chapter, title: `第 ${chapter} 章` }));
+            const failedChapters = [...task.failedChapters].sort((a, b) => a - b);
+            sendEvent('done', {
+              success: true,
+              taskId: task.id,
+              generated,
+              failedChapters,
+              totalGenerated: generated.length,
+              totalFailed: failedChapters.length,
+            });
+            close();
+            return;
+          }
+
+          if (task.status === 'failed') {
+            const cancelled = Boolean(task.errorMessage && task.errorMessage.includes('取消'));
+            sendEvent('error', {
+              error: task.errorMessage || '任务执行失败',
+              cancelled,
+              taskId: task.id,
+            });
+            close();
+            return;
+          }
+
+          if (task.status === 'paused') {
+            sendEvent('error', {
+              error: task.currentMessage || '任务已暂停，请重新发起',
+              cancelled: Boolean(task.cancelRequested),
+              taskId: task.id,
+            });
+            close();
+            return;
+          }
+        } catch (err) {
+          sendEvent('error', { error: (err as Error).message, taskId });
+          close();
+        } finally {
+          pollInFlight = false;
         }
+      };
 
-        // Mark task as completed
-        await completeTask(c.env.DB, taskId, true);
+      sendEvent('start', {
+        total: initialTask?.targetCount || chaptersToGenerate,
+      });
 
-        // Send completion event
-        sendEvent('done', {
-          success: true,
-          generated: results,
-          failedChapters,
-          totalGenerated: results.length,
-          totalFailed: failedChapters.length,
-          taskId,
+      if (isResumed && initialTask) {
+        sendEvent('task_resumed', {
+          taskId: initialTask.id,
+          completedChapters: initialTask.completedChapters,
+          targetCount: initialTask.targetCount,
+          currentProgress: initialTask.currentProgress,
+          currentMessage: initialTask.currentMessage,
         });
-
-      } catch (error) {
-        sendEvent('error', { error: (error as Error).message });
-      } finally {
-        clearInterval(dbHeartbeatInterval);
-        clearInterval(heartbeatInterval);
-        // Safely close controller (may already be closed if client disconnected)
-        try {
-          controller.close();
-        } catch {
-          // Already closed, ignore
-        }
+      } else {
+        sendEvent('task_created', { taskId });
       }
+
+      heartbeatInterval = setInterval(() => {
+        sendEvent('heartbeat');
+      }, 5000);
+
+      pollInterval = setInterval(() => {
+        void emitTaskSnapshot();
+      }, 1200);
+
+      void emitTaskSnapshot();
+
+      c.req.raw.signal.addEventListener('abort', () => {
+        close();
+      });
+    },
+    cancel() {
+      // no-op
     },
   });
 
@@ -937,7 +1258,10 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 // Enhanced chapter generation with full context engineering
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
@@ -1308,7 +1632,10 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 // Refine outline (regenerate missing/incomplete volumes) - SSE streaming
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'refine_outline');
 
   if (!aiConfig) {
