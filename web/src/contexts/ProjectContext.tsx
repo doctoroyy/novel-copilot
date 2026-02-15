@@ -15,6 +15,7 @@ import {
   generateBible,
   deleteChapter,
   batchDeleteChapters,
+  cancelAllActiveTasks,
   getAllActiveTasks,
   type ProjectSummary,
   type ProjectDetail,
@@ -78,6 +79,8 @@ interface ProjectContextType {
   // Generation handlers
   handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
   handleGenerateChapters: (count: string) => Promise<void>;
+  handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
+  cancelingGeneration: boolean;
   handleResetProject: () => Promise<void>;
   
   // Chapter handlers
@@ -128,6 +131,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Generation state
   const { generationState, setGenerationState, startGeneration, completeGeneration } = useGeneration();
   const [generatingOutline, setGeneratingOutline] = useState(false);
+  const [cancelingGeneration, setCancelingGeneration] = useState(false);
 
   // SSE events
   const { connected, logs, lastProgress: generationProgress, clearLogs, enabled: eventsEnabled, toggleEnabled: toggleEvents } = useServerEventsContext();
@@ -529,6 +533,24 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
           onError: (error: string) => {
             completeGeneration();
+            const cancelled = error.includes('取消');
+            if (cancelled) {
+              setGenerationState(prev => ({
+                ...prev,
+                isGenerating: false,
+                status: 'done',
+                message: '任务已取消',
+              }));
+              addTaskToHistory({
+                type: 'chapters',
+                title: `${selectedProject.name}: 任务已取消`,
+                status: 'cancelled',
+                startTime: generationState.startTime || Date.now(),
+                endTime: Date.now(),
+                details: error,
+              });
+              return;
+            }
             setError(error);
           },
         },
@@ -541,6 +563,30 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     }
   }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName]);
+
+  const handleCancelGeneration = useCallback(async (projectNameOverride?: string) => {
+    const targetProjectName = projectNameOverride || selectedProject?.name || generationState.projectName;
+    if (!targetProjectName) return;
+
+    setCancelingGeneration(true);
+    try {
+      await cancelAllActiveTasks(targetProjectName);
+      setGenerationState(prev => (
+        prev.projectName === targetProjectName
+          ? {
+            ...prev,
+            isGenerating: true,
+            status: 'preparing',
+            message: '正在取消任务...',
+          }
+          : prev
+      ));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCancelingGeneration(false);
+    }
+  }, [selectedProject?.name, generationState.projectName, setGenerationState]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -677,6 +723,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     handleRefresh,
     handleGenerateOutline,
     handleGenerateChapters,
+    handleCancelGeneration,
+    cancelingGeneration,
     handleResetProject,
     handleViewChapter,
     handleDeleteChapter,

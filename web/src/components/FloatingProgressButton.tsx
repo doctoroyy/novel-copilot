@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText } from 'lucide-react';
+import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
+import { cancelAllActiveTasks } from '@/lib/api';
 import {
   TASK_HISTORY_EVENT_NAME,
   getTaskHistorySnapshot,
@@ -21,6 +22,7 @@ export function FloatingProgressButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
+  const [cancelingProjectName, setCancelingProjectName] = useState<string | null>(null);
 
   // Listen for history updates
   useEffect(() => {
@@ -47,6 +49,18 @@ export function FloatingProgressButton() {
   ];
 
   const hasActiveTasks = allTasks.length > 0;
+
+  const handleCancelTask = async (projectName?: string) => {
+    if (!projectName || cancelingProjectName) return;
+    setCancelingProjectName(projectName);
+    try {
+      await cancelAllActiveTasks(projectName);
+    } catch (error) {
+      console.error('Failed to cancel generation task:', error);
+    } finally {
+      setCancelingProjectName(null);
+    }
+  };
 
   return (
     <>
@@ -122,7 +136,21 @@ export function FloatingProgressButton() {
                             {progressPercent !== null && ` · ${progressPercent}%`}
                           </p>
                         </div>
-                        <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                          {task.type === 'chapters' && task.projectName && (
+                            <button
+                              onClick={() => { void handleCancelTask(task.projectName); }}
+                              disabled={cancelingProjectName === task.projectName}
+                              className="p-1 rounded hover:bg-destructive/20 text-destructive disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                              title="取消任务"
+                            >
+                              {cancelingProjectName === task.projectName
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Square className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {/* Progress bar for tasks with progress */}
                       {progressPercent !== null && (
