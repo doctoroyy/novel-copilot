@@ -30,6 +30,7 @@ export function ChapterChatSidebar({
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,12 +41,13 @@ export function ChapterChatSidebar({
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+    setActionError(null);
     if (!isConfigured) {
-      alert('请先配置 AI 设置');
+      setActionError('请先配置 AI 设置');
       return;
     }
     if (chapterIndex === undefined) {
-      alert('请先保存章节');
+      setActionError('请先保存章节');
       return;
     }
 
@@ -128,6 +130,11 @@ export function ChapterChatSidebar({
       </ScrollArea>
 
       <div className="p-4 border-t bg-background">
+        {actionError && (
+          <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {actionError}
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();

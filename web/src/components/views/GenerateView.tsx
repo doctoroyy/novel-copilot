@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine } from 'lucide-react';
+import { FileText, Wand2, CheckCircle, AlertTriangle, RefreshCw, Loader2, Rocket, PenLine, Square } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -43,6 +43,8 @@ interface GenerateViewProps {
   generateCount: string;
   onGenerateCountChange: (value: string) => void;
   onGenerateChapters: () => void;
+  onCancelGeneration?: () => void;
+  cancelingGeneration?: boolean;
   onResetState: () => void;
 }
 
@@ -61,8 +63,38 @@ export function GenerateView({
   generateCount,
   onGenerateCountChange,
   onGenerateChapters,
+  onCancelGeneration,
+  cancelingGeneration,
   onResetState,
 }: GenerateViewProps) {
+  const chaptersGenerated = Math.max(0, project.state.nextChapterIndex - 1);
+  const remainingChapters = Math.max(0, project.state.totalChapters - chaptersGenerated);
+  const generationProgressPercent = project.state.totalChapters > 0
+    ? Math.min(100, Math.max(0, (chaptersGenerated / project.state.totalChapters) * 100))
+    : 0;
+  const generatingCurrentProject = Boolean(
+    generationState?.isGenerating && generationState.projectName === project.name
+  );
+  const selectedGenerateCount = Number.parseInt(generateCount, 10);
+  const normalizedGenerateCount = remainingChapters > 0
+    ? String(
+      Math.min(
+        Number.isInteger(selectedGenerateCount) && selectedGenerateCount > 0 ? selectedGenerateCount : 1,
+        remainingChapters
+      )
+    )
+    : '1';
+  const chapterCountOptions = Array.from(
+    new Set(
+      [selectedGenerateCount, 1, 5, 10, 20, 50].filter(
+        (value) =>
+          Number.isInteger(value) &&
+          value > 0 &&
+          value <= Math.max(remainingChapters, 1)
+      )
+    )
+  ).sort((a, b) => a - b);
+
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
       {/* Generation Progress Overlay - only show if the progress belongs to THIS project */}
@@ -154,37 +186,59 @@ export function GenerateView({
             章节生成
           </CardTitle>
           <CardDescription className="text-xs lg:text-sm">
-            当前进度: {project.state.nextChapterIndex - 1} / {project.state.totalChapters}
+            当前进度: {chaptersGenerated} / {project.state.totalChapters}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label className="text-xs lg:text-sm">生成章数</Label>
-            <Select value={generateCount} onValueChange={onGenerateCountChange}>
+            <Select
+              value={normalizedGenerateCount}
+              onValueChange={onGenerateCountChange}
+              disabled={generatingCurrentProject || remainingChapters <= 0}
+            >
               <SelectTrigger className="bg-muted/50 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="1">1 章</SelectItem>
-                <SelectItem value="5">5 章</SelectItem>
-                <SelectItem value="10">10 章</SelectItem>
-                <SelectItem value="20">20 章</SelectItem>
-                <SelectItem value="50">50 章</SelectItem>
+                {chapterCountOptions.map((value) => (
+                  <SelectItem key={value} value={String(value)}>
+                    {value} 章
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
           <Button 
             onClick={onGenerateChapters} 
-            disabled={loading || !project.outline} 
+            disabled={loading || !project.outline || generatingCurrentProject || remainingChapters <= 0}
             className="w-full gradient-bg hover:opacity-90 text-sm lg:text-base"
           >
-            {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
+            {(loading || generatingCurrentProject) ? <><Loader2 className="h-4 w-4 animate-spin" /> 生成中...</> : <><PenLine className="h-4 w-4" /> 开始生成</>}
           </Button>
+
+          {generatingCurrentProject && onCancelGeneration && (
+            <Button
+              onClick={onCancelGeneration}
+              disabled={Boolean(cancelingGeneration)}
+              variant="destructive"
+              className="w-full text-sm lg:text-base"
+            >
+              {cancelingGeneration
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> 正在取消...</>
+                : <><Square className="h-4 w-4" /> 取消生成</>}
+            </Button>
+          )}
 
           {!project.outline && (
             <p className="text-xs lg:text-sm text-muted-foreground text-center">
               请先生成大纲
+            </p>
+          )}
+          {remainingChapters <= 0 && (
+            <p className="text-xs lg:text-sm text-muted-foreground text-center">
+              已达到目标章节数
             </p>
           )}
 
@@ -211,12 +265,12 @@ export function GenerateView({
           <div className="pt-4 border-t border-border">
             <div className="flex justify-between text-xs lg:text-sm text-muted-foreground mb-2">
               <span>生成进度</span>
-              <span>{Math.round(((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100)}%</span>
+              <span>{Math.round(generationProgressPercent)}%</span>
             </div>
             <div className="h-2 bg-muted rounded-full overflow-hidden">
               <div 
                 className="h-full progress-gradient transition-all duration-500"
-                style={{ width: `${((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100}%` }}
+                style={{ width: `${generationProgressPercent}%` }}
               />
             </div>
           </div>

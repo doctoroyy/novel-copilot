@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import { useGeneration } from '@/contexts/GenerationContext';
@@ -15,11 +15,12 @@ import {
   generateBible,
   deleteChapter,
   batchDeleteChapters,
+  cancelAllActiveTasks,
   getAllActiveTasks,
   type ProjectSummary,
   type ProjectDetail,
 } from '@/lib/api';
-import { addTaskToHistory } from '@/components/FloatingProgressButton';
+import { addTaskToHistory } from '@/lib/taskHistory';
 
 // Constants
 const MOBILE_BREAKPOINT = 1024;
@@ -78,6 +79,8 @@ interface ProjectContextType {
   // Generation handlers
   handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
   handleGenerateChapters: (count: string) => Promise<void>;
+  handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
+  cancelingGeneration: boolean;
   handleResetProject: () => Promise<void>;
   
   // Chapter handlers
@@ -119,6 +122,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadProjectRequestIdRef = useRef(0);
+  const lastTaskSnapshotRef = useRef<{ id: number; completed: number; failed: number } | null>(null);
 
   // AI Config
   const { config, isConfigured } = useAIConfig();
@@ -126,6 +131,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Generation state
   const { generationState, setGenerationState, startGeneration, completeGeneration } = useGeneration();
   const [generatingOutline, setGeneratingOutline] = useState(false);
+  const [cancelingGeneration, setCancelingGeneration] = useState(false);
 
   // SSE events
   const { connected, logs, lastProgress: generationProgress, clearLogs, enabled: eventsEnabled, toggleEnabled: toggleEvents } = useServerEventsContext();
@@ -194,14 +200,21 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Load single project
   const loadProject = useCallback(async (name: string) => {
+    const requestId = ++loadProjectRequestIdRef.current;
     try {
       setLoading(true);
+      setError(null);
       const data = await fetchProject(name);
+      if (requestId !== loadProjectRequestIdRef.current) return;
       setSelectedProject(data);
     } catch (err) {
+      if (requestId !== loadProjectRequestIdRef.current) return;
+      setSelectedProject(null);
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (requestId === loadProjectRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -210,44 +223,103 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
-  // Check for running tasks on mount
+  // Poll active tasks globally so refresh/reopen can recover running progress
   useEffect(() => {
-    const checkActiveTasks = async () => {
+    let stopped = false;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const syncActiveTasks = async () => {
       try {
         const tasks = await getAllActiveTasks();
-        const runningTask = tasks.find(t => t.status === 'running');
-        if (runningTask) {
-          const threeMinutesMs = 3 * 60 * 1000;
-          const isHealthy = runningTask.updatedAtMs && (Date.now() - runningTask.updatedAtMs < threeMinutesMs);
-          
-          if (isHealthy) {
-            setGenerationState({
-              isGenerating: true,
-              current: runningTask.completedChapters.length,
-              total: runningTask.targetCount,
-              currentChapter: runningTask.currentProgress,
-              status: 'generating',
-              message: runningTask.currentMessage || `正在生成第 ${runningTask.currentProgress} 章...`,
-              startTime: runningTask.updatedAtMs - (runningTask.completedChapters.length * 60 * 1000),
-              projectName: runningTask.projectName,
-            });
+        if (stopped) return;
+
+        const runningTask = tasks.find((task) => task.status === 'running');
+        const pausedTask = tasks.find((task) => task.status === 'paused');
+        const activeTask = runningTask || pausedTask || null;
+
+        if (!activeTask) {
+          lastTaskSnapshotRef.current = null;
+          setGenerationState((prev) => (
+            prev.isGenerating
+              ? {
+                ...prev,
+                isGenerating: false,
+                status: prev.status === 'error' ? 'error' : 'done',
+                message: prev.message || '任务已结束',
+              }
+              : prev
+          ));
+          return;
+        }
+
+        const completedCount = activeTask.completedChapters.length;
+        const failedCount = activeTask.failedChapters.length;
+        const currentChapter = activeTask.currentProgress || activeTask.startChapter;
+
+        setGenerationState((prev) => ({
+          ...prev,
+          isGenerating: activeTask.status === 'running',
+          current: completedCount,
+          total: activeTask.targetCount,
+          currentChapter,
+          status: activeTask.status === 'running' ? 'generating' : 'preparing',
+          message: activeTask.currentMessage || (
+            activeTask.status === 'running'
+              ? `正在生成第 ${currentChapter} 章...`
+              : '任务已暂停'
+          ),
+          projectName: activeTask.projectName,
+          startTime: prev.startTime || activeTask.updatedAtMs || Date.now(),
+        }));
+
+        if (selectedProject?.name === activeTask.projectName && activeTask.status === 'running') {
+          const previous = lastTaskSnapshotRef.current;
+          const changed = !previous
+            || previous.id !== activeTask.id
+            || previous.completed !== completedCount
+            || previous.failed !== failedCount;
+          lastTaskSnapshotRef.current = {
+            id: activeTask.id,
+            completed: completedCount,
+            failed: failedCount,
+          };
+          if (changed && !loading) {
+            void loadProject(selectedProject.name);
           }
+        } else {
+          lastTaskSnapshotRef.current = {
+            id: activeTask.id,
+            completed: completedCount,
+            failed: failedCount,
+          };
         }
       } catch (err) {
         console.warn('Failed to check active tasks:', err);
       }
     };
-    checkActiveTasks();
-  }, [setGenerationState]);
+
+    void syncActiveTasks();
+    pollTimer = setInterval(() => {
+      void syncActiveTasks();
+    }, 2500);
+
+    return () => {
+      stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [setGenerationState, selectedProject?.name, loadProject, loading]);
 
   // Load project when URL changes
   useEffect(() => {
-    if (projectName && projectName !== selectedProject?.name) {
-      loadProject(projectName);
-    } else if (!projectName) {
+    if (projectName) {
       setSelectedProject(null);
+      void loadProject(projectName);
+    } else {
+      loadProjectRequestIdRef.current += 1;
+      setSelectedProject(null);
+      setLoading(false);
     }
-  }, [projectName, selectedProject?.name, loadProject]);
+  }, [projectName, loadProject]);
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
@@ -286,7 +358,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
-    navigate(`/project/${encodeURIComponent(name)}`);
+    navigate(`/project/${encodeURIComponent(name)}/dashboard`);
   }, [navigate]);
 
   const handleTabChange = useCallback((newTab: string) => {
@@ -297,20 +369,36 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Project handlers
   const handleCreateProject = useCallback(async (name: string, bible: string, chapters: string) => {
-    if (!name.trim()) return;
+    const trimmedName = name.trim();
+    const trimmedBible = bible.trim();
+    const totalChapters = Number.parseInt(chapters, 10);
+
+    if (!trimmedName) {
+      setError('请输入项目名称');
+      throw new Error('invalid_project_name');
+    }
+    if (!trimmedBible) {
+      setError('请输入小说设定（Bible）');
+      throw new Error('invalid_project_bible');
+    }
+    if (!Number.isInteger(totalChapters) || totalChapters <= 0) {
+      setError('目标章节数必须是大于 0 的整数');
+      throw new Error('invalid_project_chapters');
+    }
     
     setLoading(true);
     try {
-      await createProject(name, bible, parseInt(chapters));
+      await createProject(trimmedName, trimmedBible, totalChapters);
       setShowNewProjectDialog(false);
       await loadProjects();
-      navigate(`/project/${encodeURIComponent(name)}`);
+      navigate(`/project/${encodeURIComponent(trimmedName)}/dashboard`);
     } catch (err) {
       setError((err as Error).message);
+      throw err;
     } finally {
       setLoading(false);
     }
-  }, [isConfigured, loadProjects, navigate]);
+  }, [loadProjects, navigate]);
 
   const handleDeleteProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -338,10 +426,20 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Generation handlers
   const handleGenerateOutline = useCallback(async (chapters: string, wordCount: string, customPrompt: string) => {
     if (!selectedProject || !isConfigured) return;
+    const targetChapters = Number.parseInt(chapters, 10);
+    const targetWordCount = Number.parseInt(wordCount, 10);
+    if (!Number.isInteger(targetChapters) || targetChapters <= 0) {
+      setError('目标章节数必须是大于 0 的整数');
+      return;
+    }
+    if (!Number.isInteger(targetWordCount) || targetWordCount <= 0) {
+      setError('目标字数必须是大于 0 的整数');
+      return;
+    }
     
     setGeneratingOutline(true);
     try {
-      await generateOutline(selectedProject.name, parseInt(chapters), parseInt(wordCount), customPrompt);
+      await generateOutline(selectedProject.name, targetChapters, targetWordCount, customPrompt);
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
@@ -353,9 +451,29 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleGenerateChapters = useCallback(async (count: string) => {
     if (!selectedProject || !isConfigured) return;
     
-    const chapterCount = parseInt(count);
+    const requestedCount = Number.parseInt(count, 10);
+    if (!Number.isInteger(requestedCount) || requestedCount <= 0) {
+      setError('生成章数必须是大于 0 的整数');
+      return;
+    }
+    if (generationState.isGenerating && generationState.projectName === selectedProject.name) {
+      setError('该项目已有章节生成任务在进行中');
+      return;
+    }
+    const generated = Math.max(0, selectedProject.state.nextChapterIndex - 1);
+    const remaining = Math.max(0, selectedProject.state.totalChapters - generated);
+    if (remaining <= 0) {
+      setError('已达到目标章节数，无需继续生成');
+      return;
+    }
+    const chapterCount = Math.min(requestedCount, remaining);
+    if (chapterCount < requestedCount) {
+      setError(`仅剩 ${remaining} 章可生成，已自动按 ${remaining} 章执行`);
+    }
+
     const startChapter = selectedProject.state.nextChapterIndex;
     
+    setLoading(true);
     startGeneration(selectedProject.name, chapterCount);
     
     try {
@@ -377,15 +495,33 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
               message: event.message,
             }));
           },
-          onChapterComplete: (_chapterIndex: number, _title: string, _preview: string) => {
-            loadProject(selectedProject.name);
+          onChapterComplete: (chapterIndex: number, title: string) => {
+            setSelectedProject(prev => {
+              if (!prev || prev.name !== selectedProject.name) return prev;
+              const chapterFile = `${chapterIndex.toString().padStart(3, '0')}.md`;
+              const chapterExists = prev.chapters.includes(chapterFile);
+              const nextChapterIndex = Math.max(prev.state.nextChapterIndex, chapterIndex + 1);
+              return {
+                ...prev,
+                state: {
+                  ...prev.state,
+                  nextChapterIndex,
+                },
+                chapters: chapterExists
+                  ? prev.chapters
+                  : [...prev.chapters, chapterFile].sort((a, b) => Number(a.replace('.md', '')) - Number(b.replace('.md', ''))),
+              };
+            });
+            setGenerationState(prev => ({
+              ...prev,
+              currentChapterTitle: title,
+            }));
           },
           onChapterError: (chapterIndex: number, error: string) => {
             console.error(`Chapter ${chapterIndex} error:`, error);
           },
           onDone: (results, failedChapters) => {
             completeGeneration();
-            loadProject(selectedProject.name);
             addTaskToHistory({
               type: 'chapters',
               title: `${selectedProject.name}: 第${startChapter}-${startChapter + results.length - 1}章`,
@@ -397,15 +533,60 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
           onError: (error: string) => {
             completeGeneration();
+            const cancelled = error.includes('取消');
+            if (cancelled) {
+              setGenerationState(prev => ({
+                ...prev,
+                isGenerating: false,
+                status: 'done',
+                message: '任务已取消',
+              }));
+              addTaskToHistory({
+                type: 'chapters',
+                title: `${selectedProject.name}: 任务已取消`,
+                status: 'cancelled',
+                startTime: generationState.startTime || Date.now(),
+                endTime: Date.now(),
+                details: error,
+              });
+              return;
+            }
             setError(error);
           },
         },
       );
+      await loadProject(selectedProject.name);
     } catch (err) {
       completeGeneration();
       setError((err as Error).message);
+    } finally {
+      setLoading(false);
     }
-  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime]);
+  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName]);
+
+  const handleCancelGeneration = useCallback(async (projectNameOverride?: string) => {
+    const targetProjectName = projectNameOverride || selectedProject?.name || generationState.projectName;
+    if (!targetProjectName) return;
+
+    setCancelingGeneration(true);
+    try {
+      await cancelAllActiveTasks(targetProjectName);
+      setGenerationState(prev => (
+        prev.projectName === targetProjectName
+          ? {
+            ...prev,
+            isGenerating: true,
+            status: 'preparing',
+            message: '正在取消任务...',
+          }
+          : prev
+      ));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCancelingGeneration(false);
+    }
+  }, [selectedProject?.name, generationState.projectName, setGenerationState]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -429,14 +610,24 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleDeleteChapter = useCallback(async (index: number): Promise<void> => {
     if (!selectedProject) return;
-    await deleteChapter(selectedProject.name, index);
-    await loadProject(selectedProject.name);
+    try {
+      await deleteChapter(selectedProject.name, index);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
   }, [selectedProject, loadProject]);
 
   const handleBatchDeleteChapters = useCallback(async (indices: number[]): Promise<void> => {
     if (!selectedProject) return;
-    await batchDeleteChapters(selectedProject.name, indices);
-    await loadProject(selectedProject.name);
+    try {
+      await batchDeleteChapters(selectedProject.name, indices);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
   }, [selectedProject, loadProject]);
 
   const handleDownloadBook = useCallback(async () => {
@@ -532,6 +723,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     handleRefresh,
     handleGenerateOutline,
     handleGenerateChapters,
+    handleCancelGeneration,
+    cancelingGeneration,
     handleResetProject,
     handleViewChapter,
     handleDeleteChapter,

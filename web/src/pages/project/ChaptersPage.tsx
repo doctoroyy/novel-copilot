@@ -1,16 +1,18 @@
 import { useProject } from '@/contexts/ProjectContext';
 import { ChapterListView } from '@/components/views';
+import { NoProjectSelected } from '@/components/NoProjectSelected';
 
 export default function ChaptersPage() {
   const { 
     selectedProject, 
+    loadProject,
     handleViewChapter,
     handleDeleteChapter,
     handleBatchDeleteChapters,
   } = useProject();
 
   if (!selectedProject) {
-    return null;
+    return <NoProjectSelected title="未找到项目" description="请先选择有效项目后再查看章节。"/>;
   }
 
   return (
@@ -19,6 +21,7 @@ export default function ChaptersPage() {
       onViewChapter={handleViewChapter}
       onDeleteChapter={handleDeleteChapter}
       onBatchDeleteChapters={handleBatchDeleteChapters}
+      onProjectRefresh={() => loadProject(selectedProject.name)}
     />
   );
 }

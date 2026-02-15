@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export function LoginPage() {
-  const { login, register, loading, error, clearError } = useAuth();
+  const { login, register, refreshUser, loading, error, clearError } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -20,33 +20,37 @@ export function LoginPage() {
 
   // Handle OAuth callback - check for token in URL
   useEffect(() => {
-    const token = searchParams.get('token');
-    const oauthError = searchParams.get('error');
-    
-    if (oauthError) {
-      const errorMessages: Record<string, string> = {
-        'missing_code': '授权失败：缺少授权码',
-        'oauth_not_configured': 'Google 登录未配置',
-        'token_exchange_failed': '令牌交换失败',
-        'oauth_failed': 'OAuth 登录失败',
-        'access_denied': '授权被拒绝',
-      };
-      setLocalError(errorMessages[oauthError] || `OAuth 错误: ${oauthError}`);
-      // Clear URL params
-      setSearchParams({});
-      return;
-    }
-    
-    if (token) {
-      // Got token from OAuth callback
-      setToken(token);
-      // Clean URL and navigate home
-      setSearchParams({});
-      navigate('/', { replace: true });
-      // Force reload to get user info
-      window.location.reload();
-    }
-  }, [searchParams, setSearchParams, navigate]);
+    const handleOAuthCallback = async () => {
+      const token = searchParams.get('token');
+      const oauthError = searchParams.get('error');
+
+      if (oauthError) {
+        const errorMessages: Record<string, string> = {
+          'missing_code': '授权失败：缺少授权码',
+          'oauth_not_configured': 'Google 登录未配置',
+          'token_exchange_failed': '令牌交换失败',
+          'oauth_failed': 'OAuth 登录失败',
+          'access_denied': '授权被拒绝',
+        };
+        setLocalError(errorMessages[oauthError] || `OAuth 错误: ${oauthError}`);
+        setSearchParams({});
+        return;
+      }
+
+      if (token) {
+        setToken(token);
+        setSearchParams({});
+        const synced = await refreshUser();
+        if (synced) {
+          navigate('/', { replace: true });
+        } else {
+          setLocalError('登录状态同步失败，请重试');
+        }
+      }
+    };
+
+    void handleOAuthCallback();
+  }, [searchParams, setSearchParams, navigate, refreshUser]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,4 +251,3 @@ export function LoginPage() {
     </div>
   );
 }
-

@@ -21,6 +21,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [editedOutline, setEditedOutline] = useState<NovelOutline | null>(null);
   const [refineMessage, setRefineMessage] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
   
   const { config, isConfigured } = useAIConfig();
 
@@ -33,11 +34,12 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
   const handleRefine = async () => {
     if (!isConfigured) {
-      alert('请先在设置中配置 AI API Key');
+      setActionError('请先在设置中配置 AI API Key');
       return;
     }
 
     try {
+      setActionError(null);
       setIsRefining(true);
       setRefineMessage('正在分析大纲...');
       const headers = getAIConfigHeaders(config);
@@ -55,7 +57,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       setRefineMessage('');
       onRefresh?.();
     } catch (error) {
-      alert(`操作失败: ${(error as Error).message}`);
+      setActionError(`操作失败：${(error as Error).message}`);
       setRefineMessage('');
     } finally {
       setIsRefining(false);
@@ -64,11 +66,12 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
   const handleRefineVolume = async (volIndex: number) => {
     if (!isConfigured) {
-      alert('请先在设置中配置 AI API Key');
+      setActionError('请先在设置中配置 AI API Key');
       return;
     }
 
     try {
+      setActionError(null);
       setRefiningVolIdx(volIndex);
       setRefineMessage(`正在重新生成第 ${volIndex + 1} 卷的章节大纲...`);
       const headers = getAIConfigHeaders(config);
@@ -83,7 +86,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       setRefineMessage('');
       onRefresh?.();
     } catch (error) {
-      alert(`操作失败: ${(error as Error).message}`);
+      setActionError(`操作失败：${(error as Error).message}`);
       setRefineMessage('');
     } finally {
       setRefiningVolIdx(null);
@@ -94,12 +97,13 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
     if (!editedOutline) return;
     
     try {
+      setActionError(null);
       setIsSaving(true);
       await updateOutline(project.name, editedOutline);
       setIsEditing(false);
       onRefresh?.();
     } catch (error) {
-      alert(`保存失败: ${(error as Error).message}`);
+      setActionError(`保存失败：${(error as Error).message}`);
     } finally {
       setIsSaving(false);
     }
@@ -173,6 +177,11 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+      {actionError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
       {/* Header Actions */}
       <div className="flex justify-end gap-2">
         {isEditing ? (

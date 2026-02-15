@@ -80,7 +80,9 @@ export function ActivityPanel({
   };
 
 
-  const progressPercent = progress ? Math.round((Math.max(0, progress.current - 1) / progress.total) * 100) : 0;
+  const progressPercent = progress && progress.total > 0
+    ? Math.min(100, Math.max(0, Math.round((Math.max(0, progress.current - 1) / progress.total) * 100)))
+    : 0;
 
   return (
     <aside className="w-80 lg:w-80 sm:w-72 h-screen flex flex-col border-l border-border bg-sidebar">
