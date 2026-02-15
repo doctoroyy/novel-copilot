@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateCharacterGraph } from '../generateCharacters.js';
+import { generateCharacterGraph, generateCoreCharacters } from '../generateCharacters.js';
 import { getAIConfigFromHeaders, getAIConfigFromRegistry } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
 
@@ -48,7 +48,7 @@ charactersRoutes.post('/:name/generate', async (c) => {
   }
 
   try {
-    // 1. Get project info
+    // 1. 获取项目信息
     const project = await c.env.DB.prepare(`
       SELECT p.id, p.bible, o.outline_json
       FROM projects p
@@ -60,25 +60,35 @@ charactersRoutes.post('/:name/generate', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    if (!project.outline_json) {
-      return c.json({ success: false, error: 'Outline not found. Please generate outline first.' }, 400);
-    }
-
-    // 0. Consume Credit
+    // 0. 消耗积分
     try {
         await consumeCredit(c.env.DB, userId, 'generate_characters', `生成角色设定: ${name}`);
     } catch (error) {
         return c.json({ success: false, error: (error as Error).message }, 402);
     }
 
-    // 2. Generate CRG
-    const crg = await generateCharacterGraph({
-      aiConfig,
-      bible: project.bible as string,
-      outline: JSON.parse(project.outline_json as string),
-    });
+    // 2. 根据是否有大纲选择不同的生成方式
+    let crg;
+    if (project.outline_json) {
+      // 有大纲：使用完整版生成（包含精确的时间线）
+      crg = await generateCharacterGraph({
+        aiConfig,
+        bible: project.bible as string,
+        outline: JSON.parse(project.outline_json as string),
+      });
+    } else {
+      // 无大纲：使用核心人设生成（不依赖大纲）
+      // 从请求体获取目标规模，或使用默认值
+      const body = await c.req.json().catch(() => ({}));
+      crg = await generateCoreCharacters({
+        aiConfig,
+        bible: project.bible as string,
+        targetChapters: body.targetChapters || 200,
+        targetWordCount: body.targetWordCount || 80,
+      });
+    }
 
-    // 3. Save to DB
+    // 3. 保存到数据库
     await c.env.DB.prepare(`
       INSERT INTO characters (project_id, characters_json) VALUES (?, ?)
       ON CONFLICT(project_id) DO UPDATE SET characters_json = excluded.characters_json, updated_at = CURRENT_TIMESTAMP

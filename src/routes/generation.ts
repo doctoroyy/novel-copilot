@@ -167,7 +167,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         // Get project (user-scoped)
         const project = await c.env.DB.prepare(`
-          SELECT id, bible FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
+          SELECT p.id, p.bible FROM projects p WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
         `).bind(name, userId).first();
 
         if (!project) {
@@ -182,10 +182,16 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
           bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
         }
 
-        console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字`);
+        // 查询是否已有人物关系数据（先建人物再生成大纲的场景）
+        const charRecord = await c.env.DB.prepare(`
+          SELECT characters_json FROM characters WHERE project_id = ?
+        `).bind(project.id).first();
+        const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json as string) : undefined;
+
+        console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字${characters ? ' (with characters)' : ''}`);
 
         // Phase 1: Generate master outline
-        sendEvent('progress', { phase: 1, message: '正在生成总体大纲...' });
+        sendEvent('progress', { phase: 1, message: characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...' });
         console.log('Phase 1: Generating master outline...');
       // 0. Consume Credit
     try {
@@ -197,8 +203,8 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         return;
     }
 
-    // 1. Generate Outline
-    const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount });
+    // 1. Generate Outline (传入 characters 以获得更好的大局观)
+    const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount, characters });
         const totalVolumes = masterOutline.volumes?.length || 0;
         console.log(`Master outline generated: ${totalVolumes} volumes`);
         sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
