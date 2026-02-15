@@ -51,6 +51,7 @@ function ProjectsStackNavigator() {
         headerTintColor: ui.colors.text,
         contentStyle: { backgroundColor: ui.colors.bg },
         headerShadowVisible: false,
+        headerBackButtonDisplayMode: 'minimal',
       }}
     >
       <ProjectsStack.Screen
@@ -61,7 +62,10 @@ function ProjectsStackNavigator() {
       <ProjectsStack.Screen
         name="ProjectDetail"
         component={ProjectDetailScreen}
-        options={({ route }) => ({ title: route.params.projectName || '项目详情' })}
+        options={({ route }) => ({
+          title: route.params.projectName || '项目详情',
+          headerBackTitle: '',
+        })}
       />
     </ProjectsStack.Navigator>
   );
