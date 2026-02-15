@@ -4,16 +4,33 @@ This repository includes GitHub Actions workflow:
 
 - `.github/workflows/build-mobile-packages.yml`
 
-It builds:
+It builds and publishes:
 
-- iOS IPA artifact (`ios-ipa`)
-- Android universal APK artifact (`android-universal-apk`)
-- Android arm64 APK artifact (`android-arm64-apk`)
+- iOS IPA: `NovelCopilot-ios.ipa`
+- Android universal APK: `NovelCopilot-android-universal.apk`
+- Android arm64 APK: `NovelCopilot-android-arm64-v8a.apk`
 
 ## Trigger
 
 - Push to `main` (when files under `mobile/`, `scripts/`, `package.json`, or workflow file change)
 - Manual run from GitHub Actions (`workflow_dispatch`)
+
+## Outputs
+
+### Workflow artifacts
+
+- `NovelCopilot-ios-ipa`
+- `NovelCopilot-android-universal-apk`
+- `NovelCopilot-android-arm64-apk`
+
+### GitHub Release assets (auto-published)
+
+Workflow updates a rolling pre-release:
+
+- Tag: `mobile-builds`
+- Release name: `NovelCopilot Mobile Builds`
+
+Assets are overwritten by latest successful run so the release always points to the newest build files.
 
 ## Required iOS Secrets
 
