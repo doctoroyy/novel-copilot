@@ -4,6 +4,7 @@ import type { CharacterRelationGraph } from './types/characters.js';
 import type { CharacterStateRegistry } from './types/characterState.js';
 import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
+import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { z } from 'zod';
 
 /**
@@ -337,26 +338,5 @@ ${chapterText}
  * 解析章节生成响应 (JSON -> Text)
  */
 function parseChapterResponse(rawResponse: string, chapterIndex: number): string {
-  try {
-    // 1. 尝试直接解析 (去掉代码块标记后)
-    let jsonStr = rawResponse.replace(/```json\s*|```\s*/g, '').trim();
-    
-    // 2. 如果还有多余字符，尝试提取最外层的 {} 
-    const match = jsonStr.match(/(\{[\s\S]*\})/);
-    if (match) {
-        jsonStr = match[1];
-    }
-    
-    const parsed = JSON.parse(jsonStr);
-    
-    // 构建标准全文格式: 标题 + 换行 + 正文
-    const safeTitle = parsed.title || `第${chapterIndex}章`;
-    const finalTitle = safeTitle.startsWith('第') ? safeTitle : `第${chapterIndex}章 ${safeTitle}`;
-    
-    return `${finalTitle}\n\n${parsed.content}`;
-  } catch (e) {
-    console.warn(`JSON parsing failed for chapter ${chapterIndex}, falling back to raw text.`);
-    return rawResponse.replace(/```json\s*|```\s*/g, '').trim();
-  }
+  return normalizeGeneratedChapterText(rawResponse, chapterIndex);
 }
-

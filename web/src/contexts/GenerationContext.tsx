@@ -5,6 +5,7 @@ export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
 
 export interface ActiveTask {
   id: string;
+  taskId?: number;
   type: TaskType;
   title: string;
   status: 'preparing' | 'generating' | 'saving' | 'done' | 'error';
@@ -18,6 +19,7 @@ export interface ActiveTask {
 export interface GenerationState {
   // Legacy state for chapters (backwards compatibility)
   isGenerating: boolean;
+  taskId?: number;
   current: number;
   total: number;
   currentChapter?: number;

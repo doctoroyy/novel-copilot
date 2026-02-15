@@ -79,6 +79,37 @@ export type GenerationTask = {
   updatedAtMs: number; // Unix timestamp in ms for reliable health check
 };
 
+// Cancel task by taskId (user-scoped, no project lookup needed)
+tasksRoutes.post('/tasks/:id/cancel', async (c) => {
+  const taskId = c.req.param('id');
+  const userId = c.get('userId');
+
+  try {
+    const task = await c.env.DB.prepare(`
+      SELECT status
+      FROM generation_tasks
+      WHERE id = ? AND user_id = ?
+    `).bind(taskId, userId).first() as { status: string } | null;
+
+    if (!task) {
+      return c.json({ success: false, error: 'Task not found' }, 404);
+    }
+
+    if (task.status === 'running' || task.status === 'paused') {
+      await c.env.DB.prepare(`
+        UPDATE generation_tasks
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(taskId, userId).run();
+      return c.json({ success: true, cancelled: true, message: '任务已取消' });
+    }
+
+    return c.json({ success: true, cancelled: true, message: '任务已结束' });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Get active task for a project
 tasksRoutes.get('/projects/:name/active-task', async (c) => {
   const name = c.req.param('name');

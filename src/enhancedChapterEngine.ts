@@ -46,6 +46,7 @@ import {
   getCharacterNameMap,
   checkEventDuplication,
 } from './context/timelineManager.js';
+import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { z } from 'zod';
 
 /**
@@ -232,11 +233,14 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 
   // 4. 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
-  let chapterText = await generateTextWithRetry(aiConfig, {
-    system,
-    prompt: userPrompt,
-    temperature: narrativeGuide ? getTemperatureForPacing(narrativeGuide.pacingTarget) : 0.85,
-  });
+  let chapterText = normalizeGeneratedChapterText(
+    await generateTextWithRetry(aiConfig, {
+      system,
+      prompt: userPrompt,
+      temperature: narrativeGuide ? getTemperatureForPacing(narrativeGuide.pacingTarget) : 0.85,
+    }),
+    chapterIndex
+  );
 
   let wasRewritten = false;
   let rewriteCount = 0;
@@ -260,11 +264,14 @@ ${buildChapterGoalSection(params, enhancedOutline)}
       });
 
       const rewritePrompt = `${userPrompt}\n\n${rewriteInstruction}`;
-      chapterText = await generateTextWithRetry(aiConfig, {
-        system,
-        prompt: rewritePrompt,
-        temperature: 0.8,
-      });
+      chapterText = normalizeGeneratedChapterText(
+        await generateTextWithRetry(aiConfig, {
+          system,
+          prompt: rewritePrompt,
+          temperature: 0.8,
+        }),
+        chapterIndex
+      );
 
       wasRewritten = true;
       rewriteCount++;
@@ -299,7 +306,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
       );
 
       if (repairResult.success) {
-        chapterText = repairResult.repairedChapter;
+        chapterText = normalizeGeneratedChapterText(repairResult.repairedChapter, chapterIndex);
         qcResult = repairResult.finalQC;
         wasRewritten = true;
         rewriteCount += repairResult.attempts;
