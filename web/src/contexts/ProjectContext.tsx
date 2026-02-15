@@ -16,7 +16,7 @@ import {
   deleteChapter,
   batchDeleteChapters,
   cancelAllActiveTasks,
-  getAllActiveTasks,
+  getActiveTask,
   type ProjectSummary,
   type ProjectDetail,
 } from '@/lib/api';
@@ -123,7 +123,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadProjectRequestIdRef = useRef(0);
-  const lastTaskSnapshotRef = useRef<{ id: number; completed: number; failed: number } | null>(null);
 
   // AI Config
   const { config, isConfigured } = useAIConfig();
@@ -223,91 +222,54 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
-  // Poll active tasks globally so refresh/reopen can recover running progress
+  // Bootstrap generation state once per selected project.
+  // After bootstrap, rely on SSE (/api/events) instead of polling /active-tasks.
   useEffect(() => {
-    let stopped = false;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
+    if (!selectedProject?.name) return;
+    let disposed = false;
 
-    const syncActiveTasks = async () => {
+    const bootstrapActiveTask = async () => {
       try {
-        const tasks = await getAllActiveTasks();
-        if (stopped) return;
+        const task = await getActiveTask(selectedProject.name);
+        if (disposed) return;
 
-        const runningTask = tasks.find((task) => task.status === 'running');
-        const pausedTask = tasks.find((task) => task.status === 'paused');
-        const activeTask = runningTask || pausedTask || null;
-
-        if (!activeTask) {
-          lastTaskSnapshotRef.current = null;
-          setGenerationState((prev) => (
-            prev.isGenerating
-              ? {
-                ...prev,
-                isGenerating: false,
-                status: prev.status === 'error' ? 'error' : 'done',
-                message: prev.message || '任务已结束',
-              }
-              : prev
-          ));
+        if (!task || task.cancelRequested || task.status !== 'running') {
+          setGenerationState((prev) => {
+            if (!prev.isGenerating || prev.projectName !== selectedProject.name) return prev;
+            return {
+              ...prev,
+              isGenerating: false,
+              status: prev.status === 'error' ? 'error' : 'done',
+              message: prev.message || '任务已结束',
+            };
+          });
           return;
         }
 
-        const completedCount = activeTask.completedChapters.length;
-        const failedCount = activeTask.failedChapters.length;
-        const currentChapter = activeTask.currentProgress || activeTask.startChapter;
+        const completedCount = task.completedChapters.length;
+        const currentChapter = task.currentProgress || task.startChapter;
 
-        setGenerationState((prev) => ({
-          ...prev,
-          isGenerating: activeTask.status === 'running',
+        setGenerationState({
+          isGenerating: true,
           current: completedCount,
-          total: activeTask.targetCount,
+          total: task.targetCount,
           currentChapter,
-          status: activeTask.status === 'running' ? 'generating' : 'preparing',
-          message: activeTask.currentMessage || (
-            activeTask.status === 'running'
-              ? `正在生成第 ${currentChapter} 章...`
-              : '任务已暂停'
-          ),
-          projectName: activeTask.projectName,
-          startTime: prev.startTime || activeTask.updatedAtMs || Date.now(),
-        }));
-
-        if (selectedProject?.name === activeTask.projectName && activeTask.status === 'running') {
-          const previous = lastTaskSnapshotRef.current;
-          const changed = !previous
-            || previous.id !== activeTask.id
-            || previous.completed !== completedCount
-            || previous.failed !== failedCount;
-          lastTaskSnapshotRef.current = {
-            id: activeTask.id,
-            completed: completedCount,
-            failed: failedCount,
-          };
-          if (changed && !loading) {
-            void loadProject(selectedProject.name);
-          }
-        } else {
-          lastTaskSnapshotRef.current = {
-            id: activeTask.id,
-            completed: completedCount,
-            failed: failedCount,
-          };
-        }
+          status: 'generating',
+          message: task.currentMessage || `正在生成第 ${currentChapter} 章...`,
+          projectName: task.projectName,
+          startTime: task.updatedAtMs || Date.now(),
+        });
       } catch (err) {
-        console.warn('Failed to check active tasks:', err);
+        console.warn('Failed to bootstrap active task:', err);
       }
     };
 
-    void syncActiveTasks();
-    pollTimer = setInterval(() => {
-      void syncActiveTasks();
-    }, 2500);
+    void bootstrapActiveTask();
 
     return () => {
-      stopped = true;
-      if (pollTimer) clearInterval(pollTimer);
+      disposed = true;
     };
-  }, [setGenerationState, selectedProject?.name, loadProject, loading]);
+  }, [setGenerationState, selectedProject?.name]);
 
   // Load project when URL changes
   useEffect(() => {
@@ -326,12 +288,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     if (!generationProgress) return;
     
     if (generationProgress.status === 'done' || generationProgress.status === 'error') {
-      setGenerationState(prev => ({
-        ...prev,
-        isGenerating: false,
-        status: generationProgress.status === 'done' ? 'done' : 'error',
-        message: generationProgress.message || (generationProgress.status === 'done' ? '生成完成' : '生成失败'),
-      }));
+      setGenerationState(prev => {
+        if (prev.projectName && prev.projectName !== generationProgress.projectName) {
+          return prev;
+        }
+        return {
+          ...prev,
+          isGenerating: false,
+          status: generationProgress.status === 'done' ? 'done' : 'error',
+          message: generationProgress.message || (generationProgress.status === 'done' ? '生成完成' : '生成失败'),
+        };
+      });
       return;
     }
     
