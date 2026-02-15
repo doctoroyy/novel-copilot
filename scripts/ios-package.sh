@@ -13,11 +13,22 @@ WORKSPACE_PATH="$IOS_DIR/${SCHEME}.xcworkspace"
 CONFIGURATION="${CONFIGURATION:-Release}"
 METHOD="${METHOD:-debugging}"
 DEVICE_ID="${DEVICE_ID:-}"
+SIGNING_STYLE="${SIGNING_STYLE:-automatic}" # automatic | manual
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-Apple Development}"
+PROVISIONING_PROFILE_SPECIFIER="${PROVISIONING_PROFILE_SPECIFIER:-}"
 
 DO_INSTALL="false"
-if [[ "${1:-}" == "--install" ]]; then
-  DO_INSTALL="true"
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --install)
+      DO_INSTALL="true"
+      ;;
+    *)
+      echo "[error] unknown argument: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
 
 if [[ ! -d "$MOBILE_DIR" ]]; then
   echo "[error] mobile project not found: $MOBILE_DIR" >&2
@@ -27,6 +38,22 @@ fi
 if [[ ! -d "$WORKSPACE_PATH" ]]; then
   echo "[error] iOS workspace not found: $WORKSPACE_PATH" >&2
   exit 1
+fi
+
+if [[ "$SIGNING_STYLE" != "automatic" && "$SIGNING_STYLE" != "manual" ]]; then
+  echo "[error] SIGNING_STYLE must be automatic or manual, got: $SIGNING_STYLE" >&2
+  exit 1
+fi
+
+if [[ "$SIGNING_STYLE" == "manual" && -z "$PROVISIONING_PROFILE_SPECIFIER" ]]; then
+  echo "[error] PROVISIONING_PROFILE_SPECIFIER is required when SIGNING_STYLE=manual" >&2
+  exit 1
+fi
+
+if [[ "$SIGNING_STYLE" == "automatic" ]]; then
+  XCODE_SIGN_STYLE="Automatic"
+else
+  XCODE_SIGN_STYLE="Manual"
 fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -42,7 +69,7 @@ cat > "$EXPORT_OPTIONS_PATH" <<EOF
   <key>method</key>
   <string>${METHOD}</string>
   <key>signingStyle</key>
-  <string>automatic</string>
+  <string>${SIGNING_STYLE}</string>
   <key>teamID</key>
   <string>${TEAM_ID}</string>
   <key>compileBitcode</key>
@@ -51,19 +78,34 @@ cat > "$EXPORT_OPTIONS_PATH" <<EOF
 </plist>
 EOF
 
-echo "[info] archive with team=${TEAM_ID}, bundle=${BUNDLE_ID}"
-xcodebuild \
-  -workspace "$WORKSPACE_PATH" \
-  -scheme "$SCHEME" \
-  -configuration "$CONFIGURATION" \
-  -destination "generic/platform=iOS" \
-  -archivePath "$ARCHIVE_PATH" \
-  -allowProvisioningUpdates \
-  DEVELOPMENT_TEAM="$TEAM_ID" \
-  CODE_SIGN_STYLE=Automatic \
-  CODE_SIGN_IDENTITY="Apple Development" \
-  PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+if [[ "$SIGNING_STYLE" == "manual" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PATH"
+  /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:${BUNDLE_ID} string ${PROVISIONING_PROFILE_SPECIFIER}" "$EXPORT_OPTIONS_PATH"
+fi
+
+echo "[info] archive with team=${TEAM_ID}, bundle=${BUNDLE_ID}, signing=${SIGNING_STYLE}"
+ARCHIVE_ARGS=(
+  -workspace "$WORKSPACE_PATH"
+  -scheme "$SCHEME"
+  -configuration "$CONFIGURATION"
+  -destination "generic/platform=iOS"
+  -archivePath "$ARCHIVE_PATH"
+  -allowProvisioningUpdates
+  DEVELOPMENT_TEAM="$TEAM_ID"
+  CODE_SIGN_STYLE="$XCODE_SIGN_STYLE"
+  PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
   clean archive
+)
+
+if [[ -n "$CODE_SIGN_IDENTITY" ]]; then
+  ARCHIVE_ARGS+=(CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY")
+fi
+
+if [[ "$SIGNING_STYLE" == "manual" ]]; then
+  ARCHIVE_ARGS+=(PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_SPECIFIER")
+fi
+
+xcodebuild "${ARCHIVE_ARGS[@]}"
 
 echo "[info] export ipa"
 xcodebuild \

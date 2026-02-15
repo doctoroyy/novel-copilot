@@ -1,0 +1,197 @@
+name: Build Mobile Packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-mobile-packages.yml
+      - package.json
+      - scripts/**
+      - mobile/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-mobile-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-packages:
+    name: Android (universal + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install mobile dependencies
+        run: pnpm -C mobile install --frozen-lockfile
+
+      - name: Generate Android native project
+        env:
+          CI: "1"
+        run: pnpm -C mobile exec expo prebuild --platform android --no-install
+
+      - name: Enable ABI splits
+        run: bash ./scripts/android-enable-abi-splits.sh
+
+      - name: Build release APKs
+        run: |
+          cd mobile/android
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Verify APK outputs
+        run: |
+          ls -lah mobile/android/app/build/outputs/apk/release
+          test -f mobile/android/app/build/outputs/apk/release/app-universal-release.apk
+          test -f mobile/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-universal-apk
+          path: mobile/android/app/build/outputs/apk/release/app-universal-release.apk
+          if-no-files-found: error
+
+      - name: Upload arm64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-apk
+          path: mobile/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+          if-no-files-found: error
+
+  ios-package:
+    name: iOS IPA
+    if: ${{ secrets.IOS_CERT_BASE64 != '' && secrets.IOS_CERT_PASSWORD != '' && secrets.IOS_PROVISION_PROFILE_BASE64 != '' && secrets.IOS_TEAM_ID != '' && secrets.IOS_KEYCHAIN_PASSWORD != '' }}
+    runs-on: macos-15
+    timeout-minutes: 70
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install mobile dependencies
+        run: pnpm -C mobile install --frozen-lockfile
+
+      - name: Install CocoaPods dependencies
+        run: cd mobile/ios && pod install
+
+      - name: Configure signing assets
+        id: signing
+        env:
+          IOS_CERT_BASE64: ${{ secrets.IOS_CERT_BASE64 }}
+          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/signing-cert.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build-signing.keychain-db"
+
+          echo "$IOS_CERT_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c "Print UUID" "$PROFILE_PLIST")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c "Print Name" "$PROFILE_PLIST")"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build and export IPA
+        id: build_ios
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+          IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD }}
+          IOS_CODE_SIGN_IDENTITY: ${{ secrets.IOS_CODE_SIGN_IDENTITY }}
+        run: |
+          TEAM_ID="${IOS_TEAM_ID:?IOS_TEAM_ID is required}"
+          BUNDLE_ID="${IOS_BUNDLE_ID:-com.xiaoyu.novelcopilot.mobile}"
+          METHOD="${IOS_EXPORT_METHOD:-ad-hoc}"
+          CODE_SIGN_IDENTITY="${IOS_CODE_SIGN_IDENTITY:-Apple Distribution}"
+
+          TEAM_ID="$TEAM_ID" \
+          BUNDLE_ID="$BUNDLE_ID" \
+          METHOD="$METHOD" \
+          SIGNING_STYLE="manual" \
+          CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
+          PROVISIONING_PROFILE_SPECIFIER="${{ steps.signing.outputs.profile_name }}" \
+          pnpm mobile:ios:package
+
+          IPA_PATH="$(ls -t /tmp/NovelCopilot-export-*/NovelCopilot.ipa 2>/dev/null | head -n 1)"
+          test -f "$IPA_PATH"
+          echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: ${{ steps.build_ios.outputs.ipa_path }}
+          if-no-files-found: error
+
+      - name: Cleanup temporary keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build-signing.keychain-db" || true
+
+  ios-signing-not-configured:
+    name: iOS signing not configured
+    if: ${{ !(secrets.IOS_CERT_BASE64 != '' && secrets.IOS_CERT_PASSWORD != '' && secrets.IOS_PROVISION_PROFILE_BASE64 != '' && secrets.IOS_TEAM_ID != '' && secrets.IOS_KEYCHAIN_PASSWORD != '') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "Skipping iOS build because required signing secrets are not set."
+          echo "Required secrets: IOS_CERT_BASE64, IOS_CERT_PASSWORD, IOS_PROVISION_PROFILE_BASE64, IOS_TEAM_ID, IOS_KEYCHAIN_PASSWORD."
