@@ -148,7 +148,7 @@ export function ProjectsHomeScreen() {
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
         <FlatList
           data={projects}
-          keyExtractor={(item) => item.name}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 122 }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadProjects(true)} tintColor={ui.colors.primary} />}
           ListHeaderComponent={
@@ -236,7 +236,7 @@ export function ProjectsHomeScreen() {
             return (
               <Pressable
                 style={({ pressed }) => [styles.card, toneStyle, pressed && styles.pressed]}
-                onPress={() => navigation.navigate('ProjectDetail', { projectName: item.name })}
+                onPress={() => navigation.navigate('ProjectDetail', { projectId: item.id, projectName: item.name })}
               >
                 <View style={[styles.cardTopTag, topToneStyle]}>
                   <Text style={styles.cardTopTagText}>{item.hasOutline ? '章节推进中' : '等待大纲'}</Text>

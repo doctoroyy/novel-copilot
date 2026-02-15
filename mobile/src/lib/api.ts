@@ -96,9 +96,9 @@ export async function fetchProjects(
 export async function fetchProject(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
 ): Promise<ProjectDetail> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}`), {
     headers: authHeaders(token),
   });
 
@@ -128,9 +128,9 @@ export async function createProject(
 export async function deleteProject(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
 ): Promise<void> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}`), {
     method: 'DELETE',
     headers: authHeaders(token),
   });
@@ -142,9 +142,9 @@ export async function deleteProject(
 export async function resetProject(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
 ): Promise<void> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/reset`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/reset`), {
     method: 'PUT',
     headers: authHeaders(token),
   });
@@ -161,7 +161,7 @@ export async function generateBible(
   keywords: string,
   aiConfig?: AppConfig['ai'],
 ): Promise<string> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, '/bible/generate'), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/generate-bible'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -179,13 +179,94 @@ async function parseSSE(
   response: Response,
   onEvent: (event: any) => void,
 ): Promise<void> {
-// ... (omitting huge chunk of unchanged code for parseSSE)
+  if (!response.ok) {
+    const errorJson = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(errorJson.error || `Request failed: ${response.status}`);
+  }
+
+  const parseSSEText = (raw: string): number => {
+    let parsedCount = 0;
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue;
+      const payload = line.replace(/^data:\s?/, '').trim();
+      if (!payload) continue;
+      try {
+        const event = JSON.parse(payload);
+        onEvent(event);
+        parsedCount += 1;
+      } catch {
+        // Ignore malformed chunks.
+      }
+    }
+    return parsedCount;
+  };
+
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const textBody = await response.text().catch(() => '');
+
+    if (!textBody) {
+      throw new Error('响应为空，无法解析生成结果');
+    }
+
+    const parsedCount = parseSSEText(textBody);
+    if (parsedCount > 0) return;
+
+    try {
+      const json = JSON.parse(textBody) as any;
+      if (json.type) {
+        onEvent(json);
+        return;
+      }
+      if (json.success === false) {
+        throw new Error(json.error || 'Generation failed');
+      }
+      onEvent(json);
+      return;
+    } catch (err) {
+      throw new Error((err as Error).message || '无法解析流式响应');
+    }
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.replace(/^data:\s?/, '').trim();
+        if (!payload) continue;
+
+        try {
+          const event = JSON.parse(payload);
+          onEvent(event);
+        } catch {
+          // Ignore malformed chunks.
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      parseSSEText(buffer);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function generateOutlineStream(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
   payload: {
     targetChapters: number;
     targetWordCount: number;
@@ -194,7 +275,7 @@ export async function generateOutlineStream(
   onEvent: (event: OutlineStreamEvent) => void,
   aiConfig?: AppConfig['ai'],
 ): Promise<NovelOutline> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/outline`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/outline`), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -229,12 +310,12 @@ export async function generateOutlineStream(
 export async function generateChaptersStream(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
   payload: { chaptersToGenerate: number },
   onEvent: (event: GenerationStreamEvent) => void,
   aiConfig?: AppConfig['ai'],
 ): Promise<{ generated: { chapter: number; title: string }[]; failedChapters: number[] }> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/generate-stream`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/generate-stream`), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -281,10 +362,10 @@ export async function generateChaptersStream(
 export async function fetchChapterContent(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
   chapterIndex: number,
 ): Promise<string> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/chapters/${chapterIndex}`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/chapters/${chapterIndex}`), {
     headers: authHeaders(token),
   });
 
@@ -309,9 +390,9 @@ export async function fetchActiveTasks(
 export async function fetchProjectActiveTask(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
 ): Promise<GenerationTask | null> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/active-task`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/active-task`), {
     headers: authHeaders(token),
   });
 
@@ -323,10 +404,10 @@ export async function fetchProjectActiveTask(
 export async function pauseTask(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
   taskId: number,
 ): Promise<void> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/tasks/${taskId}/pause`), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/tasks/${taskId}/pause`), {
     method: 'POST',
     headers: authHeaders(token),
   });
@@ -338,15 +419,29 @@ export async function pauseTask(
 export async function cancelAllActiveTasks(
   apiBaseUrl: string,
   token: string,
-  projectName: string,
+  projectRef: string,
 ): Promise<void> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectName)}/active-tasks`), {
-    method: 'DELETE',
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}/active-tasks/cancel`), {
+    method: 'POST',
     headers: authHeaders(token),
   });
 
   const json = await parseJsonResponse<Record<string, never>>(res);
   if (!json.success) throw new Error(json.error || 'Failed to cancel active tasks');
+}
+
+export async function cancelTaskById(
+  apiBaseUrl: string,
+  token: string,
+  taskId: number,
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/tasks/${encodeURIComponent(String(taskId))}/cancel`), {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to cancel task');
 }
 
 export async function fetchAnimeProjects(
@@ -513,4 +608,3 @@ export async function updateCreditFeature(
   const json = await parseJsonResponse<Record<string, never>>(res);
   if (!json.success) throw new Error(json.error || 'Failed to update credit feature');
 }
-

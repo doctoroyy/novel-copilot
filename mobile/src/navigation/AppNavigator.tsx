@@ -61,7 +61,7 @@ function ProjectsStackNavigator() {
       <ProjectsStack.Screen
         name="ProjectDetail"
         component={ProjectDetailScreen}
-        options={({ route }) => ({ title: route.params.projectName })}
+        options={({ route }) => ({ title: route.params.projectName || '项目详情' })}
       />
     </ProjectsStack.Navigator>
   );

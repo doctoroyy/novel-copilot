@@ -4,7 +4,7 @@ export type AuthStackParamList = {
 
 export type ProjectsStackParamList = {
   ProjectsHome: undefined;
-  ProjectDetail: { projectName: string };
+  ProjectDetail: { projectId: string; projectName?: string };
 };
 
 export type MainTabParamList = {

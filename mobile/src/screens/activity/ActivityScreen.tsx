@@ -17,7 +17,7 @@ export function ActivityScreen() {
     apiBaseUrl: config.apiBaseUrl,
     token,
     enabled: Boolean(token),
-    pollIntervalMs: 4000,
+    pollIntervalMs: 8000,
   });
   const runningCount = tasks.filter((item) => item.status === 'running').length;
   const idleCount = Math.max(0, tasks.length - runningCount);

@@ -8,7 +8,7 @@ export function useActiveTasks(params: {
   enabled?: boolean;
   pollIntervalMs?: number;
 }) {
-  const { apiBaseUrl, token, enabled = true, pollIntervalMs = 4000 } = params;
+  const { apiBaseUrl, token, enabled = true, pollIntervalMs = 8000 } = params;
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
