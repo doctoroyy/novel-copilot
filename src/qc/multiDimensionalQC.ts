@@ -320,6 +320,108 @@ function checkStructuralIntegrity(
     score -= 5;
   }
 
+  // ========== 新增：文学质量检测 ==========
+
+  // 白开水检测：检查是否存在大段缺乏描写的文字
+  const paragraphs = chapterText.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  // 感官描写关键词
+  const sensoryPattern = /看到|听到|听见|闻到|触感|温度|疼痛|灼热|冰冷|刺骨|芳香|恶臭|轰鸣|震颤|柔软|粗糙|明亮|昏暗|刺眼|微光|血腥|甘甜|苦涩|酸|辣|颤抖|麻痹|目光|眼神|瞳孔|嘴角|眉头|拳头|指尖|掌心|呼吸|心跳|脉搏|汗水|泪水|血液|伤口/;
+  let blandParagraphs = 0;
+  for (const p of paragraphs) {
+    if (p.length > 200 && !sensoryPattern.test(p) && !/"/.test(p) && !/「/.test(p) && !/"/.test(p)) {
+      blandParagraphs++;
+    }
+  }
+  if (blandParagraphs >= 3) {
+    issues.push({
+      type: 'style',
+      severity: 'major',
+      description: `检测到 ${blandParagraphs} 段白开水文（超过200字但无感官描写或对话）`,
+      suggestion: '增加具体的视觉、听觉、触觉等感官细节，让场景更有画面感',
+    });
+    score -= 15;
+  }
+
+  // 概述式写作检测
+  const summaryPatterns = [
+    /(?:接下来|之后|后来)(?:的|一)(?:几天|几日|几个月|一段时间|些日子)/,
+    /(?:日子|时间|时光)(?:一天天|一天一天|就这样|就这么)(?:过去|流逝)/,
+    /不知不觉.{0,5}(?:过去了|已经|便是)/,
+    /(?:经过|花了|用了).{0,5}(?:几天|数日|半个月|一个月|数月).{0,10}(?:终于|总算|才)/,
+  ];
+  const summaryMatches: string[] = [];
+  for (const pattern of summaryPatterns) {
+    const match = chapterText.match(pattern);
+    if (match) {
+      summaryMatches.push(match[0]);
+    }
+  }
+  if (summaryMatches.length >= 2) {
+    issues.push({
+      type: 'style',
+      severity: 'major',
+      description: `检测到概述式写作（${summaryMatches.join('；')}），缺少场景展开`,
+      suggestion: '将时间跨度大的叙述替换为一个关键场景的详细展开',
+    });
+    score -= 15;
+  }
+
+  // 说教式结尾检测
+  const lastChunk = chapterText.slice(-300);
+  const didacticEndingPatterns = [
+    /他(?:深深地?)?(?:知道|明白|清楚|意识到|感受到)/,
+    /他(?:在心中|暗暗|默默)(?:发誓|下定决心|告诉自己)/,
+    /这(?:一刻|一瞬|一天).*?(?:永远|终生|一辈子).*?(?:铭记|记住|忘不了)/,
+    /(?:望着|看着|凝视).{0,10}(?:远方|天空|背影).{0,5}(?:他知道|心中)/,
+  ];
+  for (const pattern of didacticEndingPatterns) {
+    if (pattern.test(lastChunk)) {
+      issues.push({
+        type: 'style',
+        severity: 'minor',
+        description: '章节以感悟/总结式语句结尾，缺少钩子',
+        suggestion: '用悬念、反转或危机场景作为章节结尾，让读者想点下一章',
+      });
+      score -= 10;
+      break;
+    }
+  }
+
+  // 长段落检测
+  const longParagraphs = paragraphs.filter(p => p.trim().length > 500);
+  if (longParagraphs.length >= 2) {
+    issues.push({
+      type: 'structure',
+      severity: 'minor',
+      description: `存在 ${longParagraphs.length} 个超长段落（>500字），影响阅读节奏`,
+      suggestion: '将超长段落拆分，穿插对话或短描写以调节节奏',
+    });
+    score -= 5;
+  }
+
+  // 对话质量检测：连续对话缺乏动作描写
+  const lines = chapterText.split('\n');
+  let consecutiveDialogue = 0;
+  let maxConsecutiveDialogue = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^["「"『]/.test(trimmed) || /^[^\n]*?["「"『].*?["」"』]\s*$/.test(trimmed)) {
+      consecutiveDialogue++;
+      maxConsecutiveDialogue = Math.max(maxConsecutiveDialogue, consecutiveDialogue);
+    } else if (trimmed.length > 0) {
+      consecutiveDialogue = 0;
+    }
+  }
+  if (maxConsecutiveDialogue >= 5) {
+    issues.push({
+      type: 'style',
+      severity: 'minor',
+      description: `存在连续 ${maxConsecutiveDialogue} 句纯对话缺乏动作/表情描写`,
+      suggestion: '在对话间穿插角色的动作、表情、心理描写，避免"剧本化"',
+    });
+    score -= 10;
+  }
+
   return { score: Math.max(0, score), issues };
 }
 

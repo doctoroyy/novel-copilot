@@ -58,15 +58,26 @@ export async function generateMasterOutline(
     bible: string;
     targetChapters: number;
     targetWordCount: number;
+    characters?: any; // 可选：CharacterRelationGraph，先建人物再写大纲时传入
   }
 ): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] }> {
-  const { bible, targetChapters, targetWordCount } = args;
+  const { bible, targetChapters, targetWordCount, characters } = args;
 
   // 估算分卷数 (通常每 50-100 章一卷)
   const volumeCount = Math.ceil(targetChapters / 80);
 
   const system = `
-你是一个网文大纲策划专家。请根据 Story Bible 生成一个完整的总大纲。
+你是一个起点白金级网文大纲策划专家。你对网文的节奏、爽点、冲突设计有深刻理解。
+
+大纲设计原则：
+1. 冲突递进：每卷的核心冲突必须比上一卷更大、更紧迫
+2. 爽点节奏：每 3-5 章安排一个大爽点（升级/反杀/获宝/揭秘），章节间有小爽点
+3. 人物弧线：主角在每卷必须有明确的内在成长，而非只是实力提升
+4. 悬念管理：每卷结尾必须留大悬念，牵引读者进入下一卷
+5. 三幕结构：每卷遵循「铺垫(25%) → 发展(50%) → 高潮收尾(25%)」
+6. 禁止水卷：每卷都要有明确的核心矛盾和高潮，不能有"过渡卷"
+${characters ? '7. 人物驱动：大纲必须围绕人物关系冲突展开，每卷的核心冲突应与人物关系变化绑定' : ''}
+
 输出严格的 JSON 格式，不要有其他文字。
 
 JSON 结构：
@@ -87,6 +98,33 @@ JSON 结构：
 }
 `.trim();
 
+  // 构建人物关系摘要（如果有）
+  let charactersSummary = '';
+  if (characters) {
+    const protags = (characters.protagonists || []).map((p: any) => 
+      `${p.name}: ${p.personality?.traits?.join(', ') || p.role || '未定义'}`
+    ).join('\n  ');
+    const mainChars = (characters.mainCharacters || []).map((c: any) =>
+      `${c.name}: ${c.role || '未定义'}`
+    ).join('\n  ');
+    const rels = (characters.relationships || []).slice(0, 10).map((r: any) => 
+      `${r.from} ←→ ${r.to}: ${r.type} (${r.tension || '无张力说明'})`
+    ).join('\n  ');
+    
+    charactersSummary = `
+【核心人物设定（已确定）】
+主角：
+  ${protags || '未定义'}
+
+重要配角：
+  ${mainChars || '未定义'}
+
+核心关系冲突：
+  ${rels || '未定义'}
+
+请在大纲规划时充分利用以上人物关系，让每卷的核心冲突与人物关系变化绑定。`;
+  }
+
   const prompt = `
 【Story Bible】
 ${bible}
@@ -95,6 +133,7 @@ ${bible}
 - 总章数: ${targetChapters} 章
 - 总字数: ${targetWordCount} 万字
 - 预计分卷数: ${volumeCount} 卷
+${charactersSummary}
 
 请生成总大纲：
 `.trim();
@@ -126,7 +165,16 @@ export async function generateVolumeChapters(
   const chapterCount = volume.endChapter - volume.startChapter + 1;
 
   const system = `
-你是一个网文章节大纲策划专家。请为一卷生成所有章节的大纲。
+你是一个起点白金级网文章节大纲策划专家。请为一卷生成所有章节的大纲。
+
+章节大纲设计原则：
+1. 每章必须有明确的“本章爽点”（主角展现能力/获得收获/化解危机/揭露真相）
+2. 每章结尾必须有钩子（悬念/反转/危机/揭示），让读者想看下一章
+3. 节奏波浪：高潮章后要有 1-2 章缓冲，缓冲章仍需有小悬念
+4. 冲突升级：核心冲突要逐步升级，不能一下子解决
+5. 人物登场：新角色要安排合理的登场方式和动机
+6. 禁止水章：每章都要推动剧情，不能有纯日常的章节
+
 输出严格的 JSON 数组格式，不要有其他文字。
 
 每章格式：
