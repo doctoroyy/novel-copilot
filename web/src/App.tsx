@@ -51,7 +51,8 @@ import {
   AnimeEpisodeDetail
 } from '@/components/views';
 import { SettingsDialog } from '@/components/SettingsDialog';
-import { FloatingProgressButton, addTaskToHistory } from '@/components/FloatingProgressButton';
+import { FloatingProgressButton } from '@/components/FloatingProgressButton';
+import { addTaskToHistory } from '@/lib/taskHistory';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { Toaster } from "@/components/ui/toaster";
@@ -759,6 +760,7 @@ function App() {
             onViewChapter={handleViewChapter}
             onDeleteChapter={handleDeleteChapter}
             onBatchDeleteChapters={handleBatchDeleteChapters}
+            onProjectRefresh={() => loadProject(selectedProject.name)}
           />
         );
       case 'bible':
@@ -989,33 +991,43 @@ function App() {
           </DialogHeader>
           {activeTask && (
             <div className="py-4 space-y-3 text-sm">
-              {/* Progress bar */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>进度</span>
-                  <span>{Math.round((activeTask.completedChapters.length / activeTask.targetCount) * 100)}%</span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-primary rounded-full transition-all"
-                    style={{ width: `${(activeTask.completedChapters.length / activeTask.targetCount) * 100}%` }}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded bg-muted/50">
-                  <div className="text-lg font-semibold">{activeTask.targetCount}</div>
-                  <div className="text-xs text-muted-foreground">目标</div>
-                </div>
-                <div className="p-2 rounded bg-green-500/10">
-                  <div className="text-lg font-semibold text-green-500">{activeTask.completedChapters.length}</div>
-                  <div className="text-xs text-muted-foreground">已完成</div>
-                </div>
-                <div className="p-2 rounded bg-amber-500/10">
-                  <div className="text-lg font-semibold text-amber-500">{activeTask.targetCount - activeTask.completedChapters.length}</div>
-                  <div className="text-xs text-muted-foreground">剩余</div>
-                </div>
-              </div>
+              {(() => {
+                const completed = activeTask.completedChapters.length;
+                const total = Math.max(1, activeTask.targetCount);
+                const progressPercent = Math.min(100, Math.max(0, (completed / total) * 100));
+                const remaining = Math.max(0, activeTask.targetCount - completed);
+                return (
+                  <>
+                    {/* Progress bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>进度</span>
+                        <span>{Math.round(progressPercent)}%</span>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary rounded-full transition-all"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-2 rounded bg-muted/50">
+                        <div className="text-lg font-semibold">{activeTask.targetCount}</div>
+                        <div className="text-xs text-muted-foreground">目标</div>
+                      </div>
+                      <div className="p-2 rounded bg-green-500/10">
+                        <div className="text-lg font-semibold text-green-500">{completed}</div>
+                        <div className="text-xs text-muted-foreground">已完成</div>
+                      </div>
+                      <div className="p-2 rounded bg-amber-500/10">
+                        <div className="text-lg font-semibold text-amber-500">{remaining}</div>
+                        <div className="text-xs text-muted-foreground">剩余</div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
               {activeTask.failedChapters.length > 0 && (
                 <p className="text-destructive text-center">⚠️ 失败：{activeTask.failedChapters.length} 章</p>
               )}
@@ -1038,7 +1050,7 @@ function App() {
               className="gradient-bg"
               onClick={async () => {
                 if (activeTask && selectedProject) {
-                  const remaining = activeTask.targetCount - activeTask.completedChapters.length;
+                  const remaining = Math.max(0, activeTask.targetCount - activeTask.completedChapters.length);
                   setGenerateCount(String(remaining));
                   setShowResumeDialog(false);
                   // Clean up old tasks first
@@ -1053,6 +1065,7 @@ function App() {
                   }, 100);
                 }
               }}
+              disabled={!activeTask || (activeTask.targetCount - activeTask.completedChapters.length) <= 0}
             >
               继续生成 (重新发起)
             </Button>
@@ -1075,4 +1088,3 @@ function AppWithProvider() {
 }
 
 export default AppWithProvider;
-

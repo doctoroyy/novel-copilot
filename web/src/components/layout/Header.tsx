@@ -101,7 +101,10 @@ export function Header({
     );
   }
 
-  const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
+  const generated = Math.max(0, project.state.nextChapterIndex - 1);
+  const progress = project.state.totalChapters > 0
+    ? Math.min(100, Math.max(0, (generated / project.state.totalChapters) * 100))
+    : 0;
 
   return (
     <header className="border-b border-border">
@@ -123,7 +126,7 @@ export function Header({
           <div className="min-w-0 flex-1">
             <h2 className="font-bold text-base lg:text-lg truncate">{project.name}</h2>
             <div className="flex items-center gap-1 lg:gap-2 text-xs lg:text-sm text-muted-foreground">
-              <span>{project.state.nextChapterIndex - 1} / {project.state.totalChapters}</span>
+              <span>{generated} / {project.state.totalChapters}</span>
               <span className="hidden sm:inline">章</span>
               <span className="hidden md:inline" aria-hidden="true">•</span>
               <span className="hidden md:inline">{Math.round(progress)}% 完成</span>
