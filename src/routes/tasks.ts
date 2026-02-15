@@ -3,14 +3,18 @@ import type { Env } from '../worker.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
-async function getProjectIdByName(
+async function getProjectIdByRef(
   db: D1Database,
-  name: string,
+  projectRef: string,
   userId: string
 ): Promise<string | null> {
   const project = await db.prepare(`
-    SELECT id FROM projects WHERE name = ? AND user_id = ? AND deleted_at IS NULL
-  `).bind(name, userId).first() as { id: string } | null;
+    SELECT id
+    FROM projects
+    WHERE (id = ? OR name = ?) AND user_id = ? AND deleted_at IS NULL
+    ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+    LIMIT 1
+  `).bind(projectRef, projectRef, userId, projectRef).first() as { id: string } | null;
 
   return project?.id || null;
 }
@@ -75,13 +79,44 @@ export type GenerationTask = {
   updatedAtMs: number; // Unix timestamp in ms for reliable health check
 };
 
+// Cancel task by taskId (user-scoped, no project lookup needed)
+tasksRoutes.post('/tasks/:id/cancel', async (c) => {
+  const taskId = c.req.param('id');
+  const userId = c.get('userId');
+
+  try {
+    const task = await c.env.DB.prepare(`
+      SELECT status
+      FROM generation_tasks
+      WHERE id = ? AND user_id = ?
+    `).bind(taskId, userId).first() as { status: string } | null;
+
+    if (!task) {
+      return c.json({ success: false, error: 'Task not found' }, 404);
+    }
+
+    if (task.status === 'running' || task.status === 'paused') {
+      await c.env.DB.prepare(`
+        UPDATE generation_tasks
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(taskId, userId).run();
+      return c.json({ success: true, cancelled: true, message: '任务已取消' });
+    }
+
+    return c.json({ success: true, cancelled: true, message: '任务已结束' });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Get active task for a project
 tasksRoutes.get('/projects/:name/active-task', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
@@ -133,7 +168,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
@@ -157,7 +192,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
@@ -201,7 +236,7 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
@@ -222,7 +257,7 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
@@ -251,7 +286,7 @@ tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const projectId = await getProjectIdByName(c.env.DB, name, userId);
+    const projectId = await getProjectIdByRef(c.env.DB, name, userId);
     if (!projectId) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
-import { cancelAllActiveTasks } from '@/lib/api';
+import { cancelAllActiveTasks, cancelTaskById } from '@/lib/api';
 import {
   TASK_HISTORY_EVENT_NAME,
   getTaskHistorySnapshot,
@@ -45,16 +45,21 @@ export function FloatingProgressButton() {
       total: generationState.total,
       startTime: generationState.startTime ?? 0,
       projectName: generationState.projectName,
+      taskId: generationState.taskId,
     }] : []),
   ];
 
   const hasActiveTasks = allTasks.length > 0;
 
-  const handleCancelTask = async (projectName?: string) => {
+  const handleCancelTask = async (projectName?: string, taskId?: number) => {
     if (!projectName || cancelingProjectName) return;
     setCancelingProjectName(projectName);
     try {
-      await cancelAllActiveTasks(projectName);
+      if (typeof taskId === 'number') {
+        await cancelTaskById(taskId);
+      } else {
+        await cancelAllActiveTasks(projectName);
+      }
     } catch (error) {
       console.error('Failed to cancel generation task:', error);
     } finally {
@@ -119,7 +124,7 @@ export function FloatingProgressButton() {
                 {allTasks.map(task => {
                   const config = TASK_CONFIG[task.type];
                   const progressPercent = task.total && task.total > 0 
-                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, (task.current || 0) - 1) / task.total) * 100)))
+                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, task.current || 0) / task.total) * 100)))
                     : null;
                   
                   return (
@@ -140,7 +145,7 @@ export function FloatingProgressButton() {
                           <Loader2 className="w-4 h-4 animate-spin text-primary" />
                           {task.type === 'chapters' && task.projectName && (
                             <button
-                              onClick={() => { void handleCancelTask(task.projectName); }}
+                              onClick={() => { void handleCancelTask(task.projectName, task.taskId); }}
                               disabled={cancelingProjectName === task.projectName}
                               className="p-1 rounded hover:bg-destructive/20 text-destructive disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                               title="取消任务"

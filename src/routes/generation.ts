@@ -170,8 +170,12 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         // Get project (user-scoped)
         const project = await c.env.DB.prepare(`
-          SELECT p.id, p.bible FROM projects p WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-        `).bind(name, userId).first();
+          SELECT p.id, p.bible, p.name
+          FROM projects p
+          WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+          ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+          LIMIT 1
+        `).bind(name, name, userId, name).first();
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });
@@ -191,7 +195,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         `).bind(project.id).first();
         const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json as string) : undefined;
 
-        console.log(`Starting outline generation for ${name}: ${targetChapters} chapters, ${targetWordCount}万字${characters ? ' (with characters)' : ''}`);
+        console.log(`Starting outline generation for ${(project as any).name}: ${targetChapters} chapters, ${targetWordCount}万字${characters ? ' (with characters)' : ''}`);
 
         // Phase 1: Generate master outline
         sendEvent('progress', { phase: 1, message: characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...' });
@@ -334,11 +338,20 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
           JOIN states s ON p.id = s.project_id
           LEFT JOIN outlines o ON p.id = o.project_id
           LEFT JOIN characters c ON p.id = c.project_id
-          WHERE p.name = ? AND p.user_id = ?
-        `).bind(name, userId).first() as any;
+          WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
+          ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+          LIMIT 1
+        `).bind(name, name, userId, name).first() as any;
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });
+          controller.close();
+          return;
+        }
+
+        const runningTask = await checkRunningTask(c.env.DB, project.id, userId);
+        if (runningTask.isRunning) {
+          sendEvent('error', { error: '当前有后台章节任务正在运行，请先等待完成或取消任务后再单章生成。' });
           controller.close();
           return;
         }
@@ -479,16 +492,26 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     // Get project with state and outline
     const project = await c.env.DB.prepare(`
-      SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+      SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
       FROM projects p
       JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
       LEFT JOIN characters c ON p.id = c.project_id
-      WHERE p.name = ? AND p.user_id = ?
-    `).bind(name, userId).first() as any;
+      WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const runningTask = await checkRunningTask(c.env.DB, project.id, userId);
+    if (runningTask.isRunning) {
+      return c.json(
+        { success: false, error: '当前有后台章节任务正在运行，请先等待完成或取消任务后再发起此请求。' },
+        409
+      );
     }
 
     // Validate state: check if nextChapterIndex matches actual chapter data
@@ -1008,8 +1031,10 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     SELECT p.id, p.name, s.next_chapter_index, s.total_chapters
     FROM projects p
     JOIN states s ON p.id = s.project_id
-    WHERE p.name = ? AND p.user_id = ? AND p.deleted_at IS NULL
-  `).bind(name, userId).first() as {
+    WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
+    ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+    LIMIT 1
+  `).bind(name, name, userId, name).first() as {
     id: string;
     name: string;
     next_chapter_index: number;
@@ -1072,7 +1097,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
         env: c.env,
         aiConfig,
         userId,
-        projectName: name,
+        projectName: project.name,
         projectId: project.id,
         taskId,
         chaptersToGenerate,
@@ -1282,7 +1307,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
     // Get project with state and outline (user-scoped)
     const project = await c.env.DB.prepare(`
-      SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json,
+      SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json,
              cs.registry_json as character_states_json, cs.last_updated_chapter as states_chapter,
              pg.graph_json as plot_graph_json, pg.last_updated_chapter as plot_chapter,
              nc.narrative_arc_json
@@ -1293,11 +1318,21 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
       LEFT JOIN character_states cs ON p.id = cs.project_id
       LEFT JOIN plot_graphs pg ON p.id = pg.project_id
       LEFT JOIN narrative_config nc ON p.id = nc.project_id
-      WHERE p.name = ? AND p.user_id = ?
-    `).bind(name, userId).first() as any;
+      WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const runningTask = await checkRunningTask(c.env.DB, project.id, userId);
+    if (runningTask.isRunning) {
+      return c.json(
+        { success: false, error: '当前有后台章节任务正在运行，请先等待完成或取消任务后再发起此请求。' },
+        409
+      );
     }
 
     // Validate state
@@ -1413,7 +1448,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
         onProgress: (message, status) => {
           import('../eventBus.js').then(({ eventBus }) => {
             eventBus.progress({
-              projectName: name,
+              projectName: project.name,
               current: i,
               total: chaptersToGenerate,
               chapterIndex,
@@ -1671,8 +1706,12 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
       try {
         // Get project (user-scoped)
         const project = await c.env.DB.prepare(`
-          SELECT id, bible FROM projects WHERE name = ? AND user_id = ?
-        `).bind(name, userId).first();
+          SELECT id, bible
+          FROM projects
+          WHERE (id = ? OR name = ?) AND user_id = ?
+          ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+          LIMIT 1
+        `).bind(name, name, userId, name).first();
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });

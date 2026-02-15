@@ -43,6 +43,7 @@ app.use('/api/anime/*', async (c, next) => {
 app.use('/api/admin/*', authMiddleware());
 app.use('/api/credit/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
+app.use('/api/tasks/*', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
@@ -152,5 +153,4 @@ app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
 // SPA routing is handled by wrangler.toml: not_found_handling = "single-page-application"
 
 export default app;
-
 

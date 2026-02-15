@@ -6,13 +6,13 @@ import type { ProjectSummary } from '@/lib/api';
 
 interface SidebarProps {
   projects: ProjectSummary[];
-  selectedProject: string | null;
-  onSelectProject: (name: string) => void;
+  selectedProjectId: string | null;
+  onSelectProject: (projectId: string) => void;
   onNewProject: () => void;
   onToggle: () => void;
 }
 
-export function Sidebar({ projects, selectedProject, onSelectProject, onNewProject, onToggle }: SidebarProps) {
+export function Sidebar({ projects, selectedProjectId, onSelectProject, onNewProject, onToggle }: SidebarProps) {
   return (
     <aside className="w-72 h-screen flex flex-col border-r border-border bg-sidebar">
       {/* Logo */}
@@ -50,12 +50,12 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
             const progress = project.state.totalChapters > 0
               ? Math.min(100, Math.max(0, (generated / project.state.totalChapters) * 100))
               : 0;
-            const isSelected = selectedProject === project.name;
+            const isSelected = selectedProjectId === project.id;
             
             return (
               <button
-                key={project.name}
-                onClick={() => onSelectProject(project.name)}
+                key={project.id}
+                onClick={() => onSelectProject(project.id)}
                 className={`
                   w-full p-3 rounded-xl text-left transition-all duration-200
                   hover-lift group
