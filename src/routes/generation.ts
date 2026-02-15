@@ -674,12 +674,59 @@ async function emitProgressEvent(data: {
   }
 }
 
-async function isTaskStillRunning(db: D1Database, taskId: number): Promise<boolean> {
-  const row = await db.prepare(`
-    SELECT status FROM generation_tasks WHERE id = ?
-  `).bind(taskId).first() as { status: string } | null;
+type TaskRuntimeControl = {
+  exists: boolean;
+  status: string | null;
+  cancelRequested: boolean;
+};
 
-  return row?.status === 'running';
+async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<TaskRuntimeControl> {
+  const row = await db.prepare(`
+    SELECT status, cancel_requested
+    FROM generation_tasks
+    WHERE id = ?
+  `).bind(taskId).first() as { status: string; cancel_requested: number | null } | null;
+
+  if (!row) {
+    return { exists: false, status: null, cancelRequested: false };
+  }
+
+  return {
+    exists: true,
+    status: row.status,
+    cancelRequested: Boolean(row.cancel_requested),
+  };
+}
+
+async function handleTaskCancellationIfNeeded(params: {
+  db: D1Database;
+  taskId: number;
+  projectName: string;
+  total: number;
+  chapterIndex: number;
+  current: number;
+}): Promise<{ shouldStop: boolean; cancelled: boolean }> {
+  const runtime = await getTaskRuntimeControl(params.db, params.taskId);
+
+  if (!runtime.exists || runtime.status !== 'running') {
+    return { shouldStop: true, cancelled: false };
+  }
+
+  if (!runtime.cancelRequested) {
+    return { shouldStop: false, cancelled: false };
+  }
+
+  await completeTask(params.db, params.taskId, false, '任务已取消');
+  await emitProgressEvent({
+    projectName: params.projectName,
+    current: params.current,
+    total: params.total,
+    chapterIndex: params.chapterIndex,
+    status: 'error',
+    message: '任务已取消',
+  });
+
+  return { shouldStop: true, cancelled: true };
 }
 
 async function runChapterGenerationTaskInBackground(params: {
@@ -724,12 +771,20 @@ async function runChapterGenerationTaskInBackground(params: {
     let completedCount = 0;
 
     for (let i = 0; i < chaptersToGenerate; i++) {
-      if (!(await isTaskStillRunning(env.DB, taskId))) {
-        return;
-      }
-
       const chapterIndex = startingChapterIndex + i;
       if (chapterIndex > project.total_chapters) break;
+
+      const startControl = await handleTaskCancellationIfNeeded({
+        db: env.DB,
+        taskId,
+        projectName,
+        total: chaptersToGenerate,
+        chapterIndex,
+        current: completedCount,
+      });
+      if (startControl.shouldStop) {
+        return;
+      }
 
       await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
       await emitProgressEvent({
@@ -782,7 +837,15 @@ async function runChapterGenerationTaskInBackground(params: {
               await new Promise((resolve) => setTimeout(resolve, retryDelay));
             }
 
-            if (!(await isTaskStillRunning(env.DB, taskId))) {
+            const retryControl = await handleTaskCancellationIfNeeded({
+              db: env.DB,
+              taskId,
+              projectName,
+              total: chaptersToGenerate,
+              chapterIndex,
+              current: completedCount,
+            });
+            if (retryControl.shouldStop) {
               return;
             }
 
@@ -828,7 +891,15 @@ async function runChapterGenerationTaskInBackground(params: {
           throw lastChapterError || new Error('Unknown error during chapter generation');
         }
 
-        if (!(await isTaskStillRunning(env.DB, taskId))) {
+        const beforeSaveControl = await handleTaskCancellationIfNeeded({
+          db: env.DB,
+          taskId,
+          projectName,
+          total: chaptersToGenerate,
+          chapterIndex,
+          current: completedCount,
+        });
+        if (beforeSaveControl.shouldStop) {
           return;
         }
 
@@ -879,7 +950,15 @@ async function runChapterGenerationTaskInBackground(params: {
       }
     }
 
-    if (await isTaskStillRunning(env.DB, taskId)) {
+    const finishControl = await handleTaskCancellationIfNeeded({
+      db: env.DB,
+      taskId,
+      projectName,
+      total: chaptersToGenerate,
+      chapterIndex: Math.max(startingChapterIndex, project.next_chapter_index || startingChapterIndex),
+      current: completedCount,
+    });
+    if (!finishControl.shouldStop) {
       await completeTask(env.DB, taskId, true);
       await emitProgressEvent({
         projectName,
@@ -1104,8 +1183,10 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           }
 
           if (task.status === 'failed') {
+            const cancelled = Boolean(task.errorMessage && task.errorMessage.includes('取消'));
             sendEvent('error', {
               error: task.errorMessage || '任务执行失败',
+              cancelled,
               taskId: task.id,
             });
             close();
@@ -1115,6 +1196,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           if (task.status === 'paused') {
             sendEvent('error', {
               error: task.currentMessage || '任务已暂停，请重新发起',
+              cancelled: Boolean(task.cancelRequested),
               taskId: task.id,
             });
             close();

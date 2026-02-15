@@ -13,6 +13,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
       WHERE t.user_id = ? AND t.status IN ('running', 'paused')
+      AND NOT (t.status = 'paused' AND t.cancel_requested = 1)
       ORDER BY t.created_at DESC
     `).bind(userId).all();
 
@@ -27,6 +28,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
       failedChapters: JSON.parse(task.failed_chapters || '[]'),
       currentProgress: task.current_progress || 0,
       currentMessage: task.current_message || null,
+      cancelRequested: Boolean(task.cancel_requested),
       status: task.status,
       errorMessage: task.error_message,
       createdAt: task.created_at,
@@ -53,6 +55,7 @@ export type GenerationTask = {
   failedChapters: number[];
   currentProgress: number;
   currentMessage: string | null;
+  cancelRequested: boolean;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
   createdAt: string;
@@ -81,6 +84,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
       WHERE t.project_id = ? AND t.user_id = ? AND t.status IN ('running', 'paused')
+      AND NOT (t.status = 'paused' AND t.cancel_requested = 1)
       ORDER BY t.created_at DESC
       LIMIT 1
     `).bind(project.id, userId).first() as any;
@@ -100,6 +104,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       failedChapters: JSON.parse(task.failed_chapters || '[]'),
       currentProgress: task.current_progress || 0,
       currentMessage: task.current_message || null,
+      cancelRequested: Boolean(task.cancel_requested),
       status: task.status,
       errorMessage: task.error_message,
       createdAt: task.created_at,
@@ -122,7 +127,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
     await c.env.DB.prepare(`
       UPDATE generation_tasks 
       SET status = 'paused', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ? AND status = 'running'
+      WHERE id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
     `).bind(taskId, userId).run();
 
     return c.json({ success: true });
@@ -131,7 +136,45 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
   }
 });
 
-// Cancel/delete a task
+// Request cancellation for a task (non-destructive)
+tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
+  const taskId = c.req.param('id');
+  const userId = c.get('userId');
+
+  try {
+    const task = await c.env.DB.prepare(`
+      SELECT status FROM generation_tasks WHERE id = ? AND user_id = ?
+    `).bind(taskId, userId).first() as { status: string } | null;
+
+    if (!task) {
+      return c.json({ success: false, error: 'Task not found' }, 404);
+    }
+
+    if (task.status === 'running') {
+      await c.env.DB.prepare(`
+        UPDATE generation_tasks
+        SET cancel_requested = 1, current_message = '正在取消...', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(taskId, userId).run();
+      return c.json({ success: true, cancelled: false, message: '取消请求已提交' });
+    }
+
+    if (task.status === 'paused') {
+      await c.env.DB.prepare(`
+        UPDATE generation_tasks
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).bind(taskId, userId).run();
+      return c.json({ success: true, cancelled: true, message: '任务已取消' });
+    }
+
+    return c.json({ success: true, cancelled: true, message: '任务已结束' });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Hard delete a task record
 tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
   const taskId = c.req.param('id');
   const userId = c.get('userId');
@@ -147,7 +190,39 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
   }
 });
 
-// Cancel/delete ALL active tasks for a project (cleanup)
+// Request cancellation for ALL active tasks for a project (non-destructive)
+tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId');
+
+  try {
+    const project = await c.env.DB.prepare(`
+      SELECT id FROM projects WHERE name = ? AND user_id = ? AND deleted_at IS NULL
+    `).bind(name, userId).first() as { id: string } | null;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE generation_tasks
+      SET cancel_requested = 1, current_message = '正在取消...', updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = ? AND user_id = ? AND status = 'running'
+    `).bind(project.id, userId).run();
+
+    await c.env.DB.prepare(`
+      UPDATE generation_tasks
+      SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+      WHERE project_id = ? AND user_id = ? AND status = 'paused'
+    `).bind(project.id, userId).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Hard delete ALL active tasks for a project (cleanup)
 tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
@@ -181,17 +256,17 @@ export async function createGenerationTask(
   targetCount: number,
   startChapter: number
 ): Promise<number> {
-  // First, mark any existing running tasks as paused
+  // First, stop any existing running tasks to avoid overlap
   await db.prepare(`
     UPDATE generation_tasks 
-    SET status = 'paused', updated_at = CURRENT_TIMESTAMP
+    SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = CURRENT_TIMESTAMP
     WHERE project_id = ? AND user_id = ? AND status = 'running'
   `).bind(projectId, userId).run();
 
   // Create new task
   const result = await db.prepare(`
-    INSERT INTO generation_tasks (project_id, user_id, target_count, start_chapter)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO generation_tasks (project_id, user_id, target_count, start_chapter, cancel_requested)
+    VALUES (?, ?, ?, ?, 0)
   `).bind(projectId, userId, targetCount, startChapter).run();
 
   return result.meta.last_row_id as number;
@@ -237,9 +312,14 @@ export async function completeTask(
 ): Promise<void> {
   await db.prepare(`
     UPDATE generation_tasks 
-    SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+    SET status = ?, error_message = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(success ? 'completed' : 'failed', errorMessage || null, taskId).run();
+  `).bind(
+    success ? 'completed' : 'failed',
+    errorMessage || null,
+    success ? '任务完成' : (errorMessage || '任务失败'),
+    taskId
+  ).run();
 }
 
 // Check if there is a running task for a project (optionally scoped to a user)
@@ -251,13 +331,13 @@ export async function checkRunningTask(
   const task = (userId
     ? await db.prepare(`
         SELECT * FROM generation_tasks
-        WHERE project_id = ? AND user_id = ? AND status = 'running'
+        WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
         ORDER BY updated_at DESC
         LIMIT 1
       `).bind(projectId, userId).first()
     : await db.prepare(`
         SELECT * FROM generation_tasks
-        WHERE project_id = ? AND status = 'running'
+        WHERE project_id = ? AND status = 'running' AND cancel_requested = 0
         ORDER BY updated_at DESC
         LIMIT 1
       `).bind(projectId).first()) as any;
@@ -273,6 +353,7 @@ export async function checkRunningTask(
         targetCount: task.target_count,
         currentProgress: task.current_progress,
         currentMessage: task.current_message,
+        cancelRequested: Boolean(task.cancel_requested),
         startChapter: task.start_chapter
       }
     };
@@ -328,6 +409,7 @@ export async function getTaskById(
     failedChapters: JSON.parse(task.failed_chapters || '[]'),
     currentProgress: task.current_progress || 0,
     currentMessage: task.current_message || null,
+    cancelRequested: Boolean(task.cancel_requested),
     status: task.status,
     errorMessage: task.error_message,
     createdAt: task.created_at,
