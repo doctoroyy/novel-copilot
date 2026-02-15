@@ -44,6 +44,49 @@ const PANELS: { id: DetailPanel; label: string; hint: string; icon: keyof typeof
   { id: 'studio', label: '创作台', hint: '生成与控制', icon: 'sparkles-outline' },
 ];
 
+function normalizeChapterTitle(rawTitle: string): string {
+  const trimmed = rawTitle.trim().replace(/^#+\s*/, '');
+  const withoutPrefix = trimmed.replace(/^第\s*\d+\s*[章节回节]\s*[：:.\-、\s]*/u, '').trim();
+  return withoutPrefix || trimmed;
+}
+
+function extractChapterTitle(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
+  let jsonCandidate = trimmed;
+  if (trimmed.startsWith('```')) {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) jsonCandidate = fenced[1].trim();
+  }
+
+  if (jsonCandidate.startsWith('{') && jsonCandidate.includes('"title"')) {
+    try {
+      const parsed = JSON.parse(jsonCandidate) as { title?: unknown };
+      if (typeof parsed.title === 'string' && parsed.title.trim()) {
+        return normalizeChapterTitle(parsed.title);
+      }
+    } catch {
+      // Ignore parse errors and fall back to text pattern matching.
+    }
+  }
+
+  const firstLines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  for (const line of firstLines) {
+    const match = line.match(/^#*\s*第\s*\d+\s*[章节回节]?\s*[：:.\-、\s]*(.+)$/u);
+    if (match?.[1]?.trim()) {
+      return normalizeChapterTitle(match[1]);
+    }
+  }
+
+  return null;
+}
+
 export function ProjectDetailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
   const route = useRoute<ScreenRoute>();
@@ -79,6 +122,7 @@ export function ProjectDetailScreen() {
   const [chapterCopiedIndex, setChapterCopiedIndex] = useState<number | null>(null);
   const [chapterModalCopied, setChapterModalCopied] = useState(false);
   const [expandedVolumes, setExpandedVolumes] = useState<number[]>([]);
+  const [chapterTitleCache, setChapterTitleCache] = useState<Record<number, string>>({});
 
   const taskPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -167,6 +211,21 @@ export function ProjectDetailScreen() {
   const remainingChapters = useMemo(
     () => Math.max(0, (project?.state.totalChapters || 0) - generatedChapters),
     [generatedChapters, project],
+  );
+  const outlineChapterTitles = useMemo<Record<number, string>>(() => {
+    const titles: Record<number, string> = {};
+    for (const volume of project?.outline?.volumes || []) {
+      for (const chapter of volume.chapters || []) {
+        if (Number.isFinite(chapter.index) && typeof chapter.title === 'string' && chapter.title.trim()) {
+          titles[chapter.index] = normalizeChapterTitle(chapter.title);
+        }
+      }
+    }
+    return titles;
+  }, [project]);
+  const chapterTitleByIndex = useMemo(
+    () => ({ ...outlineChapterTitles, ...chapterTitleCache }),
+    [outlineChapterTitles, chapterTitleCache],
   );
   const panelLabel = useMemo(
     () => PANELS.find((panel) => panel.id === activePanel)?.label || '书籍主页',
@@ -323,9 +382,14 @@ export function ProjectDetailScreen() {
     async (chapterIndex: number) => {
       if (!token || !project) return;
 
+      const knownTitle = chapterTitleByIndex[chapterIndex];
       setChapterModalOpen(true);
       setChapterModalIndex(chapterIndex);
-      setChapterModalTitle(`${project.name} · 第 ${chapterIndex} 章`);
+      setChapterModalTitle(
+        knownTitle
+          ? `${project.name} · 第 ${chapterIndex} 章 · ${knownTitle}`
+          : `${project.name} · 第 ${chapterIndex} 章`,
+      );
       setChapterModalContent('');
       setChapterModalCopied(false);
       setChapterLoading(true);
@@ -333,13 +397,18 @@ export function ProjectDetailScreen() {
       try {
         const content = await fetchChapterContent(config.apiBaseUrl, token, project.id, chapterIndex);
         setChapterModalContent(content);
+        const extractedTitle = extractChapterTitle(content);
+        if (extractedTitle) {
+          setChapterTitleCache((prev) => (prev[chapterIndex] === extractedTitle ? prev : { ...prev, [chapterIndex]: extractedTitle }));
+          setChapterModalTitle(`${project.name} · 第 ${chapterIndex} 章 · ${extractedTitle}`);
+        }
       } catch (err) {
         setChapterModalContent(`加载失败：${(err as Error).message}`);
       } finally {
         setChapterLoading(false);
       }
     },
-    [config.apiBaseUrl, project, token],
+    [chapterTitleByIndex, config.apiBaseUrl, project, token],
   );
 
   const toggleVolumeExpand = (index: number) => {
@@ -383,7 +452,7 @@ export function ProjectDetailScreen() {
 
   if (loading && !project) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <LinearGradient colors={gradients.page} style={styles.bgGradient}>
           <View style={styles.centerBox}>
             <ActivityIndicator color={ui.colors.primary} />
@@ -396,7 +465,7 @@ export function ProjectDetailScreen() {
 
   if (!project) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <LinearGradient colors={gradients.page} style={styles.bgGradient}>
           <View style={styles.centerBox}>
             <Text style={styles.centerText}>项目不存在或无权限</Text>
@@ -410,9 +479,13 @@ export function ProjectDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustContentInsets={false}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}
+        >
           <View style={styles.headerCard}>
             <View style={styles.headerBadge}>
               <Ionicons name="sunny-outline" size={12} color={ui.colors.primaryStrong} />
@@ -650,6 +723,7 @@ export function ProjectDetailScreen() {
                   <View style={styles.chapterList}>
                     {project.chapters.map((file) => {
                       const index = parseInt(file.replace(/\.md$/i, ''), 10);
+                      const chapterTitle = chapterTitleByIndex[index];
                       return (
                         <View key={file} style={styles.chapterItem}>
                           <Pressable
@@ -657,8 +731,12 @@ export function ProjectDetailScreen() {
                             onPress={() => void openChapter(index)}
                           >
                             <View style={styles.chapterTextWrap}>
-                              <Text style={styles.chapterTitle}>第 {index} 章</Text>
-                              <Text style={styles.chapterSubTitle}>点击查看正文预览</Text>
+                              <Text style={styles.chapterTitle} numberOfLines={1}>
+                                {chapterTitle ? `第 ${index} 章 · ${chapterTitle}` : `第 ${index} 章`}
+                              </Text>
+                              <Text style={styles.chapterSubTitle}>
+                                {chapterTitle ? '点击查看正文' : '点击查看正文预览'}
+                              </Text>
                             </View>
                             <Ionicons name="chevron-forward" size={18} color={ui.colors.textTertiary} />
                           </Pressable>
