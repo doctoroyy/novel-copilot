@@ -333,7 +333,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 
         // Get project with state and outline
         const project = await c.env.DB.prepare(`
-          SELECT p.id, p.bible, s.*, o.outline_json, c.characters_json
+          SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
           FROM projects p
           JOIN states s ON p.id = s.project_id
           LEFT JOIN outlines o ON p.id = o.project_id
@@ -406,7 +406,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 
         // 0. Consume Credit
         try {
-            await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${index} 章`);
+            await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${index} 章`);
         } catch (error) {
             sendEvent('error', { error: (error as Error).message, status: 402 }); // 402 Payment Required
             controller.close();
@@ -565,7 +565,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
       // 0. Consume Credit
       try {
-          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${chapterIndex} 章`);
       } catch (error) {
           return c.json({ success: false, error: (error as Error).message }, 402); // 402 Payment Required
       }
@@ -820,6 +820,25 @@ async function runChapterGenerationTaskInBackground(params: {
       });
 
       try {
+        // 0. Consume Credit
+        try {
+          await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${projectName || '未知项目'} 第 ${chapterIndex} 章`);
+        } catch (creditError) {
+          await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
+          await completeTask(env.DB, taskId, false, (creditError as Error).message);
+          
+          void emitProgressEvent({
+            projectName,
+            current: completedCount,
+            total: chaptersToGenerate,
+            chapterIndex,
+            status: 'error',
+            message: `创作能量不足: ${(creditError as Error).message}`,
+          });
+
+          // Terminate task due to insufficient credits
+          return;
+        }
         const { results: lastChapters } = await env.DB.prepare(`
           SELECT content FROM chapters
           WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
