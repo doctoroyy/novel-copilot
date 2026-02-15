@@ -43,7 +43,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       setIsRefining(true);
       setRefineMessage('正在分析大纲...');
       const headers = getAIConfigHeaders(config);
-      await refineOutline(project.name, undefined, headers, {
+      await refineOutline(project.id, undefined, headers, {
         onStart: (totalVolumes) => {
           setRefineMessage(`发现 ${totalVolumes} 卷需要完善`);
         },
@@ -75,7 +75,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       setRefiningVolIdx(volIndex);
       setRefineMessage(`正在重新生成第 ${volIndex + 1} 卷的章节大纲...`);
       const headers = getAIConfigHeaders(config);
-      await refineOutline(project.name, volIndex, headers, {
+      await refineOutline(project.id, volIndex, headers, {
         onProgress: (data) => {
           setRefineMessage(data.message);
         },
@@ -99,7 +99,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
     try {
       setActionError(null);
       setIsSaving(true);
-      await updateOutline(project.name, editedOutline);
+      await updateOutline(project.id, editedOutline);
       setIsEditing(false);
       onRefresh?.();
     } catch (error) {

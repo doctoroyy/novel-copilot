@@ -21,8 +21,10 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
     const project = await c.env.DB.prepare(`
       SELECT p.id, s.next_chapter_index FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
-      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-    `).bind(name, userId).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -98,8 +100,12 @@ editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
 
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
-    `).bind(name, userId).first();
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -157,8 +163,10 @@ editingRoutes.post('/projects/:name/chapters/:index/refine', async (c) => {
     // Get project bible for context
     const project = await c.env.DB.prepare(`
       SELECT p.id, p.bible FROM projects p
-      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-    `).bind(name, userId).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -221,8 +229,12 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
 
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
-    `).bind(name, userId).first();
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -276,8 +288,10 @@ editingRoutes.post('/projects/:name/chapters/:index/suggest', async (c) => {
     // Get project bible for context
     const project = await c.env.DB.prepare(`
       SELECT p.bible FROM projects p
-      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-    `).bind(name, userId).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -339,8 +353,10 @@ editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
     // Get project details
     const project = await c.env.DB.prepare(`
       SELECT p.bible, p.background, p.role_settings FROM projects p
-      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-    `).bind(name, userId).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -398,8 +414,12 @@ editingRoutes.put('/projects/:name', async (c) => {
     
     // Get project
     const project = await c.env.DB.prepare(`
-      SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL AND user_id = ?
-    `).bind(name, userId).first();
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -451,8 +471,10 @@ editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
     // Get project details
     const project = await c.env.DB.prepare(`
       SELECT p.bible, p.background, p.role_settings FROM projects p
-      WHERE p.name = ? AND p.deleted_at IS NULL AND p.user_id = ?
-    `).bind(name, userId).first();
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first();
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);

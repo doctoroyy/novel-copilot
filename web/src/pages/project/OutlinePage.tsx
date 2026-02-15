@@ -10,9 +10,9 @@ export default function OutlinePage() {
   }
 
   return (
-    <OutlineView 
-      project={selectedProject} 
-      onRefresh={() => loadProject(selectedProject.name)} 
-    />
+      <OutlineView 
+        project={selectedProject}
+        onRefresh={() => loadProject(selectedProject.id)} 
+      />
   );
 }
