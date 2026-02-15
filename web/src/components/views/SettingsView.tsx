@@ -33,7 +33,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
   const handleSave = async () => {
     try {
       setSaving(true);
-      await updateProject(project.name, {
+      await updateProject(project.id, {
         bible,
         background,
         role_settings: roleSettings,

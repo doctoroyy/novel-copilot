@@ -32,7 +32,7 @@ interface ProjectContextType {
   
   // Selected project
   selectedProject: ProjectDetail | null;
-  loadProject: (name: string) => Promise<void>;
+  loadProject: (projectRef: string) => Promise<void>;
   loading: boolean;
   error: string | null;
   setError: (error: string | null) => void;
@@ -62,7 +62,7 @@ interface ProjectContextType {
   
   // Navigation
   activeTab: string;
-  handleSelectProject: (name: string) => void;
+  handleSelectProject: (projectId: string) => void;
   handleTabChange: (tab: string) => void;
   
   // Dialogs
@@ -102,15 +102,15 @@ export function useProject() {
 }
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
-  const { projectName } = useParams<{ projectName?: string }>();
+  const { projectId } = useParams<{ projectId?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   
   // Derive active tab from URL pathname
   const tab = useMemo(() => {
     const pathParts = location.pathname.split('/');
-    // URL pattern: /project/:projectName/:tab
-    // pathParts: ['', 'project', 'projectName', 'tab', ...]
+    // URL pattern: /project/:projectId/:tab
+    // pathParts: ['', 'project', 'projectId', 'tab', ...]
     if (pathParts.length >= 4 && pathParts[1] === 'project') {
       return pathParts[3] || 'dashboard';
     }
@@ -198,12 +198,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Load single project
-  const loadProject = useCallback(async (name: string) => {
+  const loadProject = useCallback(async (projectRef: string) => {
     const requestId = ++loadProjectRequestIdRef.current;
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchProject(name);
+      const data = await fetchProject(projectRef);
       if (requestId !== loadProjectRequestIdRef.current) return;
       setSelectedProject(data);
     } catch (err) {
@@ -230,7 +230,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
     const bootstrapActiveTask = async () => {
       try {
-        const task = await getActiveTask(selectedProject.name);
+        const task = await getActiveTask(selectedProject.id);
         if (disposed) return;
 
         if (!task || task.cancelRequested || task.status !== 'running') {
@@ -269,19 +269,26 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return () => {
       disposed = true;
     };
-  }, [setGenerationState, selectedProject?.name]);
+  }, [setGenerationState, selectedProject?.id, selectedProject?.name]);
 
   // Load project when URL changes
   useEffect(() => {
-    if (projectName) {
+    if (projectId) {
       setSelectedProject(null);
-      void loadProject(projectName);
+      void loadProject(projectId);
     } else {
       loadProjectRequestIdRef.current += 1;
       setSelectedProject(null);
       setLoading(false);
     }
-  }, [projectName, loadProject]);
+  }, [projectId, loadProject]);
+
+  // Normalize URL to canonical project id route.
+  useEffect(() => {
+    if (!projectId || !selectedProject?.id) return;
+    if (projectId === selectedProject.id) return;
+    navigate(`/project/${encodeURIComponent(selectedProject.id)}/${tab}`, { replace: true });
+  }, [projectId, selectedProject?.id, tab, navigate]);
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
@@ -319,20 +326,21 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Refresh on generation done
   useEffect(() => {
     if (generationProgress?.status === 'done' && selectedProject?.name === generationProgress.projectName) {
-      loadProject(generationProgress.projectName);
+      loadProject(selectedProject.id);
     }
-  }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.name, loadProject]);
+  }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.id, selectedProject?.name, loadProject]);
 
   // Navigation helpers
-  const handleSelectProject = useCallback((name: string) => {
-    navigate(`/project/${encodeURIComponent(name)}/dashboard`);
+  const handleSelectProject = useCallback((targetProjectId: string) => {
+    navigate(`/project/${encodeURIComponent(targetProjectId)}/dashboard`);
   }, [navigate]);
 
   const handleTabChange = useCallback((newTab: string) => {
-    if (projectName) {
-      navigate(`/project/${encodeURIComponent(projectName)}/${newTab}`);
+    const targetProjectId = projectId || selectedProject?.id;
+    if (targetProjectId) {
+      navigate(`/project/${encodeURIComponent(targetProjectId)}/${newTab}`);
     }
-  }, [navigate, projectName]);
+  }, [navigate, projectId, selectedProject?.id]);
 
   // Project handlers
   const handleCreateProject = useCallback(async (name: string, bible: string, chapters: string) => {
@@ -355,10 +363,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     setLoading(true);
     try {
-      await createProject(trimmedName, trimmedBible, totalChapters);
+      const created = await createProject(trimmedName, trimmedBible, totalChapters);
       setShowNewProjectDialog(false);
       await loadProjects();
-      navigate(`/project/${encodeURIComponent(trimmedName)}/dashboard`);
+      navigate(`/project/${encodeURIComponent(created.id)}/dashboard`);
     } catch (err) {
       setError((err as Error).message);
       throw err;
@@ -373,7 +381,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     setLoading(true);
     try {
-      await deleteProject(selectedProject.name);
+      await deleteProject(selectedProject.id);
       await loadProjects();
       navigate('/');
     } catch (err) {
@@ -386,7 +394,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleRefresh = useCallback(async () => {
     await loadProjects();
     if (selectedProject) {
-      await loadProject(selectedProject.name);
+      await loadProject(selectedProject.id);
     }
   }, [loadProjects, loadProject, selectedProject]);
 
@@ -406,8 +414,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     setGeneratingOutline(true);
     try {
-      await generateOutline(selectedProject.name, targetChapters, targetWordCount, customPrompt);
-      await loadProject(selectedProject.name);
+      await generateOutline(selectedProject.id, targetChapters, targetWordCount, customPrompt);
+      await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -445,7 +453,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     
     try {
       await generateChaptersWithProgress(
-        selectedProject.name,
+        selectedProject.id,
         chapterCount,
         {
           onStart: (total: number) => {
@@ -454,8 +462,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           onProgress: (event) => {
             setGenerationState(prev => ({
               ...prev,
-              current: event.current || prev.current,
-              total: event.total || prev.total,
+              current: event.current ?? prev.current,
+              total: event.total ?? prev.total,
               currentChapter: event.chapterIndex,
               currentChapterTitle: event.title,
               status: event.status as 'generating' | 'saving' | 'done' | 'error' | 'preparing',
@@ -464,7 +472,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
           onChapterComplete: (chapterIndex: number, title: string) => {
             setSelectedProject(prev => {
-              if (!prev || prev.name !== selectedProject.name) return prev;
+              if (!prev || prev.id !== selectedProject.id) return prev;
               const chapterFile = `${chapterIndex.toString().padStart(3, '0')}.md`;
               const chapterExists = prev.chapters.includes(chapterFile);
               const nextChapterIndex = Math.max(prev.state.nextChapterIndex, chapterIndex + 1);
@@ -522,7 +530,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
         },
       );
-      await loadProject(selectedProject.name);
+      await loadProject(selectedProject.id);
     } catch (err) {
       completeGeneration();
       setError((err as Error).message);
@@ -537,7 +545,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
     setCancelingGeneration(true);
     try {
-      await cancelAllActiveTasks(targetProjectName);
+      const targetProjectRef =
+        selectedProject && selectedProject.name === targetProjectName
+          ? selectedProject.id
+          : targetProjectName;
+      await cancelAllActiveTasks(targetProjectRef);
       setGenerationState(prev => (
         prev.projectName === targetProjectName
           ? {
@@ -553,15 +565,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     } finally {
       setCancelingGeneration(false);
     }
-  }, [selectedProject?.name, generationState.projectName, setGenerationState]);
+  }, [selectedProject, generationState.projectName, setGenerationState]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
     
     setLoading(true);
     try {
-      await resetProject(selectedProject.name);
-      await loadProject(selectedProject.name);
+      await resetProject(selectedProject.id);
+      await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -572,14 +584,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Chapter handlers
   const handleViewChapter = useCallback(async (index: number): Promise<string> => {
     if (!selectedProject) return '';
-    return await fetchChapter(selectedProject.name, index);
+    return await fetchChapter(selectedProject.id, index);
   }, [selectedProject]);
 
   const handleDeleteChapter = useCallback(async (index: number): Promise<void> => {
     if (!selectedProject) return;
     try {
-      await deleteChapter(selectedProject.name, index);
-      await loadProject(selectedProject.name);
+      await deleteChapter(selectedProject.id, index);
+      await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
       throw err;
@@ -589,8 +601,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleBatchDeleteChapters = useCallback(async (indices: number[]): Promise<void> => {
     if (!selectedProject) return;
     try {
-      await batchDeleteChapters(selectedProject.name, indices);
-      await loadProject(selectedProject.name);
+      await batchDeleteChapters(selectedProject.id, indices);
+      await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
       throw err;
@@ -601,7 +613,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     if (!selectedProject) return;
     
     try {
-      const url = `/api/projects/${encodeURIComponent(selectedProject.name)}/download`;
+      const url = `/api/projects/${encodeURIComponent(selectedProject.id)}/download`;
       const response = await fetch(url);
 
       if (!response.ok) {
@@ -647,7 +659,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     try {
       // generateBible API: (genre?, theme?, keywords?, aiHeaders?)
       await generateBible(undefined, undefined, undefined);
-      await loadProject(selectedProject.name);
+      await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {

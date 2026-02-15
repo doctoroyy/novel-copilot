@@ -119,7 +119,7 @@ export function FloatingProgressButton() {
                 {allTasks.map(task => {
                   const config = TASK_CONFIG[task.type];
                   const progressPercent = task.total && task.total > 0 
-                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, (task.current || 0) - 1) / task.total) * 100)))
+                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, task.current || 0) / task.total) * 100)))
                     : null;
                   
                   return (

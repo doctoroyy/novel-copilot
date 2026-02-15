@@ -18,7 +18,7 @@ export default function AnimePage() {
       <AnimeEpisodeDetail 
         project={selectedProject} 
         episodeId={episodeId}
-        onBack={() => navigate(`/project/${encodeURIComponent(selectedProject.name)}/anime`)}
+        onBack={() => navigate(`/project/${encodeURIComponent(selectedProject.id)}/anime`)}
       />
     );
   }
@@ -27,7 +27,7 @@ export default function AnimePage() {
     <AnimeView 
       project={selectedProject} 
       onEpisodeSelect={(epId) => 
-        navigate(`/project/${encodeURIComponent(selectedProject.name)}/anime/episode/${epId}`)
+        navigate(`/project/${encodeURIComponent(selectedProject.id)}/anime/episode/${epId}`)
       }
     />
   );

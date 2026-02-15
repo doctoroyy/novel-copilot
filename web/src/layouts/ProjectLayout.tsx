@@ -133,9 +133,9 @@ function ProjectLayoutInner() {
       `}>
         <Sidebar
           projects={projects}
-          selectedProject={selectedProject?.name || null}
-          onSelectProject={(name) => {
-            handleSelectProject(name);
+          selectedProjectId={selectedProject?.id || null}
+          onSelectProject={(projectId) => {
+            handleSelectProject(projectId);
             if (isMobile) toggleSidebar();
           }}
           onNewProject={() => setShowNewProjectDialog(true)}

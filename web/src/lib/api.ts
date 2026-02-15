@@ -5,6 +5,7 @@ import type { CharacterRelationGraph } from '../types/characters';
 import { getAuthHeaders } from './auth';
 
 export type ProjectSummary = {
+  id: string;
   name: string;
   path: string;
   state: BookState;
@@ -53,6 +54,7 @@ export type ChapterOutline = {
 };
 
 export type ProjectDetail = {
+  id: string;
   name: string;
   path: string;
   state: BookState;
@@ -80,7 +82,14 @@ export async function fetchProjects(): Promise<ProjectSummary[]> {
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
-  return data.projects;
+  return (data.projects as Array<Record<string, unknown>>).map((project) => {
+    const id = String(project.id || project.path || '');
+    return {
+      ...project,
+      id,
+      path: String(project.path || id),
+    } as ProjectSummary;
+  });
 }
 
 export async function fetchProject(name: string): Promise<ProjectDetail> {
@@ -89,10 +98,15 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
-  return data.project;
+  const id = String(data.project.id || data.project.path || '');
+  return {
+    ...data.project,
+    id,
+    path: String(data.project.path || id),
+  } as ProjectDetail;
 }
 
-export async function createProject(name: string, bible: string, totalChapters: number): Promise<void> {
+export async function createProject(name: string, bible: string, totalChapters: number): Promise<{ id: string; name: string }> {
   const res = await fetch(`${API_BASE}/projects`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }),
@@ -100,6 +114,7 @@ export async function createProject(name: string, bible: string, totalChapters: 
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
+  return data.project as { id: string; name: string };
 }
 
 export async function updateBible(name: string, bible: string): Promise<void> {

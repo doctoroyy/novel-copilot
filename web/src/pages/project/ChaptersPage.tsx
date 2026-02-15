@@ -9,6 +9,8 @@ export default function ChaptersPage() {
     handleViewChapter,
     handleDeleteChapter,
     handleBatchDeleteChapters,
+    handleGenerateChapters,
+    generationState,
   } = useProject();
 
   if (!selectedProject) {
@@ -21,7 +23,9 @@ export default function ChaptersPage() {
       onViewChapter={handleViewChapter}
       onDeleteChapter={handleDeleteChapter}
       onBatchDeleteChapters={handleBatchDeleteChapters}
-      onProjectRefresh={() => loadProject(selectedProject.name)}
+      onProjectRefresh={() => loadProject(selectedProject.id)}
+      onGenerateNextChapter={() => handleGenerateChapters('1')}
+      isProjectGenerating={generationState.isGenerating && generationState.projectName === selectedProject.name}
     />
   );
 }
