@@ -123,17 +123,16 @@ export function Header({
         )}
 
         <div className="flex items-center gap-2 lg:gap-4 flex-1 min-w-0">
-          <div className="min-w-0 flex-1">
-            <h2 className="font-bold text-base lg:text-lg truncate">{project.name}</h2>
-            <div className="flex items-center gap-1 lg:gap-2 text-xs lg:text-sm text-muted-foreground">
-              <span>{generated} / {project.state.totalChapters}</span>
-              <span className="hidden sm:inline">章</span>
-              <span className="hidden md:inline" aria-hidden="true">•</span>
-              <span className="hidden md:inline">{Math.round(progress)}% 完成</span>
+          <div className="min-w-0 overflow-hidden">
+            <h2 className="font-bold text-sm sm:text-base lg:text-lg truncate">{project.name}</h2>
+            <div className="flex items-center gap-1.5 lg:gap-2 text-[10px] sm:text-xs lg:text-sm text-muted-foreground whitespace-nowrap overflow-hidden">
+              <span className="shrink-0">{generated} / {project.state.totalChapters} 章</span>
+              <span className="hidden sm:inline" aria-hidden="true">•</span>
+              <span className="hidden sm:inline shrink-0">{Math.round(progress)}% 完成</span>
               {project.outline && (
                 <>
                   <span className="hidden lg:inline" aria-hidden="true">•</span>
-                  <Badge variant="secondary" className="text-xs hidden lg:inline-flex">
+                  <Badge variant="secondary" className="text-[10px] lg:text-xs hidden lg:inline-flex px-1.5 py-0">
                     {project.outline.targetWordCount} 万字
                   </Badge>
                 </>
@@ -142,41 +141,41 @@ export function Header({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 lg:gap-2">
-          <Button variant="ghost" size="sm" onClick={onRefresh} className="hidden sm:flex text-xs lg:text-sm items-center gap-1">
+        <div className="flex items-center gap-1 lg:gap-2 shrink-0">
+          <Button variant="ghost" size="sm" onClick={onRefresh} className="hidden md:flex text-xs lg:text-sm items-center gap-1 px-2">
             <RefreshCw className="h-4 w-4" />
-            <span className="hidden lg:inline">刷新</span>
+            <span className="hidden xl:inline">刷新</span>
           </Button>
           <Button 
             variant="ghost" 
             size="sm" 
             onClick={onDownload}
             disabled={project.chapters.length === 0}
-            className="hidden sm:flex text-xs lg:text-sm items-center gap-1"
+            className="hidden sm:flex text-xs lg:text-sm items-center gap-1 px-2"
           >
             <Download className="h-4 w-4" />
-            <span className="hidden lg:inline">下载</span>
+            <span className="hidden xl:inline">下载</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hidden md:flex text-xs lg:text-sm items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hidden sm:flex text-xs lg:text-sm items-center gap-1 px-2">
             <Trash2 className="h-4 w-4" />
-            <span className="hidden lg:inline">删除</span>
+            <span className="hidden xl:inline">删除</span>
           </Button>
-          <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+          <div className="w-px h-6 bg-border mx-0.5 hidden sm:block" />
           <CreditDisplay />
-          <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1 px-2">
             <Settings className="h-4 w-4" />
-            <span className="hidden lg:inline">设置</span>
+            <span className="hidden sm:inline lg:hidden xl:inline">设置</span>
           </Button>
           
           {/* User info and logout */}
           {user && (
             <>
-              <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-              <span className="text-xs text-muted-foreground hidden md:inline-flex items-center gap-1">
+              <div className="w-px h-6 bg-border mx-0.5 hidden md:block" />
+              <div className="hidden lg:flex items-center gap-1 text-xs text-muted-foreground px-1">
                 <User className="h-4 w-4" />
-                {user.username}
-              </span>
-              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs">
+                <span className="max-w-[80px] truncate">{user.username}</span>
+              </div>
+              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs px-2">
                 <LogOut className="h-4 w-4" />
               </Button>
             </>
@@ -188,7 +187,7 @@ export function Header({
                 variant="ghost" 
                 size="icon" 
                 onClick={onToggleActivityPanel}
-                className="text-muted-foreground"
+                className="text-muted-foreground h-9 w-9"
             >
                 <PanelRightOpen className="h-4 w-4" />
             </Button>
