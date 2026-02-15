@@ -1,303 +1,187 @@
 # Novel Copilot
 
-A powerful AI-driven creative writing platform powered by Cloudflare Workers. Features an advanced **Context Engineering System** for maintaining plot consistency, and supports **Novel-to-Anime conversion** with AI-generated storyboards and video generation.
+AI 长篇小说创作平台，包含 Web 端与 React Native App 端，后端基于 Cloudflare Workers + D1。
 
-[中文介绍](#chinese)
+- Web：项目管理、大纲、章节、生成、人物关系、AI 漫剧、任务中心
+- App：项目主页、大纲/章节/摘要/创作台、任务页、设置页、正文阅读
+- 后端：用户鉴权、章节生成、任务持久化、SSE 事件流、积分与管理接口
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doctoroyy/novel-copilot)
+## 主要能力
 
-## ✨ Features
+### 创作能力
 
-### 📖 Novel Writing
-- 🤖 **Multi-Model Support**: Gemini, OpenAI, DeepSeek, and custom API endpoints
-- 🧠 **Advanced Context Engineering**: 6-phase context system (see below)
-- 📋 **Automated Outlining**: AI-generated volume and chapter structures
-- 📊 **Character Relationship Graph**: Visual force-directed graph of character relationships
-- ✅ **Multi-dimensional QC**: Automated quality checks with repair loop
-- 🌐 **WebMCP Tools**: Exposes core writing workflows to browser agents via `navigator.modelContext`
+- Story Bible 生成与编辑
+- 分卷/分章大纲生成与修复（SSE）
+- 单章生成（SSE）
+- 批量章节生成（后台任务）
+- 章节正文查看、复制、导出
+- 多维度 QC 与自动修复链路（后端）
 
-### 🧠 Context Engineering System
+### 任务系统
 
-The core innovation — a 6-phase system that goes far beyond simple "memory":
+- 后台任务持久化到 `generation_tasks`
+- 全局任务列表：`/api/active-tasks`
+- 项目活跃任务：`/api/projects/:projectRef/active-task`
+- 任务取消：`/api/tasks/:id/cancel`（推荐）
+- Web 端支持 SSE 同步，移动端支持轮询同步
 
-| Phase | Component | Description |
-|-------|-----------|-------------|
-| **Base** | Story Bible | World-building, rules, core settings |
-| **Base** | Rolling Summary | Cumulative plot summary, auto-compressed |
-| **Base** | Recent Chapters | Full text of last 1-2 chapters for style continuity |
-| **1** | Character State Tracking | Dynamic character snapshots (location, mood, inventory, relationships) |
-| **2** | Plot Graph | Foreshadowing management with urgency tracking |
-| **3** | Narrative Control | Pacing curves, emotional arcs, scene requirements |
-| **4** | Multi-dimensional QC | Character consistency, pacing alignment, goal achievement checks |
-| **5** | Semantic Cache | Incremental context building, change detection |
-| **6** | Timeline Tracking | Event deduplication, prevents repetitive plot points |
+### 路由与标识
 
-All context is **budget-optimized** with configurable token allocation per component.
+- Web 路由统一使用 `projectId`：`/project/:projectId/...`
+- App 导航参数使用 `projectId`
+- 后端 `projectRef` 同时兼容 `id` 和 `name`（为兼容历史数据），新代码优先传 `id`
 
-### 🎬 Novel-to-Anime Conversion
-- 🎭 **Character Consistency**: AI-generated character profiles with visual references
-- 📝 **Script Generation**: Automatic screenplay adaptation from novel text
-- 🖼️ **AI Storyboarding**: Scene-by-scene visual storyboards via Gemini
-- 🎙️ **Voice Synthesis**: TTS audio generation for narration
-- 🎥 **Video Generation**: Veo-powered video synthesis with R2 storage
+## 技术栈
 
-### 🛠️ Tech Stack
-- ☁️ **Serverless**: Cloudflare Workers + D1 Database + R2 Object Storage
-- ⚛️ **Frontend**: React 19 + Vite (Rolldown) + TailwindCSS 4 + Radix UI
-- 🔧 **Backend**: Hono framework with typed routes
+- 后端：Hono、Cloudflare Workers、D1、R2、TypeScript
+- Web：React 19、Vite、TailwindCSS 4、Radix UI
+- App：Expo 54、React Native 0.81、React Navigation
 
-## 🏗️ Architecture
+## 目录结构
 
-```
+```text
 novel-copilot/
-├── src/                        # Backend (Cloudflare Worker)
-│   ├── worker.ts               # Main entry point
-│   ├── routes/                 # API routes
-│   │   ├── projects.ts         # Novel project CRUD
-│   │   ├── generation.ts       # Chapter/outline generation
-│   │   ├── characters.ts       # Character relationship graph
-│   │   ├── context.ts          # Context engineering APIs
-│   │   ├── anime.ts            # Novel-to-Anime conversion
-│   │   └── config.ts           # Runtime configuration
-│   ├── context/                # Context managers
-│   │   ├── characterStateManager.ts   # Phase 1
-│   │   ├── plotManager.ts             # Phase 2
-│   │   ├── semanticCache.ts           # Phase 5
-│   │   └── timelineManager.ts         # Phase 6
-│   ├── narrative/              # Narrative control
-│   │   └── pacingController.ts # Phase 3: Pacing curves
-│   ├── qc/                     # Quality control
-│   │   ├── multiDimensionalQC.ts
-│   │   ├── characterConsistencyCheck.ts
-│   │   ├── pacingCheck.ts
-│   │   ├── goalCheck.ts
-│   │   └── repairLoop.ts
-│   ├── services/               # External services
-│   │   ├── aiClient.ts         # Multi-provider AI client
-│   │   ├── imageGen.ts         # Gemini image generation
-│   │   ├── veoClient.ts        # Google Veo video generation
-│   │   └── voiceService.ts     # TTS service
-│   ├── contextOptimizer.ts     # Budget-based context optimization
-│   ├── contextEngineering.ts   # Unified exports
-│   └── db/                     # D1 database schemas
-├── web/                        # Frontend (React SPA)
-│   └── src/
-│       ├── components/
-│       │   ├── views/          # Main view components
-│       │   │   ├── DashboardView.tsx
-│       │   │   ├── ChapterListView.tsx
-│       │   │   ├── CharacterGraphView.tsx
-│       │   │   ├── OutlineView.tsx
-│       │   │   ├── GenerateView.tsx
-│       │   │   └── AnimeView.tsx
-│       │   ├── layout/         # Layout components
-│       │   └── ui/             # shadcn/ui components
-│       ├── hooks/              # Custom React hooks
-│       └── contexts/           # React context providers
-└── wrangler.toml               # Cloudflare configuration
+├── src/                      # Workers 后端
+│   ├── worker.ts             # 入口
+│   ├── routes/               # 业务路由（projects/generation/tasks/auth/...）
+│   ├── middleware/           # 鉴权中间件
+│   ├── services/             # AI/积分/日志等服务
+│   ├── context/              # 上下文工程模块
+│   ├── narrative/            # 叙事控制
+│   ├── qc/                   # 质检与修复
+│   └── db/                   # SQL schema
+├── web/                      # Web 前端
+├── mobile/                   # Expo App 前端
+├── migrations/               # D1 migrations
+├── scripts/                  # 打包与构建脚本
+└── .github/workflows/        # CI/CD（含移动端打包）
 ```
 
-## 🚀 Deployment
+## 本地开发
 
-### One-Click Deploy
-Click the "Deploy to Cloudflare Workers" button above.
+### 1) 依赖准备
 
-### Manual Deployment
+- Node.js 22+
+- pnpm 9+
+- Wrangler（可通过项目 devDependencies 调用）
 
 ```bash
-# 1. Clone & install
-git clone https://github.com/doctoroyy/novel-copilot.git
-cd novel-copilot
 pnpm install
-cd web && pnpm install && cd ..
-
-# 2. Create D1 Database
-npx wrangler d1 create novel-copilot-db
-# Copy the database_id to wrangler.toml
-
-# 3. Create R2 Bucket (for anime videos)
-npx wrangler r2 bucket create novel-copilot-videos
-
-# 4. Initialize Database
-pnpm db:init
-
-# 5. Deploy
-pnpm deploy
+pnpm -C web install
+pnpm -C mobile install
 ```
 
-## 🛠️ Local Development
+### 2) 初始化本地数据库
 
 ```bash
-# Install dependencies
-pnpm install
-cd web && pnpm install && cd ..
+pnpm db:migrate:local
+```
 
-# Initialize local D1 database
-pnpm db:init:local
+### 3) 启动后端
 
-# Start Backend (Workers on port 8787)
+```bash
 pnpm dev
-
-# Start Frontend (Vite on port 5173)
-cd web && pnpm dev
 ```
 
-Visit: http://localhost:5173
+默认在 `http://localhost:8787`。
 
-## 📝 Usage Guide
-
-### Novel Writing
-1. **Configure API**: Settings → Select AI provider → Enter API key (stored in browser)
-2. **Create Project**: Enter book title and Story Bible (world-building, characters, plot)
-3. **Generate Outline**: Let AI plan volumes and chapters
-4. **Write Chapters**: Generate one by one or in batches
-5. **View Characters**: Explore the character relationship graph
-6. **Export**: Download as ZIP (Markdown files + outline)
-
-### Novel-to-Anime (Experimental)
-1. **Create Anime Project**: Import novel text
-2. **Generate Characters**: AI creates character profiles with visual references
-3. **Script & Storyboard**: Generate screenplay and visual storyboards per episode
-4. **Video Generation**: Synthesize video clips with Veo (requires API access)
-
-### WebMCP (Chrome)
-
-Novel Copilot now registers page tools when `navigator.modelContext` is available (WebMCP-capable browsers).
-
-Available tools:
-- `novel_get_runtime_status`
-- `novel_list_projects`
-- `novel_get_project`
-- `novel_create_project`
-- `novel_get_chapter`
-- `novel_update_chapter`
-- `novel_create_chapter`
-- `novel_generate_outline`
-- `novel_generate_chapters`
-
-Notes:
-- You must be logged in before most tools can execute.
-- `novel_generate_outline` and `novel_generate_chapters` require AI provider/model/API key to be configured in Settings.
-- Tool registration is page-scoped, so keep the Novel Copilot tab open while the agent is using tools.
-
-## 🗄️ Database Schema
-
-### Core Tables
-| Table | Description |
-|-------|-------------|
-| `projects` | Novel projects with bible |
-| `chapters` | Generated chapter content |
-| `outlines` | Volume/chapter structure (JSON) |
-| `characters` | Character relationship graph |
-| `character_states` | Dynamic character state snapshots (Phase 1) |
-| `plot_graphs` | Plot graph with foreshadowing (Phase 2) |
-| `narrative_config` | Pacing curves and narrative arcs (Phase 3) |
-| `chapter_qc` | Quality check results (Phase 4) |
-
-### Anime Tables
-| Table | Description |
-|-------|-------------|
-| `anime_projects` | Anime conversion projects |
-| `anime_episodes` | Episode data (script, storyboard, video) |
-| `anime_series_scripts` | Global series scripts |
-| `anime_characters` | Character visual consistency data |
-
-## 🔗 Links
-
-- [Gemini API Key](https://aistudio.google.com/)
-- [OpenAI API Key](https://platform.openai.com/api-keys)
-- [DeepSeek API Key](https://platform.deepseek.com/)
-
----
-
-<a name="chinese"></a>
-# Novel Copilot (中文介绍)
-
-基于 Cloudflare Workers 构建的 AI 创意写作平台。核心特色是**上下文工程系统**，确保长篇小说的剧情连贯性。同时支持**小说转动漫**功能。
-
-## ✨ 核心功能
-
-### 📖 小说写作
-- 🤖 **多模型支持**：Gemini、OpenAI、DeepSeek 及自定义 API
-- 🧠 **上下文工程系统**：6 阶段上下文管理（见下表）
-- 📋 **智能大纲**：自动规划分卷和章节结构
-- 📊 **人物关系图谱**：可视化力导向图展示人物关系
-- ✅ **多维度质检**：自动检测章节质量并修复
-
-### 🧠 上下文工程系统
-
-核心创新 — 远超简单"记忆"的 6 阶段系统：
-
-| 阶段 | 组件 | 描述 |
-|------|------|------|
-| **基础** | Story Bible | 世界观、规则、核心设定 |
-| **基础** | 滚动摘要 | 累积剧情摘要，自动压缩 |
-| **基础** | 近章原文 | 最近 1-2 章全文，保持风格连贯 |
-| **Phase 1** | 人物状态追踪 | 动态人物快照（位置、心情、物品、关系） |
-| **Phase 2** | 剧情图谱 | 伏笔管理，紧急度追踪 |
-| **Phase 3** | 叙事控制 | 节奏曲线、情感弧线、场景要求 |
-| **Phase 4** | 多维度 QC | 人物一致性、节奏对齐、目标完成检查 |
-| **Phase 5** | 语义缓存 | 增量上下文构建，变化检测 |
-| **Phase 6** | 时间线追踪 | 事件去重，防止剧情重复 |
-
-所有上下文都经过**预算优化**，可配置各组件的 token 分配。
-
-### 🎬 小说转动漫 (新功能)
-- 🎭 **角色一致性**：AI 生成角色设定，保持视觉一致
-- 📝 **剧本生成**：自动将小说改编为剧本
-- 🖼️ **AI 分镜**：逐场景生成分镜脚本
-- 🎙️ **语音合成**：TTS 旁白音频生成
-- 🎥 **视频生成**：Veo 驱动的视频合成，R2 存储
-
-### 🛠️ 技术栈
-- ☁️ **Serverless**：Cloudflare Workers + D1 数据库 + R2 对象存储
-- ⚛️ **前端**：React 19 + Vite (Rolldown) + TailwindCSS 4 + Radix UI
-- 🔧 **后端**：Hono 框架 + TypeScript
-
-## 🚀 部署指南
-
-### 方式一：一键部署
-点击顶部的 "Deploy to Cloudflare Workers" 按钮。
-
-### 方式二：手动部署
+### 4) 启动 Web
 
 ```bash
-# 1. 克隆并安装
-git clone https://github.com/doctoroyy/novel-copilot.git
-cd novel-copilot
-pnpm install
-cd web && pnpm install && cd ..
+pnpm -C web dev
+```
 
-# 2. 创建 D1 数据库
+默认在 `http://localhost:5173`。
+
+### 5) 启动 App（Expo）
+
+```bash
+pnpm dev:mobile
+```
+
+或：
+
+```bash
+pnpm -C mobile start
+```
+
+## 常用脚本
+
+```bash
+# 类型检查
+pnpm typecheck
+pnpm mobile:typecheck
+
+# Web 构建
+pnpm build:web
+
+# 本地/远端 D1 迁移
+pnpm db:migrate:local
+pnpm db:migrate:remote
+
+# 部署
+pnpm deploy
+
+# iOS 本地打包
+pnpm mobile:ios:package
+pnpm mobile:ios:package:install
+```
+
+## 移动端打包（GitHub Actions）
+
+已提供工作流：
+
+- `.github/workflows/build-mobile-packages.yml`
+
+产物：
+
+- iOS IPA：`ios-ipa`
+- Android universal APK：`android-universal-apk`
+- Android arm64 APK：`android-arm64-apk`
+
+iOS 需要配置以下仓库 Secrets：
+
+- `IOS_CERT_BASE64`
+- `IOS_CERT_PASSWORD`
+- `IOS_PROVISION_PROFILE_BASE64`
+- `IOS_TEAM_ID`
+- `IOS_KEYCHAIN_PASSWORD`
+
+可选：
+
+- `IOS_BUNDLE_ID`
+- `IOS_EXPORT_METHOD`
+- `IOS_CODE_SIGN_IDENTITY`
+
+补充说明见：`docs/mobile-ci.md`
+
+## 部署（Cloudflare）
+
+### 初始化
+
+```bash
+# 创建 D1
 npx wrangler d1 create novel-copilot-db
-# 将 database_id 填入 wrangler.toml
 
-# 3. 创建 R2 存储桶（用于动漫视频）
+# 创建 R2（可选，用于 AI 漫剧视频）
 npx wrangler r2 bucket create novel-copilot-videos
 
-# 4. 初始化数据库
+# 初始化 schema（首次）
 pnpm db:init
+```
 
-# 5. 部署
+将新建 D1 的 `database_id` 写入 `wrangler.toml` 后再部署：
+
+```bash
 pnpm deploy
 ```
 
-## 📝 使用说明
+## 注意事项
 
-### 小说写作
-1. **配置 API**：设置 → 选择 AI 服务商 → 输入 API Key
-2. **创建项目**：输入书名和 Story Bible（世界观、人设、主线）
-3. **生成大纲**：AI 自动生成分卷大纲
-4. **写作**：开始生成章节
-5. **查看人物**：探索人物关系图谱
-6. **导出**：一键下载 ZIP 包
+- `mobile/ios` 与 `mobile/android` 是 prebuild 产物，默认不纳入版本管理。
+- 生产环境建议统一使用 `projectId` 作为前后端传参，避免同名项目带来的歧义。
+- 章节后台任务与前端页面状态通过任务接口/SSE 同步，不应再依赖单个长连接请求维持状态。
 
-### 小说转动漫 (实验性)
-1. **创建动漫项目**：导入小说文本
-2. **生成角色**：AI 创建角色设定和视觉参考
-3. **剧本与分镜**：按集生成剧本和分镜
-4. **视频生成**：使用 Veo 合成视频片段
+## License
 
-## 📄 License
-
-MIT License
+MIT
