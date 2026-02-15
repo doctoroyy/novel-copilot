@@ -327,7 +327,10 @@ animeRoutes.post('/projects/:id/characters/generate', async (c) => {
 // Generate Image for specific character
 animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
   const { id: projectId, charId } = c.req.param();
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+      return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   let aiConfig = getAIConfigFromHeaders(c.req);
   if (!aiConfig) {
       aiConfig = await getAIConfigFromRegistry(c.env.DB, 'ai_imagine');
@@ -1450,4 +1453,3 @@ animeRoutes.delete('/projects/:projectId/episodes/:num/content', async (c) => {
     `).bind(projectId, num).run();
     return c.json({ success: true });
 });
-

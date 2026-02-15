@@ -46,7 +46,10 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
       <ScrollArea className="flex-1 px-3 min-h-0">
         <div className="space-y-2 py-2">
           {projects.map((project) => {
-            const progress = ((project.state.nextChapterIndex - 1) / project.state.totalChapters) * 100;
+            const generated = Math.max(0, project.state.nextChapterIndex - 1);
+            const progress = project.state.totalChapters > 0
+              ? Math.min(100, Math.max(0, (generated / project.state.totalChapters) * 100))
+              : 0;
             const isSelected = selectedProject === project.name;
             
             return (
@@ -82,7 +85,7 @@ export function Sidebar({ projects, selectedProject, onSelectProject, onNewProje
                 </div>
                 
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{project.state.nextChapterIndex - 1} / {project.state.totalChapters} 章</span>
+                  <span>{generated} / {project.state.totalChapters} 章</span>
                   <span>{Math.round(progress)}%</span>
                 </div>
 

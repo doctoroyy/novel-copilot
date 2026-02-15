@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useProject } from '@/contexts/ProjectContext';
 import { GenerateView } from '@/components/views';
+import { NoProjectSelected } from '@/components/NoProjectSelected';
 
 export default function GeneratePage() {
   const { 
@@ -19,8 +20,19 @@ export default function GeneratePage() {
   const [outlineCustomPrompt, setOutlineCustomPrompt] = useState('');
   const [generateCount, setGenerateCount] = useState('1');
 
+  useEffect(() => {
+    if (!selectedProject) return;
+    const targetChapters = Math.max(1, selectedProject.state.totalChapters || 400);
+    const targetWordCount = selectedProject.outline?.targetWordCount
+      ? Math.max(1, selectedProject.outline.targetWordCount)
+      : Math.max(5, Math.round(targetChapters / 4));
+    setOutlineChapters(String(targetChapters));
+    setOutlineWordCount(String(targetWordCount));
+    setGenerateCount('1');
+  }, [selectedProject?.name]);
+
   if (!selectedProject) {
-    return null;
+    return <NoProjectSelected title="未找到项目" description="请先选择有效项目后再进行生成。"/>;
   }
 
   return (

@@ -13,6 +13,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   isLoggedIn: boolean;
+  refreshUser: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<boolean>;
   register: (username: string, password: string, invitationCode: string) => Promise<boolean>;
   logout: () => Promise<void>;
@@ -30,6 +31,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshUser = useCallback(async (): Promise<boolean> => {
+    if (!isAuthenticated()) {
+      setUser(null);
+      return false;
+    }
+
+    try {
+      const response = await getCurrentUser();
+      if (response.success && response.user) {
+        setUser(response.user);
+        return true;
+      }
+      setUser(null);
+      return false;
+    } catch {
+      setUser(null);
+      return false;
+    }
+  }, []);
+
   // Check if user is logged in on mount
   useEffect(() => {
     const checkAuth = async () => {
@@ -39,22 +60,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       try {
-        const response = await getCurrentUser();
-        if (response.success && response.user) {
-          setUser(response.user);
-        } else {
-          // Token is invalid or expired
-          setUser(null);
-        }
-      } catch {
-        setUser(null);
+        await refreshUser();
       } finally {
         setLoading(false);
       }
     };
 
     checkAuth();
-  }, []);
+  }, [refreshUser]);
 
   const login = useCallback(async (username: string, password: string): Promise<boolean> => {
     setError(null);
@@ -116,6 +129,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loading,
     error,
     isLoggedIn: !!user,
+    refreshUser,
     login,
     register,
     logout,

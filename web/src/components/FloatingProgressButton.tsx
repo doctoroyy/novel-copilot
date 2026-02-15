@@ -2,27 +2,11 @@ import { useState, useEffect } from 'react';
 import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
-
-// Task history item type
-export interface TaskHistoryItem {
-  id: string;
-  type: TaskType;
-  title: string;
-  status: 'success' | 'error' | 'cancelled';
-  startTime: number;
-  endTime?: number;
-  details?: string;
-}
-
-// In-memory history (could be persisted to localStorage in future)
-let taskHistory: TaskHistoryItem[] = [];
-
-export function addTaskToHistory(task: Omit<TaskHistoryItem, 'id'>) {
-  const id = `task-${Date.now()}`;
-  taskHistory = [{ id, ...task }, ...taskHistory.slice(0, 19)]; // Keep last 20
-  // Trigger re-render via storage event
-  window.dispatchEvent(new CustomEvent('taskHistoryUpdate'));
-}
+import {
+  TASK_HISTORY_EVENT_NAME,
+  getTaskHistorySnapshot,
+  type TaskHistoryItem,
+} from '@/lib/taskHistory';
 
 // Task type icons and labels
 const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = {
@@ -40,9 +24,10 @@ export function FloatingProgressButton() {
 
   // Listen for history updates
   useEffect(() => {
-    const handler = () => setHistory([...taskHistory]);
-    window.addEventListener('taskHistoryUpdate', handler);
-    return () => window.removeEventListener('taskHistoryUpdate', handler);
+    const handler = () => setHistory(getTaskHistorySnapshot());
+    handler();
+    window.addEventListener(TASK_HISTORY_EVENT_NAME, handler);
+    return () => window.removeEventListener(TASK_HISTORY_EVENT_NAME, handler);
   }, []);
 
   // Combine legacy generation state with new active tasks
@@ -56,19 +41,12 @@ export function FloatingProgressButton() {
       status: generationState.status || 'generating',
       current: generationState.current,
       total: generationState.total,
-      startTime: generationState.startTime || Date.now(),
+      startTime: generationState.startTime ?? 0,
       projectName: generationState.projectName,
     }] : []),
   ];
 
   const hasActiveTasks = allTasks.length > 0;
-
-  // Auto-open when tasks start
-  useEffect(() => {
-    if (hasActiveTasks && !isOpen) {
-      setIsOpen(true);
-    }
-  }, [hasActiveTasks]);
 
   return (
     <>
@@ -127,7 +105,7 @@ export function FloatingProgressButton() {
                 {allTasks.map(task => {
                   const config = TASK_CONFIG[task.type];
                   const progressPercent = task.total && task.total > 0 
-                    ? Math.round((Math.max(0, (task.current || 0) - 1) / task.total) * 100)
+                    ? Math.min(100, Math.max(0, Math.round((Math.max(0, (task.current || 0) - 1) / task.total) * 100)))
                     : null;
                   
                   return (

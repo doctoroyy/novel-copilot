@@ -97,22 +97,28 @@ projectsRoutes.post('/', async (c) => {
   
   try {
     const { name, bible, totalChapters = 100 } = await c.req.json();
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const trimmedBible = typeof bible === 'string' ? bible.trim() : '';
+    const parsedTotalChapters = Number.parseInt(String(totalChapters), 10);
     
-    if (!name || !bible) {
+    if (!trimmedName || !trimmedBible) {
       return c.json({ success: false, error: 'Name and bible are required' }, 400);
+    }
+    if (!Number.isInteger(parsedTotalChapters) || parsedTotalChapters <= 0) {
+      return c.json({ success: false, error: 'totalChapters must be a positive integer' }, 400);
     }
 
     const id = crypto.randomUUID();
 
     await c.env.DB.prepare(`
       INSERT INTO projects (id, name, bible, user_id) VALUES (?, ?, ?, ?)
-    `).bind(id, name, bible, userId).run();
+    `).bind(id, trimmedName, trimmedBible, userId).run();
 
     await c.env.DB.prepare(`
       INSERT INTO states (project_id, book_title, total_chapters) VALUES (?, ?, ?)
-    `).bind(id, name, totalChapters).run();
+    `).bind(id, trimmedName, parsedTotalChapters).run();
 
-    return c.json({ success: true, project: { id, name } });
+    return c.json({ success: true, project: { id, name: trimmedName } });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }

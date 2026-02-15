@@ -36,6 +36,22 @@ interface ChapterEditorProps {
   onSaved?: (chapterIndex: number) => void;
 }
 
+function toEditorHtml(content: string): string {
+  if (!content.trim()) return '<p></p>';
+  return content
+    .split('\n')
+    .map((line) => {
+      const escaped = line
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+      return `<p>${escaped || '<br>'}</p>`;
+    })
+    .join('');
+}
+
 export function ChapterEditor({ 
   projectName, 
   chapterIndex, 
@@ -52,12 +68,16 @@ export function ChapterEditor({
   const [instruction, setInstruction] = useState('');
   const [selectedText, setSelectedText] = useState('');
   const [selectionContext, setSelectionContext] = useState('');
-  const [hasChanges, setHasChanges] = useState(chapterIndex === undefined); // New chapters always have "changes"
+  const [hasChanges, setHasChanges] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showBubbleMenu, setShowBubbleMenu] = useState(false);
+  const [bubbleMenuPosition, setBubbleMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [savedChapterIndex, setSavedChapterIndex] = useState<number | undefined>(chapterIndex);
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false);
   const [wordCount, setWordCount] = useState(0);
+  const [contentVersion, setContentVersion] = useState(0);
 
   // Debounce ref for ghost text
   const lastTypeTime = useRef<number>(Date.now());
@@ -83,7 +103,7 @@ export function ChapterEditor({
         suggestionClassName: 'after:content-[attr(data-suggestion)] after:text-gray-400 after:italic after:pointer-events-none',
       }),
     ],
-    content: `<p>${initialContent.split('\n').join('</p><p>')}</p>`,
+    content: toEditorHtml(initialContent),
     editorProps: {
       attributes: {
         class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[calc(100vh-200px)] p-4 pb-32',
@@ -92,6 +112,9 @@ export function ChapterEditor({
     onUpdate: ({ editor }) => {
       setHasChanges(true);
       setSaveSuccess(false);
+      setSaveError(null);
+      setActionError(null);
+      setContentVersion((prev) => prev + 1);
       lastTypeTime.current = Date.now();
       
       // Update word count
@@ -105,13 +128,29 @@ export function ChapterEditor({
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection;
       const text = editor.state.doc.textBetween(from, to, '\n');
-      setShowBubbleMenu(text.trim().length > 0);
+      const hasSelectedText = text.trim().length > 0 && from !== to;
+      setShowBubbleMenu(hasSelectedText);
+      if (!hasSelectedText) {
+        setBubbleMenuPosition(null);
+        return;
+      }
+      try {
+        const start = editor.view.coordsAtPos(from);
+        const end = editor.view.coordsAtPos(to);
+        setBubbleMenuPosition({
+          top: Math.max(8, Math.min(start.top, end.top) - 8),
+          left: (start.left + end.right) / 2,
+        });
+      } catch {
+        setBubbleMenuPosition(null);
+      }
     },
   });
 
   // Handle AI refine button click
   const handleRefineClick = useCallback(() => {
     if (!editor) return;
+    setActionError(null);
     
     const { from, to } = editor.state.selection;
     const text = editor.state.doc.textBetween(from, to, '\n');
@@ -133,7 +172,7 @@ export function ChapterEditor({
   const handleRefineSubmit = useCallback(async () => {
     if (!editor || !selectedText || !instruction.trim()) return;
     if (savedChapterIndex === undefined) {
-      alert('请先保存章节后再使用 AI 优化功能');
+      setActionError('请先保存章节后再使用 AI 优化功能');
       return;
     }
     
@@ -163,9 +202,10 @@ export function ChapterEditor({
       setShowInstructionDialog(false);
       setInstruction('');
       setSelectedText('');
+      setActionError(null);
     } catch (error) {
       console.error('Refine error:', error);
-      alert(`优化失败: ${(error as Error).message}`);
+      setActionError(`优化失败：${(error as Error).message}`);
     } finally {
       setIsRefining(false);
     }
@@ -176,9 +216,13 @@ export function ChapterEditor({
     if (!editor) return;
     
     setIsSaving(true);
+    setSaveError(null);
     
     try {
       const content = editor.getText();
+      if (!content.trim()) {
+        throw new Error('章节内容不能为空');
+      }
       
       if (savedChapterIndex === undefined) {
         const result = await createChapter(projectName, content);
@@ -195,6 +239,7 @@ export function ChapterEditor({
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
       console.error('Save error:', error);
+      setSaveError((error as Error).message || '保存失败');
     } finally {
       setIsSaving(false);
     }
@@ -227,13 +272,14 @@ export function ChapterEditor({
   // Auto-save effect
   useEffect(() => {
     if (!hasChanges || isSaving || !editor) return;
+    if (!editor.getText().trim()) return;
 
     const timer = setTimeout(() => {
       handleSave();
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [hasChanges, isSaving, editor, handleSave]);
+  }, [contentVersion, hasChanges, isSaving, editor, handleSave]);
 
   // Ghost Text (AI Autocomplete) Effect
   useEffect(() => {
@@ -248,8 +294,8 @@ export function ChapterEditor({
         const docSize = editor.state.doc.content.size;
         
         if (to === docSize - 1 || to === docSize) { // -1 because doc has block close
-             // @ts-ignore
-             if (editor.storage.aiAutocomplete.suggestion) return;
+             const storage = editor.storage as { aiAutocomplete?: { suggestion?: string } };
+             if (storage.aiAutocomplete?.suggestion) return;
 
              try {
                 setIsSuggesting(true);
@@ -316,6 +362,16 @@ export function ChapterEditor({
               已自动保存
             </span>
           )}
+          {saveError && (
+            <span className="text-sm text-destructive max-w-xs truncate" title={saveError}>
+              保存失败：{saveError}
+            </span>
+          )}
+          {actionError && !saveError && (
+            <span className="text-sm text-destructive max-w-xs truncate" title={actionError}>
+              {actionError}
+            </span>
+          )}
           
           <Button
             variant={isChatOpen ? "secondary" : "ghost"}
@@ -358,13 +414,14 @@ export function ChapterEditor({
         {/* Editor */}
         <div className="flex-1 overflow-auto bg-background/50">
           <div className="max-w-4xl mx-auto py-8 px-4 relative h-full">
-            {/* Custom Bubble Menu - appears when text is selected */}
-            {showBubbleMenu && editor.state.selection.from !== editor.state.selection.to && (
+            {/* Selection Bubble Menu */}
+            {showBubbleMenu && bubbleMenuPosition && editor.state.selection.from !== editor.state.selection.to && (
               <div 
-                className="absolute bg-popover border rounded-lg shadow-lg p-1 z-10"
+                className="fixed bg-popover border rounded-lg shadow-lg p-1 z-50"
                 style={{
-                  top: 'var(--bubble-top, 0)',
-                  left: 'var(--bubble-left, 0)',
+                  top: `${bubbleMenuPosition.top}px`,
+                  left: `${bubbleMenuPosition.left}px`,
+                  transform: 'translate(-50%, -100%)',
                 }}
               >
                 <Button
@@ -395,19 +452,6 @@ export function ChapterEditor({
           </div>
         )}
       </div>
-
-      {/* Floating AI Button - always visible when text selected */}
-      {showBubbleMenu && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <Button
-            onClick={handleRefineClick}
-            className="rounded-full shadow-lg h-12 px-4"
-          >
-            <Sparkles className="h-5 w-5 mr-2" />
-            AI 优化选中文本
-          </Button>
-        </div>
-      )}
 
       <Dialog open={showInstructionDialog} onOpenChange={setShowInstructionDialog}>
         <DialogContent className="sm:max-w-lg">

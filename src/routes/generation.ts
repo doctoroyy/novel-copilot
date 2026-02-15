@@ -133,7 +133,10 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
 // Generate outline (streaming SSE to avoid Workers timeout)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
 
   if (!aiConfig) {
@@ -296,7 +299,10 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
@@ -458,7 +464,10 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 // Generate chapters
 generationRoutes.post('/projects/:name/generate', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
   
   if (!aiConfig) {
@@ -608,7 +617,10 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 // Streaming chapter generation with SSE
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
@@ -713,7 +725,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
         const taskId = await createGenerationTask(
           c.env.DB,
           project.id,
-          userId!,
+          userId,
           chaptersToGenerate,
           startingChapterIndex
         );
@@ -937,7 +949,10 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 // Enhanced chapter generation with full context engineering
 generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
 
   if (!aiConfig) {
@@ -1308,7 +1323,10 @@ ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
 // Refine outline (regenerate missing/incomplete volumes) - SSE streaming
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
-  const userId = c.get('userId');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const aiConfig = await getAIConfig(c, c.env.DB, 'refine_outline');
 
   if (!aiConfig) {

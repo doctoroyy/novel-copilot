@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import { useGeneration } from '@/contexts/GenerationContext';
@@ -19,7 +19,7 @@ import {
   type ProjectSummary,
   type ProjectDetail,
 } from '@/lib/api';
-import { addTaskToHistory } from '@/components/FloatingProgressButton';
+import { addTaskToHistory } from '@/lib/taskHistory';
 
 // Constants
 const MOBILE_BREAKPOINT = 1024;
@@ -119,6 +119,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadProjectRequestIdRef = useRef(0);
 
   // AI Config
   const { config, isConfigured } = useAIConfig();
@@ -194,14 +195,21 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Load single project
   const loadProject = useCallback(async (name: string) => {
+    const requestId = ++loadProjectRequestIdRef.current;
     try {
       setLoading(true);
+      setError(null);
       const data = await fetchProject(name);
+      if (requestId !== loadProjectRequestIdRef.current) return;
       setSelectedProject(data);
     } catch (err) {
+      if (requestId !== loadProjectRequestIdRef.current) return;
+      setSelectedProject(null);
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (requestId === loadProjectRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -242,12 +250,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Load project when URL changes
   useEffect(() => {
-    if (projectName && projectName !== selectedProject?.name) {
-      loadProject(projectName);
-    } else if (!projectName) {
+    if (projectName) {
       setSelectedProject(null);
+      void loadProject(projectName);
+    } else {
+      loadProjectRequestIdRef.current += 1;
+      setSelectedProject(null);
+      setLoading(false);
     }
-  }, [projectName, selectedProject?.name, loadProject]);
+  }, [projectName, loadProject]);
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
@@ -286,7 +297,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Navigation helpers
   const handleSelectProject = useCallback((name: string) => {
-    navigate(`/project/${encodeURIComponent(name)}`);
+    navigate(`/project/${encodeURIComponent(name)}/dashboard`);
   }, [navigate]);
 
   const handleTabChange = useCallback((newTab: string) => {
@@ -297,20 +308,36 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Project handlers
   const handleCreateProject = useCallback(async (name: string, bible: string, chapters: string) => {
-    if (!name.trim()) return;
+    const trimmedName = name.trim();
+    const trimmedBible = bible.trim();
+    const totalChapters = Number.parseInt(chapters, 10);
+
+    if (!trimmedName) {
+      setError('请输入项目名称');
+      throw new Error('invalid_project_name');
+    }
+    if (!trimmedBible) {
+      setError('请输入小说设定（Bible）');
+      throw new Error('invalid_project_bible');
+    }
+    if (!Number.isInteger(totalChapters) || totalChapters <= 0) {
+      setError('目标章节数必须是大于 0 的整数');
+      throw new Error('invalid_project_chapters');
+    }
     
     setLoading(true);
     try {
-      await createProject(name, bible, parseInt(chapters));
+      await createProject(trimmedName, trimmedBible, totalChapters);
       setShowNewProjectDialog(false);
       await loadProjects();
-      navigate(`/project/${encodeURIComponent(name)}`);
+      navigate(`/project/${encodeURIComponent(trimmedName)}/dashboard`);
     } catch (err) {
       setError((err as Error).message);
+      throw err;
     } finally {
       setLoading(false);
     }
-  }, [isConfigured, loadProjects, navigate]);
+  }, [loadProjects, navigate]);
 
   const handleDeleteProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -338,10 +365,20 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Generation handlers
   const handleGenerateOutline = useCallback(async (chapters: string, wordCount: string, customPrompt: string) => {
     if (!selectedProject || !isConfigured) return;
+    const targetChapters = Number.parseInt(chapters, 10);
+    const targetWordCount = Number.parseInt(wordCount, 10);
+    if (!Number.isInteger(targetChapters) || targetChapters <= 0) {
+      setError('目标章节数必须是大于 0 的整数');
+      return;
+    }
+    if (!Number.isInteger(targetWordCount) || targetWordCount <= 0) {
+      setError('目标字数必须是大于 0 的整数');
+      return;
+    }
     
     setGeneratingOutline(true);
     try {
-      await generateOutline(selectedProject.name, parseInt(chapters), parseInt(wordCount), customPrompt);
+      await generateOutline(selectedProject.name, targetChapters, targetWordCount, customPrompt);
       await loadProject(selectedProject.name);
     } catch (err) {
       setError((err as Error).message);
@@ -353,9 +390,29 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleGenerateChapters = useCallback(async (count: string) => {
     if (!selectedProject || !isConfigured) return;
     
-    const chapterCount = parseInt(count);
+    const requestedCount = Number.parseInt(count, 10);
+    if (!Number.isInteger(requestedCount) || requestedCount <= 0) {
+      setError('生成章数必须是大于 0 的整数');
+      return;
+    }
+    if (generationState.isGenerating && generationState.projectName === selectedProject.name) {
+      setError('该项目已有章节生成任务在进行中');
+      return;
+    }
+    const generated = Math.max(0, selectedProject.state.nextChapterIndex - 1);
+    const remaining = Math.max(0, selectedProject.state.totalChapters - generated);
+    if (remaining <= 0) {
+      setError('已达到目标章节数，无需继续生成');
+      return;
+    }
+    const chapterCount = Math.min(requestedCount, remaining);
+    if (chapterCount < requestedCount) {
+      setError(`仅剩 ${remaining} 章可生成，已自动按 ${remaining} 章执行`);
+    }
+
     const startChapter = selectedProject.state.nextChapterIndex;
     
+    setLoading(true);
     startGeneration(selectedProject.name, chapterCount);
     
     try {
@@ -377,15 +434,33 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
               message: event.message,
             }));
           },
-          onChapterComplete: (_chapterIndex: number, _title: string, _preview: string) => {
-            loadProject(selectedProject.name);
+          onChapterComplete: (chapterIndex: number, title: string) => {
+            setSelectedProject(prev => {
+              if (!prev || prev.name !== selectedProject.name) return prev;
+              const chapterFile = `${chapterIndex.toString().padStart(3, '0')}.md`;
+              const chapterExists = prev.chapters.includes(chapterFile);
+              const nextChapterIndex = Math.max(prev.state.nextChapterIndex, chapterIndex + 1);
+              return {
+                ...prev,
+                state: {
+                  ...prev.state,
+                  nextChapterIndex,
+                },
+                chapters: chapterExists
+                  ? prev.chapters
+                  : [...prev.chapters, chapterFile].sort((a, b) => Number(a.replace('.md', '')) - Number(b.replace('.md', ''))),
+              };
+            });
+            setGenerationState(prev => ({
+              ...prev,
+              currentChapterTitle: title,
+            }));
           },
           onChapterError: (chapterIndex: number, error: string) => {
             console.error(`Chapter ${chapterIndex} error:`, error);
           },
           onDone: (results, failedChapters) => {
             completeGeneration();
-            loadProject(selectedProject.name);
             addTaskToHistory({
               type: 'chapters',
               title: `${selectedProject.name}: 第${startChapter}-${startChapter + results.length - 1}章`,
@@ -401,11 +476,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
         },
       );
+      await loadProject(selectedProject.name);
     } catch (err) {
       completeGeneration();
       setError((err as Error).message);
+    } finally {
+      setLoading(false);
     }
-  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime]);
+  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -429,14 +507,24 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleDeleteChapter = useCallback(async (index: number): Promise<void> => {
     if (!selectedProject) return;
-    await deleteChapter(selectedProject.name, index);
-    await loadProject(selectedProject.name);
+    try {
+      await deleteChapter(selectedProject.name, index);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
   }, [selectedProject, loadProject]);
 
   const handleBatchDeleteChapters = useCallback(async (indices: number[]): Promise<void> => {
     if (!selectedProject) return;
-    await batchDeleteChapters(selectedProject.name, indices);
-    await loadProject(selectedProject.name);
+    try {
+      await batchDeleteChapters(selectedProject.name, indices);
+      await loadProject(selectedProject.name);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
   }, [selectedProject, loadProject]);
 
   const handleDownloadBook = useCallback(async () => {

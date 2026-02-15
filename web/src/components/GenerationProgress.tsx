@@ -150,7 +150,7 @@ export function GenerationProgress({
         {message && (
           <div className="text-xs lg:text-sm text-muted-foreground animate-fade-in flex items-start gap-2">
             <span className="text-primary">▸</span>
-            <span className="typewriter">{message}</span>
+            <span className="break-words leading-relaxed">{message}</span>
           </div>
         )}
         
@@ -181,16 +181,6 @@ export function GenerationProgress({
         }
         .animate-fade-in {
           animation: fade-in 0.3s ease-out;
-        }
-        .typewriter {
-          display: inline-block;
-          overflow: hidden;
-          white-space: nowrap;
-          animation: typing 0.5s steps(20, end);
-        }
-        @keyframes typing {
-          from { max-width: 0; }
-          to { max-width: 100%; }
         }
       `}</style>
     </Card>

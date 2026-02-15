@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -48,6 +48,20 @@ interface AnimeViewProps {
   onEpisodeSelect?: (episodeId: string) => void;
 }
 
+async function requestJson<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || `请求失败 (${res.status})`);
+  }
+  return data as T;
+}
+
 export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   const { config: aiConfig, isConfigured, maskedApiKey, loaded: configLoaded } = useAIConfig();
   
@@ -67,6 +81,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   const [characters, setCharacters] = useState<any[]>([]);
   const [voices, setVoices] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('episodes');
+  const [actionError, setActionError] = useState<string | null>(null);
   
   // Character image preview
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
@@ -75,79 +90,98 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
   // Load voices on mount
   useEffect(() => {
-    fetch('/api/anime/voices', { headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) } })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) setVoices(data.voices);
-        })
-        .catch(console.error);
+    const loadVoices = async () => {
+      try {
+        const data = await requestJson<{ success: boolean; voices?: any[]; error?: string }>(
+          '/api/anime/voices',
+          { headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) } }
+        );
+        if (!data.success) {
+          throw new Error(data.error || '加载音色列表失败');
+        }
+        setVoices(data.voices || []);
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    void loadVoices();
   }, [aiConfig]); // Re-fetch if config changes (key might be needed)
 
   const { lastProgress } = useServerEventsContext();
 
   // Fetch full details for an episode
   const handleEpisodeClick = async (episode: AnimeEpisode) => {
+    setActionError(null);
+
+    if (onEpisodeSelect) {
+      // In routed mode, delegate to page-level episode detail.
+      onEpisodeSelect(String(episode.episode_num));
+      return;
+    }
+
     setSelectedEpisode(episode);
     setIsDetailOpen(true);
 
-    if (onEpisodeSelect) {
-        // Pass episode number as ID for cleaner URLs usually, or keep consistent
-        onEpisodeSelect(String(episode.episode_num));
-    }
-
-    if (!episode.script || !episode.storyboard) {
+    if (!animeProject) return;
+    if (!episode.script || (!episode.storyboard && !episode.storyboard_json)) {
       try {
-        const res = await fetch(`/api/anime/projects/${animeProject!.id}/episodes/${episode.episode_num}`, {
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-        if (data.success && data.episode) {
-          setSelectedEpisode(prev => ({ ...prev, ...data.episode }));
-          // Update in list too
-          setEpisodes(prev => prev.map(e => e.id === episode.id ? { ...e, ...data.episode } : e));
+        const data = await requestJson<{ success: boolean; episode?: AnimeEpisode; error?: string }>(
+          `/api/anime/projects/${animeProject.id}/episodes/${episode.episode_num}`,
+          { headers: getAuthHeaders() }
+        );
+        if (!data.success || !data.episode) {
+          throw new Error(data.error || '分集详情不存在');
         }
+        const episodeDetail = data.episode;
+        setSelectedEpisode(prev => (prev ? { ...prev, ...episodeDetail } : episodeDetail));
+        // Update in list too
+        setEpisodes(prev => prev.map(e => e.id === episode.id ? { ...e, ...episodeDetail } : e));
       } catch (error) {
         console.error('Failed to fetch episode details', error);
+        setActionError(`加载分集详情失败：${(error as Error).message}`);
       }
     }
   };
 
 
-  const fetchAnimeProject = useCallback(async () => {
+  const fetchAnimeProject = useCallback(async (showSpinner = false) => {
     try {
-      // setLoading(true); // Don't trigger full loading spinner on refresh
+      if (showSpinner) setLoading(true);
       
-      const res = await fetch(`/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`, {
-        headers: getAuthHeaders()
-      });
-      const data = await res.json();
+      const data = await requestJson<{ success: boolean; projects?: AnimeProject[]; error?: string }>(
+        `/api/anime/projects?novelProject=${encodeURIComponent(project.name)}`,
+        { headers: getAuthHeaders() }
+      );
+      if (!data.success) {
+        throw new Error(data.error || '加载动漫项目列表失败');
+      }
       
-      if (data.success && data.projects.length > 0) {
+      if (data.projects && data.projects.length > 0) {
         const anime = data.projects.find((p: any) => p.name === `anime-${project.name}`);
         if (anime) {
           setAnimeProject(anime);
 
           // Parallel fetch of resources
-          const [episodesRes, scriptRes, charsRes] = await Promise.all([
-             fetch(`/api/anime/projects/${anime.id}`, { headers: getAuthHeaders() }),
-             fetch(`/api/anime/projects/${anime.id}/script`, { headers: getAuthHeaders() }),
-             fetch(`/api/anime/projects/${anime.id}/characters`, { headers: getAuthHeaders() })
+          const [episodesData, scriptData, charsData] = await Promise.all([
+             requestJson<{ success: boolean; episodes?: AnimeEpisode[]; error?: string }>(
+               `/api/anime/projects/${anime.id}`,
+               { headers: getAuthHeaders() }
+             ),
+             requestJson<{ success: boolean; script?: { content?: string } | null; error?: string }>(
+               `/api/anime/projects/${anime.id}/script`,
+               { headers: getAuthHeaders() }
+             ),
+             requestJson<{ success: boolean; characters?: any[]; error?: string }>(
+               `/api/anime/projects/${anime.id}/characters`,
+               { headers: getAuthHeaders() }
+             )
           ]);
-
-          const episodesData = await episodesRes.json();
-          if (episodesData.success) {
-            setEpisodes(episodesData.episodes || []);
-          }
-          
-          const scriptData = await scriptRes.json();
-          if (scriptData.success && scriptData.script) {
-             setSeriesScript(scriptData.script.content);
-          }
-
-          const charsData = await charsRes.json();
-          if (charsData.success) {
-             setCharacters(charsData.characters || []);
-          }
+          if (!episodesData.success) throw new Error(episodesData.error || '加载分集失败');
+          if (!scriptData.success) throw new Error(scriptData.error || '加载系列剧本失败');
+          if (!charsData.success) throw new Error(charsData.error || '加载角色列表失败');
+          setEpisodes(episodesData.episodes || []);
+          setSeriesScript(scriptData.script?.content || '');
+          setCharacters(charsData.characters || []);
 
           // If detailed view is open, refresh selected episode too
           // Use functional update to access current state without dependency
@@ -160,17 +194,30 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
              }
              return current;
           });
+        } else {
+          setAnimeProject(null);
+          setEpisodes([]);
+          setSeriesScript('');
+          setCharacters([]);
         }
+      } else {
+        setAnimeProject(null);
+        setEpisodes([]);
+        setSeriesScript('');
+        setCharacters([]);
       }
     } catch (error) {
       console.error('Failed to fetch anime project:', error);
+      setActionError(`加载动漫项目失败：${(error as Error).message}`);
     } finally {
-      if (loading) setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
-  }, [project.name, loading]);
+  }, [project.name]);
 
   useEffect(() => {
-    fetchAnimeProject();
+    void fetchAnimeProject(true);
   }, [fetchAnimeProject]);
 
   // Real-time updates from SSE
@@ -221,28 +268,35 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
     if (!isConfigured) {
       // alert('请先在设置中配置 AI API Key');
       console.error('Missing API Key');
+      setActionError('请先在设置中配置 AI API Key');
       return;
     }
 
     try {
+      setActionError(null);
       setLoading(true);
       
       // Get all chapters content
       const chaptersContent: string[] = [];
-      for (const chapterFile of project.chapters) {
-        const index = parseInt(chapterFile.replace('.md', ''), 10);
-        const res = await fetch(`/api/projects/${encodeURIComponent(project.name)}/chapters/${index}`, {
-          headers: getAuthHeaders()
-        });
-        const data = await res.json();
-        if (data.success) {
+      const chapterIndices = project.chapters
+        .map((chapterFile) => Number.parseInt(chapterFile.replace('.md', ''), 10))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      for (const index of chapterIndices) {
+        const data = await requestJson<{ success: boolean; content?: string; error?: string }>(
+          `/api/projects/${encodeURIComponent(project.name)}/chapters/${index}`,
+          { headers: getAuthHeaders() }
+        );
+        if (data.success && typeof data.content === 'string') {
           chaptersContent.push(data.content);
+        } else {
+          throw new Error(data.error || `读取第 ${index} 章失败`);
         }
       }
 
       const novelText = chaptersContent.join('\n\n---\n\n');
 
-      const res = await fetch('/api/anime/projects', {
+      const data = await requestJson<{ success: boolean; projectId?: string; error?: string }>('/api/anime/projects', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -254,16 +308,16 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
           totalEpisodes,
         }),
       });
-
-      const data = await res.json();
       if (data.success) {
         await fetchAnimeProject();
       } else {
         console.error(data.error);
+        setActionError(data.error || '创建动漫项目失败');
       }
     } catch (error) {
       console.error('Failed to create anime project:', error);
       console.error('创建失败', error);
+      setActionError(`创建失败：${(error as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -273,10 +327,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   const handleGenerateAll = async () => {
     if (!animeProject || !isConfigured) return;
 
+    setActionError(null);
     setGenerating(true);
 
     try {
-      const res = await fetch(`/api/anime/projects/${animeProject.id}/generate`, {
+      const data = await requestJson<{ success: boolean; error?: string }>(`/api/anime/projects/${animeProject.id}/generate`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -285,13 +340,14 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
         },
         body: JSON.stringify({}),
       });
-
-      const data = await res.json();
       if (data.success) {
         await fetchAnimeProject();
+      } else {
+        setActionError(data.error || '批量生成失败');
       }
     } catch (error) {
       console.error('Generation failed:', error);
+      setActionError(`批量生成失败：${(error as Error).message}`);
     } finally {
       setGenerating(false);
     }
@@ -301,10 +357,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   const handleGenerateEpisode = async (episode: AnimeEpisode) => {
     if (!animeProject || !isConfigured) return;
 
+    setActionError(null);
     setGeneratingEpisodeId(episode.id);
 
     try {
-      const res = await fetch(`/api/anime/projects/${animeProject.id}/generate`, {
+      const data = await requestJson<{ success: boolean; errors?: string[]; error?: string }>(`/api/anime/projects/${animeProject.id}/generate`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -316,15 +373,15 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
            endEpisode: episode.episode_num 
         }),
       });
-
-      const data = await res.json();
       if (data.success) {
         await fetchAnimeProject();
       } else {
          console.error('Episode generation error:', data.errors);
+         setActionError(data.error || data.errors?.join?.('；') || '分集生成失败');
       }
     } catch (error) {
       console.error('Episode generation failed:', error);
+      setActionError(`分集生成失败：${(error as Error).message}`);
     } finally {
       setGeneratingEpisodeId(null);
     }
@@ -360,6 +417,20 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
   // Estimate words per episode to hint duration
   const wordsPerEpisode = Math.round((project.chapters.length * 2000) / (totalEpisodes || 1));
+  const storyboardData = useMemo(() => {
+    if (selectedEpisode?.storyboard && Array.isArray(selectedEpisode.storyboard)) {
+      return { shots: selectedEpisode.storyboard, parseError: false };
+    }
+    if (!selectedEpisode?.storyboard_json) {
+      return { shots: [], parseError: false };
+    }
+    try {
+      const parsed = JSON.parse(selectedEpisode.storyboard_json);
+      return { shots: Array.isArray(parsed) ? parsed : [], parseError: false };
+    } catch {
+      return { shots: [], parseError: true };
+    }
+  }, [selectedEpisode?.storyboard, selectedEpisode?.storyboard_json]);
 
 
   // Wait for both anime project data and AI config to load
@@ -384,6 +455,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            {actionError && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {actionError}
+              </div>
+            )}
             <div className="bg-muted/50 rounded-lg p-4 space-y-3">
               <h4 className="font-medium text-sm">转换说明</h4>
               <ul className="text-sm text-muted-foreground space-y-1">
@@ -457,6 +533,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
   // Anime project exists - show episodes
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {actionError && (
+        <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold flex items-center gap-3">
@@ -501,13 +582,22 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                     <Button 
                         onClick={async () => {
                             if (!animeProject) return;
+                            setActionError(null);
                             setGenerating(true);
                             try {
-                                await fetch(`/api/anime/projects/${animeProject.id}/script`, {
+                                const data = await requestJson<{ success: boolean; error?: string }>(
+                                  `/api/anime/projects/${animeProject.id}/script`,
+                                  {
                                     method: 'POST',
                                     headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
-                                });
+                                  }
+                                );
+                                if (!data.success) {
+                                  throw new Error(data.error || '生成总剧本失败');
+                                }
                                 await fetchAnimeProject();
+                            } catch (error) {
+                                setActionError(`生成总剧本失败：${(error as Error).message}`);
                             } finally {
                                 setGenerating(false);
                             }
@@ -542,13 +632,22 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                  <Button 
                     onClick={async () => {
                         if (!animeProject) return;
+                        setActionError(null);
                         setGenerating(true);
                         try {
-                            await fetch(`/api/anime/projects/${animeProject.id}/characters/generate`, {
+                            const data = await requestJson<{ success: boolean; error?: string }>(
+                              `/api/anime/projects/${animeProject.id}/characters/generate`,
+                              {
                                 method: 'POST',
                                 headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
-                            });
+                              }
+                            );
+                            if (!data.success) {
+                              throw new Error(data.error || '提取角色失败');
+                            }
                             await fetchAnimeProject();
+                        } catch (error) {
+                            setActionError(`提取角色失败：${(error as Error).message}`);
                         } finally {
                             setGenerating(false);
                         }
@@ -618,13 +717,23 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                           disabled={isGenerating}
                                           onClick={async (e) => {
                                               e.stopPropagation();
+                                              if (!animeProject) return;
+                                              setActionError(null);
                                               setGeneratingCharId(char.id);
                                               try {
-                                                  await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}/image`, {
+                                                  const data = await requestJson<{ success: boolean; error?: string }>(
+                                                    `/api/anime/projects/${animeProject.id}/characters/${char.id}/image`,
+                                                    {
                                                       method: 'POST',
                                                       headers: { ...getAuthHeaders(), ...getAIConfigHeaders(aiConfig) }
-                                                  });
+                                                    }
+                                                  );
+                                                  if (!data.success) {
+                                                    throw new Error(data.error || '角色立绘生成失败');
+                                                  }
                                                   await fetchAnimeProject();
+                                              } catch (error) {
+                                                  setActionError(`角色立绘生成失败：${(error as Error).message}`);
                                               } finally {
                                                   setGeneratingCharId(null);
                                               }
@@ -651,17 +760,31 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                         className="w-full text-xs bg-muted/50 border border-border rounded px-2 py-1 mt-1"
                                         value={char.voice_id || ''}
                                         onChange={async (e) => {
+                                            if (!animeProject) return;
                                             const voiceId = e.target.value;
+                                            setActionError(null);
+                                            const previousVoiceId = char.voice_id || '';
                                             setCharacters(prev => prev.map(c => c.id === char.id ? { ...c, voice_id: voiceId } : c));
                                             
-                                            await fetch(`/api/anime/projects/${animeProject!.id}/characters/${char.id}`, {
-                                                method: 'PATCH',
-                                                headers: { 
-                                                  'Content-Type': 'application/json',
-                                                  ...getAuthHeaders()
-                                                },
-                                                body: JSON.stringify({ voiceId })
-                                            });
+                                            try {
+                                              const data = await requestJson<{ success: boolean; error?: string }>(
+                                                `/api/anime/projects/${animeProject.id}/characters/${char.id}`,
+                                                {
+                                                  method: 'PATCH',
+                                                  headers: {
+                                                    'Content-Type': 'application/json',
+                                                    ...getAuthHeaders()
+                                                  },
+                                                  body: JSON.stringify({ voiceId })
+                                                }
+                                              );
+                                              if (!data.success) {
+                                                throw new Error(data.error || '更新角色配音失败');
+                                              }
+                                            } catch (error) {
+                                              setCharacters(prev => prev.map(c => c.id === char.id ? { ...c, voice_id: previousVoiceId } : c));
+                                              setActionError(`更新角色配音失败：${(error as Error).message}`);
+                                            }
                                         }}
                                      >
                                         <option value="">No Voice Assigned</option>
@@ -708,7 +831,8 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
             {/* List Layout */}
             <div className="space-y-3">
                 {episodes.map(episode => (
-                <div
+                <button
+                    type="button"
                     key={episode.id}
                     onClick={() => handleEpisodeClick(episode)}
                     className={`
@@ -754,9 +878,11 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                     
                     {/* Hover indicator */}
                     <div className="absolute right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button size="sm" variant="secondary">查看详情</Button>
+                        <span className="rounded-md bg-secondary px-2 py-1 text-xs text-secondary-foreground">
+                          查看详情
+                        </span>
                     </div>
-                </div>
+                </button>
                 ))}
             </div>
 
@@ -846,9 +972,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
                 <TabsContent value="storyboard" className="h-full m-0">
                 <ScrollArea className="h-full w-full p-6">
-                    {selectedEpisode?.storyboard || selectedEpisode?.storyboard_json ? (
+                    {storyboardData.shots.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
-                        {(selectedEpisode.storyboard || JSON.parse(selectedEpisode.storyboard_json || '[]')).map((shot: any, idx: number) => (
+                        {storyboardData.shots.map((shot: any, idx: number) => (
                         <Card key={idx} className="overflow-hidden border-border/50 bg-card/50 hover:bg-card hover:border-primary/20 transition-all">
                             <div className="aspect-video bg-muted/30 flex items-center justify-center relative group">
                                 <span className="text-4xl opacity-10 font-black">SHOT {shot.shot_id}</span>
@@ -872,7 +998,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                     ) : (
                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 text-center">
                         <ImageIcon className="w-12 h-12 opacity-20"/>
-                        <p>暂无分镜数据</p>
+                        <p>{storyboardData.parseError ? '分镜数据格式异常，请重新生成。' : '暂无分镜数据'}</p>
                         <Button variant="outline" size="sm" onClick={() => selectedEpisode && handleGenerateEpisode(selectedEpisode)}>
                             点击生成
                         </Button>

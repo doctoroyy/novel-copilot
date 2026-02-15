@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -62,9 +62,10 @@ interface ChapterListViewProps {
   onViewChapter: (index: number) => Promise<string>;
   onDeleteChapter?: (index: number) => Promise<void>;
   onBatchDeleteChapters?: (indices: number[]) => Promise<void>;
+  onProjectRefresh?: () => Promise<void> | void;
 }
 
-export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters }: ChapterListViewProps) {
+export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBatchDeleteChapters, onProjectRefresh }: ChapterListViewProps) {
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,6 +82,21 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const chapterIndices = useMemo(
+    () =>
+      project.chapters
+        .map(ch => Number.parseInt(ch.replace('.md', ''), 10))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b),
+    [project.chapters]
+  );
+  const nextChapterIndex = project.state.nextChapterIndex;
+  const generatedChapters = Math.max(0, nextChapterIndex - 1);
+  const remainingChapters = Math.max(0, project.state.totalChapters - generatedChapters);
+  const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && generatingChapter === null;
+  const isGeneratingNextChapter = generatingChapter === nextChapterIndex;
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -92,6 +108,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   };
 
   const handleView = async (index: number) => {
+    setActionError(null);
     setLoading(true);
     try {
       const content = await onViewChapter(index);
@@ -100,6 +117,8 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
         content,
         title: getChapterTitle(index) || undefined
       });
+    } catch (err) {
+      setActionError(`加载章节失败：${(err as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -118,6 +137,7 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     e.stopPropagation(); // Prevent opening the dialog
     setCopyingChapter(index);
     setCopyError(null);
+    setActionError(null);
     try {
       const content = await onViewChapter(index);
       const success = await copyToClipboard(content);
@@ -128,6 +148,8 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
         setCopyError(index);
         setTimeout(() => setCopyError(null), 2000);
       }
+    } catch (err) {
+      setActionError(`复制失败：${(err as Error).message}`);
     } finally {
       setCopyingChapter(null);
     }
@@ -139,10 +161,13 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   };
 
   const confirmDelete = async () => {
-    if (!chapterToDelete || !onDeleteChapter) return;
+    if (chapterToDelete === null || !onDeleteChapter) return;
+    setActionError(null);
     setDeletingChapter(chapterToDelete);
     try {
       await onDeleteChapter(chapterToDelete);
+    } catch (err) {
+      setActionError(`删除失败：${(err as Error).message}`);
     } finally {
       setDeletingChapter(null);
       setChapterToDelete(null);
@@ -150,21 +175,24 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   };
 
   const handleGenerateNext = async () => {
-    const allIndices = project.chapters.map(ch => parseInt(ch.replace('.md', ''), 10));
-    const maxIndex = allIndices.length > 0 ? Math.max(...allIndices) : 0;
-    const nextIndex = maxIndex + 1;
+    if (!project.outline) {
+      setActionError('请先生成大纲后再生成章节');
+      return;
+    }
+    if (remainingChapters <= 0) {
+      setActionError('已达到目标章节数，无需继续生成');
+      return;
+    }
 
+    const nextIndex = nextChapterIndex;
+    setActionError(null);
     setGeneratingChapter(nextIndex);
     try {
-      await generateSingleChapter(project.name, nextIndex, false, undefined, (msg) => {
-        if (msg.type === 'done') {
-           // Reload page to reflect changes (or use a callback to refresh project)
-           window.location.reload(); 
-        }
-      });
+      await generateSingleChapter(project.name, nextIndex, false);
+      await onProjectRefresh?.();
     } catch (err) {
       console.error('Generation failed:', err);
-      alert('Generation failed: ' + (err as Error).message);
+      setActionError(`生成失败：${(err as Error).message}`);
     } finally {
       setGeneratingChapter(null);
     }
@@ -174,24 +202,22 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     e.stopPropagation();
     if (!confirm(`确定要重新生成第 ${index} 章吗？现有内容将被覆盖。`)) return;
 
+    setActionError(null);
     setGeneratingChapter(index);
     try {
-      await generateSingleChapter(project.name, index, true, undefined, (msg) => {
-        if (msg.type === 'done') {
-           window.location.reload(); 
-        }
-      });
+      await generateSingleChapter(project.name, index, true);
+      await onProjectRefresh?.();
     } catch (err) {
       console.error('Regeneration failed:', err);
-      alert('Regeneration failed: ' + (err as Error).message);
+      setActionError(`重写失败：${(err as Error).message}`);
     } finally {
       setGeneratingChapter(null);
     }
   };
 
   // Selection handlers for batch delete
-  const toggleSelection = (index: number, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const toggleSelection = (index: number, e?: React.SyntheticEvent) => {
+    e?.stopPropagation();
     const newSelected = new Set(selectedChapters);
     if (newSelected.has(index)) {
       newSelected.delete(index);
@@ -201,10 +227,8 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
     setSelectedChapters(newSelected);
   };
 
-  const allChapterIndices = project.chapters.map(ch => parseInt(ch.replace('.md', ''), 10));
-
   const selectAll = () => {
-    setSelectedChapters(new Set(allChapterIndices));
+    setSelectedChapters(new Set(chapterIndices));
   };
 
   const clearSelection = () => {
@@ -213,11 +237,14 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
 
   const confirmBatchDelete = async () => {
     if (!onBatchDeleteChapters || selectedChapters.size === 0) return;
+    setActionError(null);
     setBatchDeleting(true);
     try {
       await onBatchDeleteChapters(Array.from(selectedChapters));
       setSelectedChapters(new Set());
       setSelectionMode(false);
+    } catch (err) {
+      setActionError(`批量删除失败：${(err as Error).message}`);
     } finally {
       setBatchDeleting(false);
       setShowBatchDeleteConfirm(false);
@@ -227,10 +254,11 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
   // Group chapters by volume
   const volumeGroups = project.outline?.volumes.map(vol => ({
     ...vol,
-    chapters: project.chapters
-      .map(ch => parseInt(ch.replace('.md', ''), 10))
+    chapters: chapterIndices
       .filter(idx => idx >= vol.startChapter && idx <= vol.endChapter)
   })) || [];
+  const coveredChapterIndices = new Set(volumeGroups.flatMap((vol) => vol.chapters));
+  const uncategorizedChapters = chapterIndices.filter((index) => !coveredChapterIndices.has(index));
 
   return (
     <div className="p-4 lg:p-6">
@@ -272,6 +300,11 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                 )}
               </div>
             )}
+            {actionError && (
+              <div className="w-full bg-destructive/10 border border-destructive/30 text-destructive text-xs px-3 py-2 rounded-md">
+                {actionError}
+              </div>
+            )}
             <Button 
               size="sm" 
               className="text-xs h-7 ml-auto"
@@ -284,9 +317,9 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
               size="sm" 
               className="text-xs h-7 ml-2"
               onClick={handleGenerateNext}
-              disabled={generatingChapter !== null}
+              disabled={!canGenerateNext}
             >
-              {generatingChapter && !project.chapters.some(ch => parseInt(ch.replace('.md', ''), 10) === generatingChapter) ? (
+              {isGeneratingNextChapter ? (
                 <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
               ) : (
                 <Sparkles className="h-3.5 w-3.5 mr-1" />
@@ -313,11 +346,31 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                         {vol.chapters.map((chapterIndex) => {
                           const title = getChapterTitle(chapterIndex);
                           return (
-                            <button
+                            <div
                               key={chapterIndex}
-                              onClick={selectionMode ? (e) => toggleSelection(chapterIndex, e) : () => handleView(chapterIndex)}
-                              disabled={loading && !selectionMode}
-                              className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
+                              role="button"
+                              tabIndex={loading && !selectionMode ? -1 : 0}
+                              aria-pressed={selectionMode ? selectedChapters.has(chapterIndex) : undefined}
+                              onClick={() => {
+                                if (loading && !selectionMode) return;
+                                if (selectionMode) {
+                                  toggleSelection(chapterIndex);
+                                  return;
+                                }
+                                void handleView(chapterIndex);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.target !== e.currentTarget) return;
+                                if (e.key !== 'Enter' && e.key !== ' ') return;
+                                e.preventDefault();
+                                if (selectionMode) {
+                                  toggleSelection(chapterIndex);
+                                  return;
+                                }
+                                if (loading) return;
+                                void handleView(chapterIndex);
+                              }}
+                              className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
                             >
                               <div className="flex-1 min-w-0 flex items-center gap-2">
                                 {selectionMode && (
@@ -333,6 +386,103 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                 )}
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
+                                {selectionMode ? (
+                                  <span className="text-xs text-muted-foreground">
+                                    {selectedChapters.has(chapterIndex) ? '已选中' : '点击选择'}
+                                  </span>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={(e) => handleQuickCopy(chapterIndex, e)}
+                                      disabled={copyingChapter === chapterIndex}
+                                      className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                                      title="复制章节内容"
+                                    >
+                                      {copyingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === chapterIndex ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === chapterIndex ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
+                                    </button>
+                                    <button
+                                      onClick={(e) => handleRegenerate(chapterIndex, e)}
+                                      disabled={generatingChapter === chapterIndex}
+                                      className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                                      title="重新生成"
+                                    >
+                                      {generatingChapter === chapterIndex ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                                      重写
+                                    </button>
+                                    {onDeleteChapter && (
+                                      <button
+                                        onClick={(e) => handleDelete(chapterIndex, e)}
+                                        disabled={deletingChapter === chapterIndex}
+                                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                                        title="删除章节"
+                                      >
+                                        {deletingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
+                                      </button>
+                                    )}
+                                    <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                                      查看 →
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )
+                ))}
+                {uncategorizedChapters.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
+                      <span className="text-xs lg:text-sm font-medium truncate">未归档章节</span>
+                      <Badge variant="outline" className="text-xs shrink-0">
+                        {uncategorizedChapters.length} 章
+                      </Badge>
+                    </div>
+                    <div className="grid gap-2">
+                      {uncategorizedChapters.map((chapterIndex) => (
+                        <div
+                          key={`uncategorized-${chapterIndex}`}
+                          role="button"
+                          tabIndex={loading && !selectionMode ? -1 : 0}
+                          aria-pressed={selectionMode ? selectedChapters.has(chapterIndex) : undefined}
+                          onClick={() => {
+                            if (loading && !selectionMode) return;
+                            if (selectionMode) {
+                              toggleSelection(chapterIndex);
+                              return;
+                            }
+                            void handleView(chapterIndex);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            if (selectionMode) {
+                              toggleSelection(chapterIndex);
+                              return;
+                            }
+                            if (loading) return;
+                            void handleView(chapterIndex);
+                          }}
+                          className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
+                        >
+                          <div className="flex-1 min-w-0 flex items-center gap-2">
+                            {selectionMode && (
+                              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(chapterIndex) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                                {selectedChapters.has(chapterIndex) && <Check className="h-3 w-3" />}
+                              </div>
+                            )}
+                            <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {selectionMode ? (
+                              <span className="text-xs text-muted-foreground">
+                                {selectedChapters.has(chapterIndex) ? '已选中' : '点击选择'}
+                              </span>
+                            ) : (
+                              <>
                                 <button
                                   onClick={(e) => handleQuickCopy(chapterIndex, e)}
                                   disabled={copyingChapter === chapterIndex}
@@ -363,26 +513,46 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
                                   查看 →
                                 </span>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  )
-                ))}
+                  </div>
+                )}
               </div>
             ) : (
               // Simple list
               <div className="grid gap-2">
-                {project.chapters.map((ch) => {
-                  const index = parseInt(ch.replace('.md', ''), 10);
+                {chapterIndices.map((index) => {
+                  const ch = `${index.toString().padStart(3, '0')}.md`;
                   return (
-                    <button
+                    <div
                       key={ch}
-                      onClick={selectionMode ? (e) => toggleSelection(index, e) : () => handleView(index)}
-                      disabled={loading && !selectionMode}
-                      className={`w-full p-3 rounded-lg transition-colors text-left flex items-center justify-between group ${selectionMode && selectedChapters.has(index) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
+                      role="button"
+                      tabIndex={loading && !selectionMode ? -1 : 0}
+                      aria-pressed={selectionMode ? selectedChapters.has(index) : undefined}
+                      onClick={() => {
+                        if (loading && !selectionMode) return;
+                        if (selectionMode) {
+                          toggleSelection(index);
+                          return;
+                        }
+                        void handleView(index);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key !== 'Enter' && e.key !== ' ') return;
+                        e.preventDefault();
+                        if (selectionMode) {
+                          toggleSelection(index);
+                          return;
+                        }
+                        if (loading) return;
+                        void handleView(index);
+                      }}
+                      className={`w-full p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(index) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
                     >
                       <div className="flex items-center gap-2">
                         {selectionMode && (
@@ -393,38 +563,46 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                         <span className="font-medium">第 {index} 章</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={(e) => handleQuickCopy(index, e)}
-                          disabled={copyingChapter === index}
-                          className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                          title="复制章节内容"
-                        >
-                          {copyingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === index ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === index ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
-                        </button>
-                        <button
-                          onClick={(e) => handleRegenerate(index, e)}
-                          disabled={generatingChapter === index}
-                          className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                          title="重新生成"
-                        >
-                          {generatingChapter === index ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
-                          重写
-                        </button>
-                        {onDeleteChapter && (
-                          <button
-                            onClick={(e) => handleDelete(index, e)}
-                            disabled={deletingChapter === index}
-                            className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                            title="删除章节"
-                          >
-                            {deletingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
-                          </button>
+                        {selectionMode ? (
+                          <span className="text-xs text-muted-foreground">
+                            {selectedChapters.has(index) ? '已选中' : '点击选择'}
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={(e) => handleQuickCopy(index, e)}
+                              disabled={copyingChapter === index}
+                              className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                              title="复制章节内容"
+                            >
+                              {copyingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === index ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === index ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
+                            </button>
+                            <button
+                              onClick={(e) => handleRegenerate(index, e)}
+                              disabled={generatingChapter === index}
+                              className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                              title="重新生成"
+                            >
+                              {generatingChapter === index ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                              重写
+                            </button>
+                            {onDeleteChapter && (
+                              <button
+                                onClick={(e) => handleDelete(index, e)}
+                                disabled={deletingChapter === index}
+                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
+                                title="删除章节"
+                              >
+                                {deletingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
+                              </button>
+                            )}
+                            <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
+                              查看 →
+                            </span>
+                          </>
                         )}
-                        <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                          查看 →
-                        </span>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -474,27 +652,23 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
                   size="sm"
                   onClick={async () => {
                     if (!viewingChapter) return;
-                    const nextIndex = viewingChapter.index + 1;
-                    const nextChapterExists = project.chapters.some(
-                      ch => parseInt(ch.replace('.md', ''), 10) === nextIndex
-                    );
-                    if (nextChapterExists) {
-                      setLoading(true);
-                      try {
-                        const content = await onViewChapter(nextIndex);
-                        setViewingChapter({
-                          index: nextIndex,
-                          content,
-                          title: getChapterTitle(nextIndex) || undefined
-                        });
-                      } finally {
-                        setLoading(false);
-                      }
+                    const nextIndex = chapterIndices.find(index => index > viewingChapter.index);
+                    if (!nextIndex) return;
+                    setLoading(true);
+                    try {
+                      const content = await onViewChapter(nextIndex);
+                      setViewingChapter({
+                        index: nextIndex,
+                        content,
+                        title: getChapterTitle(nextIndex) || undefined
+                      });
+                    } catch (err) {
+                      setActionError(`加载下一章失败：${(err as Error).message}`);
+                    } finally {
+                      setLoading(false);
                     }
                   }}
-                  disabled={loading || !viewingChapter || !project.chapters.some(
-                    ch => parseInt(ch.replace('.md', ''), 10) === (viewingChapter?.index ?? 0) + 1
-                  )}
+                  disabled={loading || !viewingChapter || !chapterIndices.some(index => index > (viewingChapter?.index ?? 0))}
                   className="gap-1 lg:gap-2 text-xs lg:text-sm"
                 >
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
@@ -569,13 +743,18 @@ export function ChapterListView({ project, onViewChapter, onDeleteChapter, onBat
           projectName={project.name}
           chapterIndex={editingChapter.index}
           initialContent={editingChapter.content}
-          onClose={() => setEditingChapter(null)}
-          onSaved={() => {
-            // Refresh logic needs to be implemented in parent or via context
-            // For now just close the editor
-            // setEditingChapter(null);
-            // In a real app we'd reload the project data here
-            window.location.reload(); 
+          onClose={() => {
+            setEditingChapter(null);
+            void onProjectRefresh?.();
+          }}
+          onSaved={(savedIndex) => {
+            if (editingChapter.index === undefined) {
+              setEditingChapter((current) => {
+                if (!current || current.index !== undefined) return current;
+                return { ...current, index: savedIndex };
+              });
+              void onProjectRefresh?.();
+            }
           }}
         />
       )}

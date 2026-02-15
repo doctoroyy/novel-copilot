@@ -817,6 +817,12 @@ export async function createChapter(
     body: JSON.stringify({ content, insertAfter }),
   });
   const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || '创建章节失败');
+  }
+  if (typeof data.chapterIndex !== 'number') {
+    throw new Error('创建章节失败：未返回章节编号');
+  }
   return { chapterIndex: data.chapterIndex };
 }
 

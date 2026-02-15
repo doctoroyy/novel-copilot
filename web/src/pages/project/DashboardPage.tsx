@@ -22,10 +22,13 @@ export default function DashboardPage() {
     );
   }
 
+  const defaultOutlineChapters = Math.max(1, selectedProject.state.totalChapters || 400);
+  const defaultOutlineWordCount = Math.max(5, Math.round(defaultOutlineChapters / 4));
+
   return (
     <DashboardView 
       project={selectedProject} 
-      onGenerateOutline={() => handleGenerateOutline('400', '100', '')}
+      onGenerateOutline={() => handleGenerateOutline(String(defaultOutlineChapters), String(defaultOutlineWordCount), '')}
       onGenerateChapters={() => handleGenerateChapters('1')}
       loading={loading}
     />
