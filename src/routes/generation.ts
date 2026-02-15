@@ -1183,7 +1183,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
           }
 
           if (task.status === 'failed') {
-            const cancelled = Boolean(task.errorMessage && task.errorMessage.includes('取消'));
+            const cancelled = Boolean(
+              (task.errorMessage && task.errorMessage.includes('取消'))
+              || (task.currentMessage && task.currentMessage.includes('取消'))
+              || task.cancelRequested
+            );
             sendEvent('error', {
               error: task.errorMessage || '任务执行失败',
               cancelled,
