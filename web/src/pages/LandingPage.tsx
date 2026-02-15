@@ -105,6 +105,17 @@ export function LandingPage() {
               GitHub 直链
             </a>
           </div>
+
+          <div className="mt-12 max-w-5xl mx-auto">
+            <div className="glass-card rounded-2xl p-3 sm:p-4 border border-border/60">
+              <img
+                src="/app-poster-cn.png"
+                alt="Novel Copilot App 海报"
+                className="w-full h-auto rounded-xl"
+                loading="lazy"
+              />
+            </div>
+          </div>
           
           {/* Stats */}
           <div className="mt-16 grid grid-cols-3 gap-8 max-w-lg mx-auto">
