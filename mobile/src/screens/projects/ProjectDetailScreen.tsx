@@ -21,6 +21,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import {
   cancelAllActiveTasks,
+  cancelTaskById,
   fetchChapterContent,
   fetchProject,
   fetchProjectActiveTask,
@@ -46,7 +47,7 @@ const PANELS: { id: DetailPanel; label: string; hint: string; icon: keyof typeof
 export function ProjectDetailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
   const route = useRoute<ScreenRoute>();
-  const projectName = route.params.projectName;
+  const projectId = route.params.projectId;
 
   const { token } = useAuth();
   const { config } = useAppConfig();
@@ -87,27 +88,28 @@ export function ProjectDetailScreen() {
 
     try {
       setLoading(true);
-      const detail = await fetchProject(config.apiBaseUrl, token, projectName);
+      const detail = await fetchProject(config.apiBaseUrl, token, projectId);
       setProject(detail);
       setOutlineChapters(String(detail.state.totalChapters || 120));
+      navigation.setOptions({ title: detail.name });
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [config.apiBaseUrl, projectName, token]);
+  }, [config.apiBaseUrl, navigation, projectId, token]);
 
   const loadTask = useCallback(async () => {
     // ... (loadTask logic)
     if (!token) return;
     try {
-      const task = await fetchProjectActiveTask(config.apiBaseUrl, token, projectName);
+      const task = await fetchProjectActiveTask(config.apiBaseUrl, token, projectId);
       setActiveTask(task);
     } catch {
       // graceful degrade
     }
-  }, [config.apiBaseUrl, projectName, token]);
+  }, [config.apiBaseUrl, projectId, token]);
 
   useEffect(() => {
     void loadProject();
@@ -119,7 +121,7 @@ export function ProjectDetailScreen() {
 
     taskPollTimer.current = setInterval(() => {
       void loadTask();
-    }, 3500);
+    }, 8000);
 
     return () => {
       if (taskPollTimer.current) {
@@ -195,7 +197,7 @@ export function ProjectDetailScreen() {
       await generateOutlineStream(
         config.apiBaseUrl,
         token,
-        project.name,
+        project.id,
         {
           targetChapters: Math.max(1, parseInt(outlineChapters, 10) || project.state.totalChapters || 120),
           targetWordCount: Math.max(1, parseInt(outlineWordCount, 10) || 30),
@@ -238,7 +240,7 @@ export function ProjectDetailScreen() {
       await generateChaptersStream(
         config.apiBaseUrl,
         token,
-        project.name,
+        project.id,
         { chaptersToGenerate: count },
         (event) => {
           if (event.type === 'progress' && event.message) {
@@ -282,7 +284,7 @@ export function ProjectDetailScreen() {
         onPress: async () => {
           setRunningAction('reset');
           try {
-            await resetProject(config.apiBaseUrl, token, project.name);
+            await resetProject(config.apiBaseUrl, token, project.id);
             await loadProject();
           } catch (err) {
             setError((err as Error).message);
@@ -303,7 +305,11 @@ export function ProjectDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await cancelAllActiveTasks(config.apiBaseUrl, token, project.name);
+            if (activeTask?.id) {
+              await cancelTaskById(config.apiBaseUrl, token, activeTask.id);
+            } else {
+              await cancelAllActiveTasks(config.apiBaseUrl, token, project.id);
+            }
             await loadTask();
           } catch (err) {
             setError((err as Error).message);
@@ -325,7 +331,7 @@ export function ProjectDetailScreen() {
       setChapterLoading(true);
 
       try {
-        const content = await fetchChapterContent(config.apiBaseUrl, token, project.name, chapterIndex);
+        const content = await fetchChapterContent(config.apiBaseUrl, token, project.id, chapterIndex);
         setChapterModalContent(content);
       } catch (err) {
         setChapterModalContent(`加载失败：${(err as Error).message}`);
@@ -349,7 +355,7 @@ export function ProjectDetailScreen() {
     setChapterCopiedIndex(null);
 
     try {
-      const content = await fetchChapterContent(config.apiBaseUrl, token, project.name, chapterIndex);
+      const content = await fetchChapterContent(config.apiBaseUrl, token, project.id, chapterIndex);
       await Clipboard.setStringAsync(content);
       setChapterCopiedIndex(chapterIndex);
       setTimeout(() => setChapterCopiedIndex((current) => (current === chapterIndex ? null : current)), 1800);

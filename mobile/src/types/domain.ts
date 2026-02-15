@@ -44,6 +44,7 @@ export type NovelOutline = {
 };
 
 export type ProjectSummary = {
+  id: string;
   name: string;
   path: string;
   state: BookState;
@@ -57,6 +58,7 @@ export type ProjectSummary = {
 };
 
 export type ProjectDetail = {
+  id: string;
   name: string;
   path: string;
   state: BookState;
@@ -213,4 +215,3 @@ export type CreditFeature = {
   created_at: string;
   updated_at: string;
 };
-
