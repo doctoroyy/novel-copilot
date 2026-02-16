@@ -125,6 +125,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadProjectRequestIdRef = useRef(0);
+  // 同步标记：正在切换项目中。用 ref 而非 state，因为 setState 是异步的，
+  // 同一渲染周期内后续 effect 读不到更新后的 state 值。
+  const switchingProjectRef = useRef(false);
 
   // AI Config
   const { config, isConfigured } = useAIConfig();
@@ -217,6 +220,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     } finally {
       if (requestId === loadProjectRequestIdRef.current) {
         setLoading(false);
+        // 项目加载完成，重置切换标记，允许 URL 规范化 effect 正常工作
+        switchingProjectRef.current = false;
       }
     }
   }, []);
@@ -442,9 +447,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Load project when URL changes
   useEffect(() => {
     if (projectId) {
+      // 同步标记切换中，阻止后续 normalize effect 用旧的 selectedProject.id 覆盖 URL
+      switchingProjectRef.current = true;
       setSelectedProject(null);
       void loadProject(projectId);
     } else {
+      switchingProjectRef.current = false;
       loadProjectRequestIdRef.current += 1;
       setSelectedProject(null);
       setLoading(false);
@@ -452,13 +460,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [projectId, loadProject]);
 
   // Normalize URL to canonical project id route.
-  // 只有当项目数据已加载完成、且确认是同一个项目（通过名称匹配等方式加载的）时，才做 URL 规范化。
-  // 如果正在加载中，说明可能是切换项目导致的竞态，不应该用旧的 selectedProject.id 覆盖新 URL。
+  // 使用 ref 而非 state 来判断是否在切换中，因为 ref 是同步的。
+  // 当 switchingProjectRef 为 true 时，说明 loadProject effect 已在同一渲染周期设置了
+  // 切换标记，此时 selectedProject.id 仍是旧值，绝不能用它来重写 URL。
   useEffect(() => {
-    if (!projectId || !selectedProject?.id || loading) return;
+    if (switchingProjectRef.current) return;
+    if (!projectId || !selectedProject?.id) return;
     if (projectId === selectedProject.id) return;
+    // 项目数据已加载完成，selectedProject.id 是新值，可以安全地做 URL 规范化
     navigate(`/project/${encodeURIComponent(selectedProject.id)}/${tab}`, { replace: true });
-  }, [projectId, selectedProject?.id, tab, navigate, loading]);
+  }, [projectId, selectedProject?.id, tab, navigate]);
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
