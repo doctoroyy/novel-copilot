@@ -452,11 +452,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [projectId, loadProject]);
 
   // Normalize URL to canonical project id route.
+  // 只有当项目数据已加载完成、且确认是同一个项目（通过名称匹配等方式加载的）时，才做 URL 规范化。
+  // 如果正在加载中，说明可能是切换项目导致的竞态，不应该用旧的 selectedProject.id 覆盖新 URL。
   useEffect(() => {
-    if (!projectId || !selectedProject?.id) return;
+    if (!projectId || !selectedProject?.id || loading) return;
     if (projectId === selectedProject.id) return;
     navigate(`/project/${encodeURIComponent(selectedProject.id)}/${tab}`, { replace: true });
-  }, [projectId, selectedProject?.id, tab, navigate]);
+  }, [projectId, selectedProject?.id, tab, navigate, loading]);
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
