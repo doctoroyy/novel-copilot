@@ -495,4 +495,96 @@ adminRoutes.post('/users/:id/credit', async (c) => {
   }
 });
 
+// ==========================================
+// 远程模型列表获取代理
+// ==========================================
+
+// 预设 Provider 配置
+const PROVIDER_PRESETS: Record<string, { name: string; baseUrl: string; type: 'openai' | 'gemini' }> = {
+  openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', type: 'openai' },
+  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', type: 'openai' },
+  gemini: { name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com', type: 'gemini' },
+  // 兼容各种 OpenAI 格式的第三方服务
+};
+
+// 从远程 API 获取可用模型列表
+adminRoutes.post('/fetch-models', async (c) => {
+  try {
+    const { provider, apiKey, baseUrl } = await c.req.json();
+
+    if (!provider || !apiKey) {
+      return c.json({ success: false, error: 'provider 和 apiKey 不能为空' }, 400);
+    }
+
+    const preset = PROVIDER_PRESETS[provider];
+    const providerType = preset?.type || 'openai'; // 默认按 OpenAI 兼容处理
+    const effectiveBaseUrl = baseUrl || preset?.baseUrl;
+
+    if (!effectiveBaseUrl) {
+      return c.json({ success: false, error: '请提供 Base URL' }, 400);
+    }
+
+    let models: { id: string; name: string; displayName: string }[] = [];
+
+    if (providerType === 'gemini') {
+      // Gemini API: GET /v1beta/models?key=xxx
+      const res = await fetch(
+        `${effectiveBaseUrl}/v1beta/models?key=${apiKey}`,
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+
+      if (!res.ok) {
+        const err = await res.json() as any;
+        throw new Error(err.error?.message || `Gemini API 错误: ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      models = (data.models || [])
+        .filter((m: any) => {
+          // 只保留支持 generateContent 的模型（能用于文本生成的）
+          const methods = m.supportedGenerationMethods || [];
+          return methods.includes('generateContent') || methods.includes('streamGenerateContent');
+        })
+        .map((m: any) => ({
+          // Gemini 模型名格式: "models/gemini-2.5-pro" → 提取 "gemini-2.5-pro"
+          id: m.name?.replace('models/', '') || m.name,
+          name: m.name?.replace('models/', '') || m.name,
+          displayName: m.displayName || m.name?.replace('models/', '') || m.name,
+        }));
+    } else {
+      // OpenAI 兼容 API: GET /v1/models 或 /models
+      const modelsUrl = effectiveBaseUrl.endsWith('/v1')
+        ? `${effectiveBaseUrl}/models`
+        : `${effectiveBaseUrl}/v1/models`;
+
+      const res = await fetch(modelsUrl, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } })) as any;
+        throw new Error(err.error?.message || `API 错误: ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      const modelList = data.data || data.models || [];
+      models = modelList.map((m: any) => ({
+        id: m.id || m.name,
+        name: m.id || m.name,
+        displayName: m.id || m.name,
+      }));
+    }
+
+    // 按名称排序
+    models.sort((a, b) => a.name.localeCompare(b.name));
+
+    return c.json({ success: true, models, count: models.length });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 export { adminRoutes };

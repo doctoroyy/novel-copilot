@@ -10,6 +10,7 @@ import {
   fetchAdminCreditFeatures,
   updateCreditFeature,
   fetchModelRegistry,
+  fetchRemoteModels,
   createModel,
   updateModel,
   deleteModel,
@@ -32,8 +33,14 @@ import {
   Save,
   Edit,
   X,
-  CreditCard
+  CreditCard,
+  Search,
+  Loader2,
+  Download,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface User {
   id: string;
@@ -85,6 +92,17 @@ export function AdminPage() {
   const [newModelForm, setNewModelForm] = useState<any>(null);
   const [rechargeUserId, setRechargeUserId] = useState('');
   const [rechargeAmount, setRechargeAmount] = useState('');
+
+  // 远程模型获取相关 state
+  const [fetchProvider, setFetchProvider] = useState('openai');
+  const [fetchApiKey, setFetchApiKey] = useState('');
+  const [fetchBaseUrl, setFetchBaseUrl] = useState('');
+  const [remoteModels, setRemoteModels] = useState<{ id: string; name: string; displayName: string }[]>([]);
+  const [selectedRemoteModels, setSelectedRemoteModels] = useState<Set<string>>(new Set());
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [showFetchPanel, setShowFetchPanel] = useState(false);
+  const [batchRegistering, setBatchRegistering] = useState(false);
   
   const fetchData = async () => {
     setLoading(true);
@@ -550,22 +568,252 @@ export function AdminPage() {
                 <CardDescription>管理 AI 服务提供商和模型配置</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Button
-                  onClick={() => setNewModelForm({
-                    provider: 'openai', modelName: '', displayName: '',
-                    apiKey: '', baseUrl: '', creditMultiplier: 1.0,
-                    capabilities: 'text_generation',
-                  })}
-                  className="w-full"
-                  variant="outline"
-                >
-                  <Plus className="h-4 w-4 mr-2" /> 添加模型
-                </Button>
+                {/* 操作按钮行 */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      setShowFetchPanel(!showFetchPanel);
+                      setNewModelForm(null);
+                    }}
+                    className="flex-1"
+                    variant={showFetchPanel ? 'default' : 'outline'}
+                  >
+                    <Download className="h-4 w-4 mr-2" /> 从 API 获取模型
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setShowFetchPanel(false);
+                      setNewModelForm(newModelForm ? null : {
+                        provider: 'openai', modelName: '', displayName: '',
+                        apiKey: '', baseUrl: '', creditMultiplier: 1.0,
+                      });
+                    }}
+                    variant="outline"
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> 手动添加
+                  </Button>
+                </div>
 
-                {/* New Model Form */}
+                {/* ===== 从 API 获取模型面板 ===== */}
+                {showFetchPanel && (
+                  <div className="p-4 rounded-lg border bg-card space-y-4">
+                    <h4 className="font-medium flex items-center gap-2">
+                      <Download className="h-4 w-4" />
+                      从 AI 提供商获取可用模型
+                    </h4>
+                    
+                    {/* Provider + API Key 配置 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">提供商</label>
+                        <Select value={fetchProvider} onValueChange={(val) => {
+                          setFetchProvider(val);
+                          setRemoteModels([]);
+                          setSelectedRemoteModels(new Set());
+                          // 重置 baseUrl
+                          if (val !== 'custom') setFetchBaseUrl('');
+                        }}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="openai">OpenAI</SelectItem>
+                            <SelectItem value="gemini">Google Gemini</SelectItem>
+                            <SelectItem value="deepseek">DeepSeek</SelectItem>
+                            <SelectItem value="custom">自定义 (OpenAI 兼容)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground mb-1 block">API Key</label>
+                        <Input
+                          type="password"
+                          placeholder="sk-..."
+                          value={fetchApiKey}
+                          onChange={(e) => setFetchApiKey(e.target.value)}
+                        />
+                      </div>
+                      {fetchProvider === 'custom' && (
+                        <div className="col-span-full">
+                          <label className="text-xs text-muted-foreground mb-1 block">Base URL</label>
+                          <Input
+                            placeholder="https://api.example.com/v1"
+                            value={fetchBaseUrl}
+                            onChange={(e) => setFetchBaseUrl(e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <Button
+                      onClick={async () => {
+                        if (!fetchApiKey) { setError('请输入 API Key'); return; }
+                        setFetchingModels(true);
+                        setError(null);
+                        try {
+                          const result = await fetchRemoteModels(
+                            fetchProvider,
+                            fetchApiKey,
+                            fetchProvider === 'custom' ? fetchBaseUrl : undefined
+                          );
+                          setRemoteModels(result);
+                          setSelectedRemoteModels(new Set());
+                        } catch (e) {
+                          setError((e as Error).message);
+                          setRemoteModels([]);
+                        } finally {
+                          setFetchingModels(false);
+                        }
+                      }}
+                      disabled={fetchingModels || !fetchApiKey}
+                      className="w-full"
+                    >
+                      {fetchingModels ? (
+                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> 获取中...</>
+                      ) : (
+                        <><Search className="h-4 w-4 mr-2" /> 获取模型列表</>
+                      )}
+                    </Button>
+
+                    {/* 模型列表 */}
+                    {remoteModels.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">
+                            找到 {remoteModels.length} 个模型，已选 {selectedRemoteModels.size} 个
+                          </span>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                const filtered = remoteModels
+                                  .filter(m => !modelSearchQuery || m.name.toLowerCase().includes(modelSearchQuery.toLowerCase()))
+                                  .map(m => m.id);
+                                setSelectedRemoteModels(prev => {
+                                  const next = new Set(prev);
+                                  // 如果全部已选则取消全选，否则全选
+                                  const allSelected = filtered.every(id => next.has(id));
+                                  if (allSelected) {
+                                    filtered.forEach(id => next.delete(id));
+                                  } else {
+                                    filtered.forEach(id => next.add(id));
+                                  }
+                                  return next;
+                                });
+                              }}
+                            >
+                              <CheckSquare className="h-3 w-3 mr-1" /> 全选/取消
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* 搜索 */}
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            placeholder="搜索模型..."
+                            value={modelSearchQuery}
+                            onChange={(e) => setModelSearchQuery(e.target.value)}
+                            className="pl-9"
+                          />
+                        </div>
+
+                        {/* 模型列表（带搜索过滤） */}
+                        <div className="max-h-64 overflow-y-auto space-y-1 rounded-lg border p-2">
+                          {remoteModels
+                            .filter(m => !modelSearchQuery || m.name.toLowerCase().includes(modelSearchQuery.toLowerCase()))
+                            .map(m => {
+                              const isSelected = selectedRemoteModels.has(m.id);
+                              // 检查是否已注册
+                              const isRegistered = models.some((reg: any) =>
+                                reg.model_name === m.name && reg.provider === fetchProvider
+                              );
+                              return (
+                                <div
+                                  key={m.id}
+                                  className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                                    isRegistered
+                                      ? 'opacity-50 bg-muted/30'
+                                      : isSelected
+                                        ? 'bg-primary/10 border border-primary/30'
+                                        : 'hover:bg-muted/50'
+                                  }`}
+                                  onClick={() => {
+                                    if (isRegistered) return;
+                                    setSelectedRemoteModels(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(m.id)) next.delete(m.id);
+                                      else next.add(m.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {isRegistered ? (
+                                    <CheckSquare className="h-4 w-4 text-green-500 flex-shrink-0" />
+                                  ) : isSelected ? (
+                                    <CheckSquare className="h-4 w-4 text-primary flex-shrink-0" />
+                                  ) : (
+                                    <Square className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium truncate">{m.displayName}</p>
+                                    {m.name !== m.displayName && (
+                                      <p className="text-xs text-muted-foreground truncate">{m.name}</p>
+                                    )}
+                                  </div>
+                                  {isRegistered && (
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 flex-shrink-0">已注册</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                        </div>
+
+                        {/* 批量注册按钮 */}
+                        <Button
+                          onClick={async () => {
+                            if (selectedRemoteModels.size === 0) return;
+                            setBatchRegistering(true);
+                            setError(null);
+                            try {
+                              const toRegister = remoteModels.filter(m => selectedRemoteModels.has(m.id));
+                              for (const m of toRegister) {
+                                await createModel({
+                                  provider: fetchProvider,
+                                  modelName: m.name,
+                                  displayName: m.displayName,
+                                  apiKey: fetchApiKey,
+                                  baseUrl: fetchProvider === 'custom' ? fetchBaseUrl : undefined,
+                                  creditMultiplier: 1.0,
+                                });
+                              }
+                              setSelectedRemoteModels(new Set());
+                              fetchData();
+                            } catch (e) {
+                              setError((e as Error).message);
+                            } finally {
+                              setBatchRegistering(false);
+                            }
+                          }}
+                          disabled={selectedRemoteModels.size === 0 || batchRegistering}
+                          className="w-full"
+                        >
+                          {batchRegistering ? (
+                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> 注册中...</>
+                          ) : (
+                            <><Plus className="h-4 w-4 mr-2" /> 注册选中的 {selectedRemoteModels.size} 个模型</>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ===== 手动添加模型表单 ===== */}
                 {newModelForm && (
                   <div className="p-4 rounded-lg border bg-card space-y-3">
-                    <h4 className="font-medium">添加新模型</h4>
+                    <h4 className="font-medium">手动添加模型</h4>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-muted-foreground">提供商</label>
@@ -609,8 +857,9 @@ export function AdminPage() {
                   </div>
                 )}
 
-                {/* Model List */}
+                {/* ===== 已注册模型列表 ===== */}
                 <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground">已注册模型 ({models.length})</h4>
                   {models.map((m: any) => (
                     <div key={m.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                       <div className="flex items-center gap-3">
@@ -674,7 +923,7 @@ export function AdminPage() {
                     </div>
                   ))}
                   {models.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">暂无模型，请添加</p>
+                    <p className="text-sm text-muted-foreground text-center py-4">暂无模型，请点击上方按钮添加</p>
                   )}
                 </div>
               </CardContent>
