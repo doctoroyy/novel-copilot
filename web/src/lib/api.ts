@@ -1047,3 +1047,20 @@ export async function fetchCreditStats(): Promise<any> {
   if (!data.success) throw new Error(data.error);
   return data.stats;
 }
+
+// 从远程 AI 提供商获取可用模型列表
+export async function fetchRemoteModels(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string
+): Promise<{ id: string; name: string; displayName: string }[]> {
+  const res = await fetch(`${API_BASE}/admin/fetch-models`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ provider, apiKey, baseUrl }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.models;
+}
+
