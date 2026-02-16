@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Novel Copilot App Poster</title>
+    <style>
+      :root {
+        --bg-top: #f5ecdf;
+        --bg-mid: #f7f3ea;
+        --bg-bottom: #d6ecf8;
+        --title-fill: #3e2414;
+        --title-stroke: #efe5d5;
+        --line: #6d4a2f;
+        --card-bg-1: #f8f1e3;
+        --card-bg-2: #f3eadb;
+        --card-border: #d2b48f;
+        --icon: #b88146;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #d9d9d9;
+        font-family:
+          'PingFang SC',
+          'Hiragino Sans GB',
+          'Microsoft YaHei',
+          'Noto Sans SC',
+          sans-serif;
+      }
+
+      .poster {
+        position: relative;
+        width: 1216px;
+        height: 883px;
+        overflow: hidden;
+        background:
+          radial-gradient(1250px 480px at 50% 8%, #f9f1e5 0%, #f6f0e6 45%, #e7f5fd 80%, #d4ecf8 100%),
+          linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 50%, var(--bg-bottom) 100%);
+      }
+
+      .poster::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image: repeating-linear-gradient(
+          45deg,
+          rgba(255, 255, 255, 0.09) 0,
+          rgba(255, 255, 255, 0.09) 1px,
+          transparent 1px,
+          transparent 6px
+        );
+        opacity: 0.2;
+        pointer-events: none;
+      }
+
+      .header {
+        position: absolute;
+        top: 34px;
+        left: 0;
+        width: 100%;
+        text-align: center;
+      }
+
+      .title {
+        margin: 0;
+        color: var(--title-fill);
+        font-size: 74px;
+        line-height: 1;
+        letter-spacing: 0.5px;
+        font-weight: 900;
+        -webkit-text-stroke: 2px var(--title-stroke);
+        paint-order: stroke fill;
+        text-shadow:
+          0 2px 0 rgba(238, 226, 208, 0.8),
+          0 4px 12px rgba(131, 90, 56, 0.18);
+      }
+
+      .title .en {
+        margin-right: 12px;
+        font-family: Georgia, 'Times New Roman', serif;
+        font-weight: 700;
+      }
+
+      .subtitle-row {
+        margin-top: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+
+      .subtitle-row .line {
+        width: 168px;
+        height: 3px;
+        border-radius: 3px;
+        background: rgba(111, 80, 53, 0.55);
+      }
+
+      .subtitle {
+        margin: 0;
+        color: #432816;
+        font-size: 58px;
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: 3px;
+      }
+
+      .doodle-left,
+      .doodle-right {
+        position: absolute;
+        pointer-events: none;
+      }
+
+      .doodle-left {
+        left: 52px;
+        top: 36px;
+      }
+
+      .doodle-right {
+        right: 56px;
+        top: 24px;
+      }
+
+      .phones {
+        position: absolute;
+        left: 38px;
+        right: 38px;
+        top: 212px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        z-index: 2;
+      }
+
+      .panel {
+        position: relative;
+        width: 355px;
+        height: 590px;
+      }
+
+      .phone {
+        position: relative;
+        width: 286px;
+        height: 568px;
+        left: 34px;
+        border-radius: 46px;
+        padding: 11px;
+        border: 3px solid #050505;
+        background:
+          linear-gradient(146deg, #0e0e0e 0%, #343434 16%, #080808 34%, #3a3a3a 52%, #0a0a0a 70%, #2f2f2f 100%);
+        box-shadow:
+          0 14px 22px rgba(34, 28, 21, 0.27),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+          inset 0 0 0 3px rgba(122, 122, 122, 0.2);
+      }
+
+      .phone::before {
+        content: '';
+        position: absolute;
+        inset: 4px;
+        border-radius: 40px;
+        border: 1.5px solid rgba(247, 247, 247, 0.18);
+        pointer-events: none;
+      }
+
+      .phone::after {
+        content: '';
+        position: absolute;
+        inset: 9px;
+        border-radius: 34px;
+        box-shadow:
+          inset 0 1px 2px rgba(255, 255, 255, 0.16),
+          inset 0 -1px 2px rgba(0, 0, 0, 0.45);
+        pointer-events: none;
+      }
+
+      .screen {
+        position: relative;
+        z-index: 2;
+        height: 100%;
+        border-radius: 34px;
+        overflow: hidden;
+        border: 2.8px solid #0d0d0d;
+        background: #fff;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+          0 1px 3px rgba(0, 0, 0, 0.24);
+      }
+
+      .screen img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+        display: block;
+      }
+
+      .side-button {
+        position: absolute;
+        width: 4.5px;
+        border-radius: 3px;
+        background: linear-gradient(180deg, #474747 0%, #101010 100%);
+        box-shadow:
+          0 0 0 1px rgba(21, 16, 11, 0.45),
+          0 1px 2px rgba(0, 0, 0, 0.22);
+        z-index: 1;
+      }
+
+      .side-button.right-top {
+        right: -6px;
+        top: 170px;
+        height: 88px;
+      }
+
+      .side-button.right-mid {
+        right: -6px;
+        top: 278px;
+        height: 50px;
+      }
+
+      .side-button.left-short {
+        left: -6px;
+        top: 134px;
+        height: 34px;
+      }
+
+      .card {
+        position: absolute;
+        left: 0;
+        top: 452px;
+        width: 355px;
+        border-radius: 24px;
+        border: 1px solid var(--card-border);
+        background: linear-gradient(180deg, #fbf5ea 0%, #f2e8d8 100%);
+        box-shadow:
+          0 10px 20px rgba(88, 64, 44, 0.2),
+          inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        text-align: center;
+        padding: 21px 22px 18px;
+        z-index: 3;
+      }
+
+      .card-title {
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: #3f2818;
+        font-size: 33px;
+        line-height: 1.12;
+        font-weight: 800;
+      }
+
+      .card-sub {
+        margin: 10px 0 0;
+        color: #4b3322;
+        font-size: 17px;
+        line-height: 1.24;
+        font-weight: 450;
+      }
+
+      .icon {
+        width: 34px;
+        height: 34px;
+        color: var(--icon);
+        flex: 0 0 auto;
+      }
+
+      .footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 74px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(90deg, #eedec5 0%, #f7ecdc 50%, #eedec5 100%);
+        border-top-left-radius: 28px;
+        border-top-right-radius: 28px;
+        box-shadow: 0 -6px 12px rgba(101, 74, 51, 0.15);
+        z-index: 1;
+      }
+
+      .footer p {
+        margin: 0;
+        color: #3f2818;
+        font-size: 36px;
+        font-weight: 760;
+        letter-spacing: 1px;
+      }
+
+      svg {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="poster">
+      <div class="doodle-left" aria-hidden="true">
+        <svg width="176" height="118" viewBox="0 0 176 118" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M71 13C110 -6 162 -7 147 30C137 54 98 51 71 59C41 67 16 80 8 97"
+            stroke="#b18457"
+            stroke-width="3"
+            stroke-linecap="round"
+          />
+          <path d="M32 26L37 39L50 44L37 49L32 62L27 49L14 44L27 39L32 26Z" fill="#b18457" />
+        </svg>
+      </div>
+
+      <div class="doodle-right" aria-hidden="true">
+        <svg width="160" height="134" viewBox="0 0 160 134" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M82 101C95 94 107 95 118 103" stroke="#b18457" stroke-width="3" stroke-linecap="round" />
+          <g transform="translate(114 60) rotate(-39)">
+            <rect x="0" y="0" width="28" height="11" rx="3" fill="#8ac1dd" />
+            <rect x="23.5" y="0" width="6.5" height="11" rx="1" fill="#f8deb5" />
+            <path d="M30 0L36.5 5.5L30 11V0Z" fill="#d7b081" />
+          </g>
+          <path d="M120 10L125 24L139 29L125 34L120 48L115 34L101 29L115 24L120 10Z" fill="#d3a67a" />
+          <path d="M92 30L95 38L103 41L95 44L92 52L89 44L81 41L89 38L92 30Z" fill="#d3a67a" />
+        </svg>
+      </div>
+
+      <header class="header">
+        <h1 class="title"><span class="en">Novel Copilot:</span><span class="cn">你的智能写作伴侣</span></h1>
+        <div class="subtitle-row">
+          <span class="line"></span>
+          <p class="subtitle">立项、生成、追踪一体化</p>
+          <span class="line"></span>
+        </div>
+      </header>
+
+      <section class="phones">
+        <article class="panel">
+          <div class="phone">
+            <span class="side-button left-short" aria-hidden="true"></span>
+            <span class="side-button right-top" aria-hidden="true"></span>
+            <span class="side-button right-mid" aria-hidden="true"></span>
+            <div class="screen">
+              <img src="./app-home-project-list.png" alt="项目管理页面" />
+            </div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="10" width="4" height="10" rx="1.5" stroke="currentColor" stroke-width="1.8" />
+                <rect x="10" y="4" width="4" height="16" rx="1.5" stroke="currentColor" stroke-width="1.8" />
+                <rect x="17" y="7" width="4" height="13" rx="1.5" stroke="currentColor" stroke-width="1.8" />
+              </svg>
+              高效项目管理
+            </h2>
+            <p class="card-sub">追踪总览、进行中、完成项目</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="phone">
+            <span class="side-button left-short" aria-hidden="true"></span>
+            <span class="side-button right-top" aria-hidden="true"></span>
+            <span class="side-button right-mid" aria-hidden="true"></span>
+            <div class="screen">
+              <img src="./app-chapter-list.png" alt="章节列表页面" />
+            </div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path
+                  d="M16.7 3.3L20.7 7.3M4 20H8.5L19.9 8.6C20.7 7.8 20.7 6.6 19.9 5.8L18.2 4.1C17.4 3.3 16.2 3.3 15.4 4.1L4 15.5V20Z"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              AI 辅助创作
+            </h2>
+            <p class="card-sub">章节列表界面，AI生成摘要和章节</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="phone">
+            <span class="side-button left-short" aria-hidden="true"></span>
+            <span class="side-button right-top" aria-hidden="true"></span>
+            <span class="side-button right-mid" aria-hidden="true"></span>
+            <div class="screen">
+              <img src="./app-chapter-content.png" alt="章节阅读页面" />
+            </div>
+          </div>
+          <div class="card">
+            <h2 class="card-title">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path
+                  d="M4 6.5C4 5.1 5.1 4 6.5 4H19C20.1 4 21 4.9 21 6V13.5C21 14.9 19.9 16 18.5 16H9L4 20V6.5Z"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path d="M8 8H16M8 11H14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              沉浸式写作体验
+            </h2>
+            <p class="card-sub">章节阅读界面，专注章点写作</p>
+          </div>
+        </article>
+      </section>
+
+      <footer class="footer">
+        <p>立即开启你的创作之旅！</p>
+      </footer>
+    </div>
+  </body>
+</html>
