@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
+import { getAuthHeaders } from '@/lib/auth';
 
 interface FeatureMapping {
   feature_key: string;
@@ -33,6 +34,7 @@ export function ModelFeatureConfig() {
   const [features, setFeatures] = useState<CreditFeature[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -41,10 +43,12 @@ export function ModelFeatureConfig() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
+      const headers = getAuthHeaders();
       const [modelsRes, featuresRes, mappingsRes] = await Promise.all([
-        fetch('/api/admin/model-registry').then(r => r.json()),
-        fetch('/api/admin/credit-features').then(r => r.json()),
-        fetch('/api/admin/feature-models').then(r => r.json())
+        fetch('/api/admin/model-registry', { headers }).then(r => r.json()),
+        fetch('/api/admin/credit-features', { headers }).then(r => r.json()),
+        fetch('/api/admin/feature-models', { headers }).then(r => r.json())
       ]);
 
       if (modelsRes.success) setModels(modelsRes.models);
@@ -57,8 +61,14 @@ export function ModelFeatureConfig() {
         });
         setMappings(map);
       }
-    } catch (error) {
-      console.error('Failed to load config data', error);
+
+      // 检查是否有数据加载失败
+      if (!modelsRes.success || !featuresRes.success) {
+        setError(modelsRes.error || featuresRes.error || '加载数据失败');
+      }
+    } catch (err) {
+      console.error('Failed to load config data', err);
+      setError((err as Error).message || '网络请求失败');
     } finally {
       setLoading(false);
     }
@@ -72,11 +82,11 @@ export function ModelFeatureConfig() {
       setSaving(true);
       await fetch('/api/admin/feature-models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           featureKey,
           modelId,
-          temperature: 0.7 // Default for now
+          temperature: 0.7 // 默认温度
         })
       });
     } catch (error) {
@@ -95,6 +105,18 @@ export function ModelFeatureConfig() {
 
   if (loading) {
     return <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 rounded-lg border border-destructive/20 bg-destructive/5">
+        <div className="flex items-center gap-2 text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          <span className="text-sm font-medium">加载失败</span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">{error}</p>
+      </div>
+    );
   }
 
   return (
