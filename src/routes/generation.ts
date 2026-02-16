@@ -1015,6 +1015,20 @@ async function runChapterGenerationTaskInBackground(params: {
               message: `第 ${chapterIndex} 章已完成`,
             });
 
+          // [Fix] Check completion immediately
+          if (completedCount + failedCount + 1 >= task.targetCount) {
+            await completeTask(env.DB, taskId, true, undefined);
+            await emitProgressEvent({
+              projectName: project.name,
+              current: task.targetCount,
+              total: task.targetCount,
+              chapterIndex,
+              status: 'done',
+              message: `生成完成：成功 ${completedCount + 1} 章，失败 ${failedCount} 章`,
+            });
+            return;
+          }
+
       } catch (chapterError) {
           console.error(`Chapter ${chapterIndex} failed:`, chapterError);
           await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
@@ -1026,6 +1040,20 @@ async function runChapterGenerationTaskInBackground(params: {
               status: 'error',
               message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
             });
+
+          // [Fix] Check completion immediately
+          if (completedCount + failedCount + 1 >= task.targetCount) {
+            await completeTask(env.DB, taskId, true, undefined);
+            await emitProgressEvent({
+              projectName: project.name,
+              current: task.targetCount,
+              total: task.targetCount,
+              chapterIndex,
+              status: 'done',
+              message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount + 1} 章`,
+            });
+            return;
+          }
       }
 
       // 7. Trigger Next Step (Recursive Fetch)
