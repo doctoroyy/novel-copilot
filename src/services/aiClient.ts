@@ -49,35 +49,43 @@ async function generateWithGemini(
   temperature: number,
   maxTokens?: number
 ): Promise<string> {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { 
-            temperature,
-            maxOutputTokens: maxTokens 
-        },
-      }),
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { 
+              temperature,
+              maxOutputTokens: maxTokens 
+          },
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json() as any;
+      throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
     }
-  );
 
-  if (!response.ok) {
-    const error = await response.json() as any;
-    throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
+    const data = await response.json() as any;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text?.trim()) {
+      throw new Error('Empty model response');
+    }
+
+    return text.trim();
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json() as any;
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!text?.trim()) {
-    throw new Error('Empty model response');
-  }
-
-  return text.trim();
 }
 
 /**
@@ -90,41 +98,49 @@ async function generateWithOpenAI(
   temperature: number,
   maxTokens?: number
 ): Promise<string> {
-  const baseUrl = config.baseUrl || 
-    (config.provider === 'openai' ? 'https://api.openai.com/v1' : 
-     config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 
-     config.baseUrl);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: prompt },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-    }),
-  });
+  try {
+    const baseUrl = config.baseUrl || 
+      (config.provider === 'openai' ? 'https://api.openai.com/v1' : 
+       config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 
+       config.baseUrl);
 
-  if (!response.ok) {
-    const error = await response.json() as any;
-    throw new Error(error.error?.message || `API error: ${response.status}`);
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt },
+        ],
+        temperature,
+        max_tokens: maxTokens,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as any;
+      throw new Error(error.error?.message || `API error: ${response.status}`);
+    }
+
+    const data = await response.json() as any;
+    const text = data.choices?.[0]?.message?.content;
+
+    if (!text?.trim()) {
+      throw new Error('Empty model response');
+    }
+
+    return text.trim();
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json() as any;
-  const text = data.choices?.[0]?.message?.content;
-
-  if (!text?.trim()) {
-    throw new Error('Empty model response');
-  }
-
-  return text.trim();
 }
 
 /**
@@ -141,7 +157,7 @@ function classifyError(error: Error): ErrorType {
   if (message.includes('500') || message.includes('502') || message.includes('503') || message.includes('server')) {
     return 'server_error';
   }
-  if (message.includes('timeout') || message.includes('timed out') || message.includes('aborted')) {
+  if (message.includes('timeout') || message.includes('timed out') || message.includes('aborted') || error.name === 'AbortError' || error.name === 'TimeoutError') {
     return 'timeout';
   }
   if (message.includes('401') || message.includes('403') || message.includes('unauthorized') || message.includes('invalid api key')) {

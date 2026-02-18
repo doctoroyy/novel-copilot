@@ -259,6 +259,9 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   let skippedSummary = true;
 
   if (!skipSummaryUpdate) {
+    // Phase 4: 更新摘要 (Add status update to UI)
+    params.onProgress?.('正在更新剧情摘要...', 'updating_summary');
+
     // 生成更新后的摘要和伏笔
     const summaryResult = await generateSummaryUpdate(
       aiConfig,
