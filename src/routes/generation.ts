@@ -769,7 +769,8 @@ async function startGenerationChain(
             userId,
             taskId,
             origin,
-            authHeader
+            authHeader,
+            executionCtx: c.executionCtx
         })
     );
 }
@@ -779,6 +780,7 @@ async function runChapterGenerationTaskInBackground(params: {
   aiConfig: AIConfig;
   userId: string;
   taskId: number;
+  executionCtx?: ExecutionContext;
   origin?: string; // Required for recursion
   authHeader?: string; // Required for recursion
   // Legacy params (ignored but kept for structure compatibility if needed, though we change calls)
@@ -792,6 +794,7 @@ async function runChapterGenerationTaskInBackground(params: {
     aiConfig,
     userId,
     taskId,
+    executionCtx,
     origin,
     authHeader
   } = params;
@@ -1061,7 +1064,20 @@ async function runChapterGenerationTaskInBackground(params: {
       const finalCheck = await getTaskRuntimeControl(env.DB, taskId);
       if (finalCheck.cancelRequested || finalCheck.status !== 'running') return;
 
-      if (origin && authHeader) {
+      if (executionCtx) {
+          console.log(`[Chain] Scheduling next step for task ${taskId}`);
+          executionCtx.waitUntil(
+            runChapterGenerationTaskInBackground({
+              env,
+              aiConfig,
+              userId,
+              taskId,
+              executionCtx,
+              origin,
+              authHeader
+            })
+          );
+      } else if (origin && authHeader) {
           console.log(`[Chain] Triggering next step for task ${taskId}`);
 
           await fetch(`${origin}/projects/${encodeURIComponent(project.name)}/tasks/${taskId}/process-next`, {
@@ -1126,6 +1142,7 @@ generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) =>
       aiConfig,
       userId: effectiveUserId,
       taskId,
+      executionCtx: c.executionCtx,
       origin,
       authHeader
     })
