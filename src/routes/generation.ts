@@ -1063,7 +1063,7 @@ async function runChapterGenerationTaskInBackground(params: {
 
       if (origin && authHeader) {
           console.log(`[Chain] Triggering next step for task ${taskId}`);
-          
+
           await fetch(`${origin}/projects/${encodeURIComponent(project.name)}/tasks/${taskId}/process-next`, {
               method: 'POST',
               headers: {
@@ -1076,14 +1076,18 @@ async function runChapterGenerationTaskInBackground(params: {
                   origin,
                   authHeader
               })
-          }).catch(err => {
+          }).then(async (res) => {
+              if (!res.ok) {
+                  console.error(`[Chain] process-next returned HTTP ${res.status}`);
+                  await completeTask(env.DB, taskId, false, `后台接力请求失败: HTTP ${res.status}`);
+              }
+          }).catch(async (err) => {
               console.error('[Chain] Failed to trigger next step:', err);
-              // If trigger fails, try to mark as error
-              updateTaskMessage(env.DB, taskId, `后台接力请求失败: ${err.message}`).catch(() => {});
+              await completeTask(env.DB, taskId, false, `后台接力请求失败: ${(err as Error).message}`).catch(() => {});
           });
       } else {
           console.warn('[Chain] No origin/authHeader provided, cannot chain next step!');
-          updateTaskMessage(env.DB, taskId, `后台任务链中断：缺少 Origin 信息`).catch(() => {});
+          await completeTask(env.DB, taskId, false, '后台任务链中断：缺少 Origin 信息');
       }
 
   } catch (error) {
@@ -1214,10 +1218,8 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       project.next_chapter_index
     );
 
-  if (!isResumed) {
-    // Start Chain
-    startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader);
-  }
+  // Always start/restart the chain — even on resume, the previous chain may have died silently
+  startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader);
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
   const encoder = new TextEncoder();
