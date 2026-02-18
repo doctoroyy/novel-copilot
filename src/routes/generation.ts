@@ -752,24 +752,21 @@ async function handleTaskCancellationIfNeeded(params: {
   return { shouldStop: true, cancelled: true };
 }
 
-// Helper to trigger the chain
+// Helper to trigger background generation (uses while-loop internally, no self-fetch needed)
 async function startGenerationChain(
     c: any,
     taskId: number,
     userId: string,
     aiConfig: AIConfig,
-    origin: string,
-    authHeader: string
+    _origin?: string,
+    _authHeader?: string
 ) {
-    // Initial triggering
      c.executionCtx.waitUntil(
         runChapterGenerationTaskInBackground({
             env: c.env,
             aiConfig,
             userId,
             taskId,
-            origin,
-            authHeader
         })
     );
 }
@@ -779,9 +776,8 @@ async function runChapterGenerationTaskInBackground(params: {
   aiConfig: AIConfig;
   userId: string;
   taskId: number;
-  origin?: string; // Required for recursion
-  authHeader?: string; // Required for recursion
-  // Legacy params (ignored but kept for structure compatibility if needed, though we change calls)
+  origin?: string;
+  authHeader?: string;
   projectName?: string;
   projectId?: string;
   chaptersToGenerate?: number;
@@ -792,19 +788,19 @@ async function runChapterGenerationTaskInBackground(params: {
     aiConfig,
     userId,
     taskId,
-    origin,
-    authHeader
   } = params;
 
   try {
-      // 1. Load Task State
+    // Loop: generate chapters one-by-one until done, cancelled, or failed
+    while (true) {
+      // 1. Load Task State (fresh each iteration)
       const task = await getTaskById(env.DB, taskId, userId);
       if (!task) {
         console.warn(`Task ${taskId} not found or access denied`);
         return;
       }
 
-      // 2. Load Project
+      // 2. Load Project (fresh each iteration for updated rolling_summary)
       const project = await env.DB.prepare(`
           SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
           FROM projects p
@@ -822,7 +818,7 @@ async function runChapterGenerationTaskInBackground(params: {
       // 3. Check Task Status
       const completedCount = task.completedChapters.length;
       const failedCount = task.failedChapters.length;
-      
+
       const runtime = await handleTaskCancellationIfNeeded({
         db: env.DB,
         taskId,
@@ -836,7 +832,7 @@ async function runChapterGenerationTaskInBackground(params: {
 
       // 4. Determine Scope
       const totalProcessed = completedCount + failedCount;
-      
+
       if (totalProcessed >= task.targetCount) {
         // Task Complete!
         await completeTask(env.DB, taskId, true, undefined);
@@ -852,7 +848,7 @@ async function runChapterGenerationTaskInBackground(params: {
       }
 
       // 5. Identify Next Chapter
-      const currentStepIndex = totalProcessed; 
+      const currentStepIndex = totalProcessed;
       const chapterIndex = task.startChapter + currentStepIndex;
 
       if (chapterIndex > project.total_chapters) {
@@ -950,7 +946,7 @@ async function runChapterGenerationTaskInBackground(params: {
                  if (retryControl.shouldStop) return;
 
                  await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
-                 
+
                  result = await writeOneChapter({
                   aiConfig,
                   bible: project.bible,
@@ -1005,7 +1001,7 @@ async function runChapterGenerationTaskInBackground(params: {
             ).run();
 
           await updateTaskProgress(env.DB, taskId, chapterIndex, false);
-          
+
           await emitProgressEvent({
               projectName: project.name,
               current: completedCount + 1,
@@ -1015,7 +1011,7 @@ async function runChapterGenerationTaskInBackground(params: {
               message: `第 ${chapterIndex} 章已完成`,
             });
 
-          // [Fix] Check completion immediately
+          // Check completion immediately
           if (completedCount + failedCount + 1 >= task.targetCount) {
             await completeTask(env.DB, taskId, true, undefined);
             await emitProgressEvent({
@@ -1034,14 +1030,14 @@ async function runChapterGenerationTaskInBackground(params: {
           await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
           await emitProgressEvent({
               projectName: project.name,
-              current: completedCount + failedCount + 1, 
+              current: completedCount + failedCount + 1,
               total: task.targetCount,
               chapterIndex,
               status: 'error',
               message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
             });
 
-          // [Fix] Check completion immediately
+          // Check completion immediately
           if (completedCount + failedCount + 1 >= task.targetCount) {
             await completeTask(env.DB, taskId, true, undefined);
             await emitProgressEvent({
@@ -1056,39 +1052,13 @@ async function runChapterGenerationTaskInBackground(params: {
           }
       }
 
-      // 7. Trigger Next Step (Recursive Fetch)
-      // Only if we haven't been cancelled in the meantime
+      // 7. Continue to next chapter (loop back to top)
+      // Check cancellation before continuing
       const finalCheck = await getTaskRuntimeControl(env.DB, taskId);
       if (finalCheck.cancelRequested || finalCheck.status !== 'running') return;
 
-      if (origin && authHeader) {
-          console.log(`[Chain] Triggering next step for task ${taskId}`);
-
-          await fetch(`${origin}/projects/${encodeURIComponent(project.name)}/tasks/${taskId}/process-next`, {
-              method: 'POST',
-              headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': authHeader
-              },
-              body: JSON.stringify({
-                  userId,
-                  aiConfig,
-                  origin,
-                  authHeader
-              })
-          }).then(async (res) => {
-              if (!res.ok) {
-                  console.error(`[Chain] process-next returned HTTP ${res.status}`);
-                  await completeTask(env.DB, taskId, false, `后台接力请求失败: HTTP ${res.status}`);
-              }
-          }).catch(async (err) => {
-              console.error('[Chain] Failed to trigger next step:', err);
-              await completeTask(env.DB, taskId, false, `后台接力请求失败: ${(err as Error).message}`).catch(() => {});
-          });
-      } else {
-          console.warn('[Chain] No origin/authHeader provided, cannot chain next step!');
-          await completeTask(env.DB, taskId, false, '后台任务链中断：缺少 Origin 信息');
-      }
+      // Continue the while loop to generate next chapter
+    }
 
   } catch (error) {
      console.error(`Background task ${taskId} fatal error:`, error);
@@ -1100,7 +1070,9 @@ async function runChapterGenerationTaskInBackground(params: {
   }
 }
 
-// [NEW] Process Next Step (Worker Chain)
+// [DEPRECATED] Process Next Step — previously used for Worker Chain self-fetch pattern.
+// The batch generation now uses a while-loop within a single waitUntil() call,
+// so this endpoint is no longer called internally. Kept for backwards compatibility.
 generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) => {
   const name = c.req.param('name');
   const taskId = parseInt(c.req.param('taskId'));
