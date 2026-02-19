@@ -58,7 +58,7 @@
 - App 端：低频轮询同步
 
 ## 架构与目录
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doctoroyy/novel-copilot)
 ```text
 novel-copilot/
 ├── src/                                  # Cloudflare Worker 后端
