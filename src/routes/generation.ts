@@ -758,8 +758,8 @@ async function startGenerationChain(
     taskId: number,
     userId: string,
     aiConfig: AIConfig,
-    _origin?: string,
-    _authHeader?: string
+    origin?: string,
+    authHeader?: string
 ) {
      c.executionCtx.waitUntil(
         runChapterGenerationTaskInBackground({
@@ -767,6 +767,8 @@ async function startGenerationChain(
             aiConfig,
             userId,
             taskId,
+            origin,
+            authHeader
         })
     );
 }
@@ -788,276 +790,297 @@ async function runChapterGenerationTaskInBackground(params: {
     aiConfig,
     userId,
     taskId,
+    origin,
+    authHeader,
   } = params;
 
   try {
-    // Loop: generate chapters one-by-one until done, cancelled, or failed
-    while (true) {
-      // 1. Load Task State (fresh each iteration)
-      const task = await getTaskById(env.DB, taskId, userId);
+    // 1. Load Task State (fresh each iteration)
+    const task = await getTaskById(env.DB, taskId, userId);
       if (!task) {
         console.warn(`Task ${taskId} not found or access denied`);
         return;
       }
 
-      // 2. Load Project (fresh each iteration for updated rolling_summary)
-      const project = await env.DB.prepare(`
-          SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
-          FROM projects p
-          JOIN states s ON p.id = s.project_id
-          LEFT JOIN outlines o ON p.id = o.project_id
-          LEFT JOIN characters c ON p.id = c.project_id
-          WHERE p.id = ? AND p.user_id = ?
-        `).bind(task.projectId, userId).first() as any;
+    // 2. Load Project (fresh each iteration for updated rolling_summary)
+    const project = await env.DB.prepare(`
+        SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
+        FROM projects p
+        JOIN states s ON p.id = s.project_id
+        LEFT JOIN outlines o ON p.id = o.project_id
+        LEFT JOIN characters c ON p.id = c.project_id
+        WHERE p.id = ? AND p.user_id = ?
+      `).bind(task.projectId, userId).first() as any;
 
-      if (!project) {
-        await completeTask(env.DB, taskId, false, 'Project not found');
-        return;
-      }
+    if (!project) {
+      await completeTask(env.DB, taskId, false, 'Project not found');
+      return;
+    }
 
-      // 3. Check Task Status
-      const completedCount = task.completedChapters.length;
-      const failedCount = task.failedChapters.length;
+    // 3. Check Task Status
+    const completedCount = task.completedChapters.length;
+    const failedCount = task.failedChapters.length;
 
-      const runtime = await handleTaskCancellationIfNeeded({
-        db: env.DB,
-        taskId,
-        projectName: project.name,
-        total: task.targetCount,
-        chapterIndex: 0, // Placeholder
-        current: completedCount
-      });
+    const runtime = await handleTaskCancellationIfNeeded({
+      db: env.DB,
+      taskId,
+      projectName: project.name,
+      total: task.targetCount,
+      chapterIndex: 0, // Placeholder
+      current: completedCount
+    });
 
-      if (runtime.shouldStop) return;
+    if (runtime.shouldStop) return;
 
-      // 4. Determine Scope
-      const totalProcessed = completedCount + failedCount;
+    // 4. Determine Scope
+    const totalProcessed = completedCount + failedCount;
 
-      if (totalProcessed >= task.targetCount) {
-        // Task Complete!
+    if (totalProcessed >= task.targetCount) {
+      // Task Complete!
+      await completeTask(env.DB, taskId, true, undefined);
+      await emitProgressEvent({
+          projectName: project.name,
+          current: task.targetCount,
+          total: task.targetCount,
+          chapterIndex: task.startChapter + task.targetCount - 1,
+          status: 'done',
+          message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount} 章`,
+        });
+      return;
+    }
+
+    // 5. Identify Next Chapter
+    const currentStepIndex = totalProcessed;
+    const chapterIndex = task.startChapter + currentStepIndex;
+
+    if (chapterIndex > project.total_chapters) {
+       await completeTask(env.DB, taskId, true, '已达到项目总章节数');
+       await emitProgressEvent({
+          projectName: project.name,
+          current: totalProcessed,
+          total: task.targetCount,
+          chapterIndex: chapterIndex - 1,
+          status: 'done',
+          message: `生成结束：已达到项目总章节数`,
+        });
+       return;
+    }
+
+    await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
+    await emitProgressEvent({
+      projectName: project.name,
+      current: completedCount,
+      total: task.targetCount,
+      chapterIndex,
+      status: 'starting',
+      message: `准备生成第 ${chapterIndex} 章...`,
+    });
+
+    // 6. Generate ONE Chapter
+    let isSuccess = false;
+    try {
+        // 6.0 Consume Credit
+        try {
+            await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+        } catch (creditError) {
+            await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
+            await completeTask(env.DB, taskId, false, (creditError as Error).message);
+            void emitProgressEvent({
+              projectName: project.name,
+              current: completedCount,
+              total: task.targetCount,
+              chapterIndex,
+              status: 'error',
+              message: `创作能量不足: ${(creditError as Error).message}`,
+            });
+            return;
+        }
+
+        // 6.1 Prepare Context
+        const { results: lastChapters } = await env.DB.prepare(`
+            SELECT content FROM chapters
+            WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
+            ORDER BY chapter_index DESC LIMIT 2
+          `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+
+        let chapterGoalHint: string | undefined;
+        let outlineTitle: string | undefined;
+        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+        if (outline) {
+            for (const vol of outline.volumes) {
+              const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
+              if (ch) {
+                outlineTitle = ch.title;
+                chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+                break;
+              }
+            }
+        }
+
+        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+        const CHAPTER_MAX_RETRIES = 3;
+        let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
+        let lastChapterError: unknown;
+
+        for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
+            try {
+               if (retryAttempt > 0) {
+                 const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
+                 await emitProgressEvent({
+                    projectName: project.name,
+                    current: completedCount,
+                    total: task.targetCount,
+                    chapterIndex,
+                    status: 'generating',
+                    message: `生成失败，${retryDelay/1000}秒后重试...`,
+                 });
+                 await new Promise((resolve) => setTimeout(resolve, retryDelay));
+               }
+
+               // Check cancel again before heavy work
+               const retryControl = await handleTaskCancellationIfNeeded({
+                 db: env.DB,
+                 taskId,
+                 projectName: project.name,
+                 total: task.targetCount,
+                 chapterIndex,
+                 current: completedCount,
+               });
+               if (retryControl.shouldStop) return;
+
+               await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
+
+               result = await writeOneChapter({
+                aiConfig,
+                bible: project.bible,
+                rollingSummary: project.rolling_summary || '',
+                openLoops: JSON.parse(project.open_loops || '[]'),
+                lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
+                chapterIndex,
+                totalChapters: project.total_chapters,
+                chapterGoalHint,
+                chapterTitle: outlineTitle,
+                characters,
+                onProgress: (message, status) => {
+                  updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
+                  void emitProgressEvent({
+                    projectName: project.name,
+                    current: completedCount,
+                    total: task.targetCount,
+                    chapterIndex,
+                    status,
+                    message,
+                  });
+                },
+              });
+
+               break; // Success
+            } catch(err) {
+               lastChapterError = err;
+               console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
+               if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
+            }
+        }
+
+        if (!result) throw lastChapterError || new Error("Generated failed");
+
+        // 6.2 Save Result
+        const chapterText = result.chapterText;
+        await env.DB.prepare(`
+            INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
+          `).bind(project.id, chapterIndex, chapterText).run();
+
+        await env.DB.prepare(`
+            UPDATE states SET
+              next_chapter_index = ?,
+              rolling_summary = ?,
+              open_loops = ?
+            WHERE project_id = ?
+          `).bind(
+            chapterIndex + 1,
+            result.updatedSummary,
+            JSON.stringify(result.updatedOpenLoops),
+            project.id
+          ).run();
+
+        await updateTaskProgress(env.DB, taskId, chapterIndex, false);
+
+        await emitProgressEvent({
+            projectName: project.name,
+            current: completedCount + 1,
+            total: task.targetCount,
+            chapterIndex,
+            status: 'saving',
+            message: `第 ${chapterIndex} 章已完成`,
+          });
+          
+        isSuccess = true;
+
+    } catch (chapterError) {
+        console.error(`Chapter ${chapterIndex} failed:`, chapterError);
+        await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
+        await emitProgressEvent({
+            projectName: project.name,
+            current: completedCount + failedCount + 1,
+            total: task.targetCount,
+            chapterIndex,
+            status: 'error',
+            message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
+          });
+    }
+
+    // 7. Check Completion & Relay to Next Step
+    const freshTask = await getTaskById(env.DB, taskId, userId);
+    const newCompletedCount = freshTask?.completedChapters.length || 0;
+    const newFailedCount = freshTask?.failedChapters.length || 0;
+    
+    if (newCompletedCount + newFailedCount >= task.targetCount) {
+        // Done
         await completeTask(env.DB, taskId, true, undefined);
         await emitProgressEvent({
             projectName: project.name,
             current: task.targetCount,
             total: task.targetCount,
-            chapterIndex: task.startChapter + task.targetCount - 1,
+            chapterIndex,
             status: 'done',
-            message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount} 章`,
-          });
+            message: `生成完成：成功 ${newCompletedCount} 章，失败 ${newFailedCount} 章`,
+         });
         return;
-      }
+    }
 
-      // 5. Identify Next Chapter
-      const currentStepIndex = totalProcessed;
-      const chapterIndex = task.startChapter + currentStepIndex;
-
-      if (chapterIndex > project.total_chapters) {
-         await completeTask(env.DB, taskId, true, '已达到项目总章节数');
-         await emitProgressEvent({
-            projectName: project.name,
-            current: totalProcessed,
-            total: task.targetCount,
-            chapterIndex: chapterIndex - 1,
-            status: 'done',
-            message: `生成结束：已达到项目总章节数`,
-          });
-         return;
-      }
-
-      await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
-      await emitProgressEvent({
-        projectName: project.name,
-        current: completedCount,
-        total: task.targetCount,
-        chapterIndex,
-        status: 'starting',
-        message: `准备生成第 ${chapterIndex} 章...`,
-      });
-
-      // 6. Generate ONE Chapter
-      try {
-          // 6.0 Consume Credit
-          try {
-              await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
-          } catch (creditError) {
-              await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
-              await completeTask(env.DB, taskId, false, (creditError as Error).message);
-              void emitProgressEvent({
-                projectName: project.name,
-                current: completedCount,
-                total: task.targetCount,
-                chapterIndex,
-                status: 'error',
-                message: `创作能量不足: ${(creditError as Error).message}`,
-              });
-              return;
-          }
-
-          // 6.1 Prepare Context
-          const { results: lastChapters } = await env.DB.prepare(`
-              SELECT content FROM chapters
-              WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
-              ORDER BY chapter_index DESC LIMIT 2
-            `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
-
-          let chapterGoalHint: string | undefined;
-          let outlineTitle: string | undefined;
-          const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
-          if (outline) {
-              for (const vol of outline.volumes) {
-                const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
-                if (ch) {
-                  outlineTitle = ch.title;
-                  chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
-                  break;
-                }
-              }
-          }
-
-          const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-          const CHAPTER_MAX_RETRIES = 3;
-          let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
-          let lastChapterError: unknown;
-
-          for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
-              try {
-                 if (retryAttempt > 0) {
-                   const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
-                   await emitProgressEvent({
-                      projectName: project.name,
-                      current: completedCount,
-                      total: task.targetCount,
-                      chapterIndex,
-                      status: 'generating',
-                      message: `生成失败，${retryDelay/1000}秒后重试...`,
-                   });
-                   await new Promise((resolve) => setTimeout(resolve, retryDelay));
-                 }
-
-                 // Check cancel again before heavy work
-                 const retryControl = await handleTaskCancellationIfNeeded({
-                   db: env.DB,
-                   taskId,
-                   projectName: project.name,
-                   total: task.targetCount,
-                   chapterIndex,
-                   current: completedCount,
-                 });
-                 if (retryControl.shouldStop) return;
-
-                 await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
-
-                 result = await writeOneChapter({
-                  aiConfig,
-                  bible: project.bible,
-                  rollingSummary: project.rolling_summary || '',
-                  openLoops: JSON.parse(project.open_loops || '[]'),
-                  lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
-                  chapterIndex,
-                  totalChapters: project.total_chapters,
-                  chapterGoalHint,
-                  chapterTitle: outlineTitle,
-                  characters,
-                  onProgress: (message, status) => {
-                    updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
-                    void emitProgressEvent({
-                      projectName: project.name,
-                      current: completedCount,
-                      total: task.targetCount,
-                      chapterIndex,
-                      status,
-                      message,
-                    });
-                  },
-                });
-
-                 break; // Success
-              } catch(err) {
-                 lastChapterError = err;
-                 console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
-                 if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
-              }
-          }
-
-          if (!result) throw lastChapterError || new Error("Generated failed");
-
-          // 6.2 Save Result
-          const chapterText = result.chapterText;
-          await env.DB.prepare(`
-              INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-            `).bind(project.id, chapterIndex, chapterText).run();
-
-          await env.DB.prepare(`
-              UPDATE states SET
-                next_chapter_index = ?,
-                rolling_summary = ?,
-                open_loops = ?
-              WHERE project_id = ?
-            `).bind(
-              chapterIndex + 1,
-              result.updatedSummary,
-              JSON.stringify(result.updatedOpenLoops),
-              project.id
-            ).run();
-
-          await updateTaskProgress(env.DB, taskId, chapterIndex, false);
-
-          await emitProgressEvent({
-              projectName: project.name,
-              current: completedCount + 1,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'saving',
-              message: `第 ${chapterIndex} 章已完成`,
-            });
-
-          // Check completion immediately
-          if (completedCount + failedCount + 1 >= task.targetCount) {
-            await completeTask(env.DB, taskId, true, undefined);
-            await emitProgressEvent({
-              projectName: project.name,
-              current: task.targetCount,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'done',
-              message: `生成完成：成功 ${completedCount + 1} 章，失败 ${failedCount} 章`,
-            });
-            return;
-          }
-
-      } catch (chapterError) {
-          console.error(`Chapter ${chapterIndex} failed:`, chapterError);
-          await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
-          await emitProgressEvent({
-              projectName: project.name,
-              current: completedCount + failedCount + 1,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'error',
-              message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
-            });
-
-          // Check completion immediately
-          if (completedCount + failedCount + 1 >= task.targetCount) {
-            await completeTask(env.DB, taskId, true, undefined);
-            await emitProgressEvent({
-              projectName: project.name,
-              current: task.targetCount,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'done',
-              message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount + 1} 章`,
-            });
-            return;
-          }
-      }
-
-      // 7. Continue to next chapter (loop back to top)
-      // Check cancellation before continuing
-      const finalCheck = await getTaskRuntimeControl(env.DB, taskId);
-      if (finalCheck.cancelRequested || finalCheck.status !== 'running') return;
-
-      // Continue the while loop to generate next chapter
+    // RELAY: Trigger next step via subrequest
+    if (origin && !task.cancelRequested) {
+       console.log(`Relaying to next chapter: ${taskId}`);
+       
+       // Use fetch to trigger the next worker
+       // Note: We don't await this fetch because we want the current worker to exit successfully
+       // However, in Cloudflare Workers, we must ensure the fetch is registered with waitUntil 
+       // or awaited if we want to ensure it's sent.
+       // Here we are inside a waitUntil (likely), but to be safe, we await it since this worker is finishing anyway.
+       
+       try {
+           const response = await fetch(`${origin}/api/generation/projects/${project.name}/tasks/${taskId}/process-next`, {
+               method: 'POST',
+               headers: {
+                   'Content-Type': 'application/json',
+                   'Authorization': authHeader || ''
+               },
+               body: JSON.stringify({
+                   aiConfig,
+                   origin,
+                   authHeader,
+                   userId
+               })
+           });
+           
+           if (!response.ok) {
+               console.error(`Relay failed: ${response.status} ${await response.text()}`);
+               // If relay fails, mark task as failed? Or just log? 
+               // Maybe retry logic here? For now, we log.
+           }
+       } catch (relayError) {
+           console.error('Relay network error:', relayError);
+       }
     }
 
   } catch (error) {
@@ -1070,9 +1093,8 @@ async function runChapterGenerationTaskInBackground(params: {
   }
 }
 
-// [DEPRECATED] Process Next Step — previously used for Worker Chain self-fetch pattern.
-// The batch generation now uses a while-loop within a single waitUntil() call,
-// so this endpoint is no longer called internally. Kept for backwards compatibility.
+// [RELAY] Process Next Step — triggered by the previous worker to continue the chain
+// This avoids Cloudflare subrequest limits by spawning a fresh worker for each chapter.
 generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) => {
   const name = c.req.param('name');
   const taskId = parseInt(c.req.param('taskId'));
@@ -1161,9 +1183,37 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   if (remaining <= 0) {
     return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
   }
-  const chaptersToGenerate = Math.min(requestedCount, remaining);
+  let chaptersToGenerate = Math.min(requestedCount, remaining);
 
   const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
+  
+  // Smart Resume Logic: If no running task, check if we should resume a recently failed one
+  if (!runningTaskCheck.isRunning) {
+      const latestTask = await c.env.DB.prepare(`
+          SELECT * FROM generation_tasks 
+          WHERE project_id = ? AND user_id = ? 
+          ORDER BY created_at DESC LIMIT 1
+      `).bind(project.id, userId).first() as any;
+
+      if (latestTask && (latestTask.status === 'failed' || latestTask.status === 'error')) {
+          const completed = JSON.parse(latestTask.completed_chapters || '[]').length;
+          const target = latestTask.target_count;
+          
+          // Heuristic:
+          // 1. The failed task had the SAME target count as the current request (e.g. 20)
+          // 2. The project's next_chapter_index aligns with where the failed task left off
+          //    (next_chapter_index should be start_chapter + completed)
+          const expectedNext = latestTask.start_chapter + completed;
+          
+          if (target === requestedCount && project.next_chapter_index === expectedNext && completed < target) {
+              const adjustedCount = target - completed;
+              if (adjustedCount > 0) {
+                  console.log(`[Smart Resume] Detected failed task ${latestTask.id}. Resuming with adjusted count: ${chaptersToGenerate} -> ${adjustedCount}`);
+                  chaptersToGenerate = adjustedCount;
+              }
+          }
+      }
+  }
   const runningTaskUpdatedAt = runningTaskCheck.task?.updated_at
     ? new Date(`${runningTaskCheck.task.updated_at}Z`).getTime()
     : 0;
