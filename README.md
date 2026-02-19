@@ -58,7 +58,7 @@ A full-stack AI novel creation platform powered by Cloudflare Workers, with both
 - App: polling synchronization with lower frequency
 
 ## Architecture
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doctoroyy/novel-copilot)
 ```text
 novel-copilot/
 ├── src/                                  # Cloudflare Worker backend
