@@ -30,6 +30,37 @@ const ENDING_PATTERNS: RegExp[] = [
   /历史的.{0,5}(车轮|洪流|画卷)/,
 ];
 
+const VALID_ENDING_PATTERN = /(?:[。！？!?…】）》」』”’]|——|—)\s*$/;
+const BAD_ENDING_PATTERNS: RegExp[] = [
+  /[，、：；]\s*$/,
+  /[（【《「『]\s*$/,
+  /(?:并且|但是|而且|以及|如果|当|因为|所以|于是|然后|同时|而|但|却)\s*$/,
+];
+
+function detectLikelyTruncation(chapterText: string): string[] {
+  const trimmed = chapterText.trim();
+  if (!trimmed) {
+    return ['章节内容为空'];
+  }
+
+  if (VALID_ENDING_PATTERN.test(trimmed)) {
+    return [];
+  }
+
+  const reasons: string[] = [];
+  const tail = trimmed.slice(-40);
+  reasons.push(`章节结尾疑似被截断（尾部: "${tail}"）`);
+
+  for (const pattern of BAD_ENDING_PATTERNS) {
+    const match = trimmed.match(pattern);
+    if (match) {
+      reasons.push(`结尾停在不完整位置: "${match[0]}"`);
+    }
+  }
+
+  return reasons;
+}
+
 /**
  * 快速规则检测
  * @returns 是否命中 + 命中原因
@@ -46,6 +77,7 @@ export function quickEndingHeuristic(chapterText: string): {
       reasons.push(`匹配到: "${match[0]}"`);
     }
   }
+  reasons.push(...detectLikelyTruncation(chapterText));
 
   return {
     hit: reasons.length > 0,
@@ -65,7 +97,7 @@ export function buildRewriteInstruction(args: {
 
   return `
 【重写要求】
-你刚才写的第 ${chapterIndex}/${totalChapters} 章出现"提前收尾/完结"倾向。
+你刚才写的第 ${chapterIndex}/${totalChapters} 章出现质量问题（提前收尾或内容疑似被截断）。
 
 检测到的问题：
 ${reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
@@ -73,7 +105,7 @@ ${reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 请重写该章，严格遵守：
 1. 这不是最终章，严禁出现：完结/终章/尾声/后记/感谢读者/全书完/总结一生 等任何收尾语气
 2. 仍然保持本章推进剧情：有一个明确冲突→解决一小步→引出更大危机
-3. 结尾必须是强钩子（读者会想立刻点下一章）
+3. 结尾必须是强钩子（读者会想立刻点下一章），且最后一句必须完整，不允许输出到一半戛然而止
 4. 只输出 JSON：{ "title": "...", "content": "..." }
 `.trim();
 }
