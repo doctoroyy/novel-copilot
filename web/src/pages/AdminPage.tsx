@@ -11,10 +11,12 @@ import {
   updateCreditFeature,
   fetchModelRegistry,
   fetchRemoteModels,
+  fetchProviderPresets,
   createModel,
   updateModel,
   deleteModel,
   rechargeUserCredit,
+  type ProviderPreset,
 } from '@/lib/api';
 import { 
   Users, 
@@ -97,12 +99,15 @@ export function AdminPage() {
   const [fetchProvider, setFetchProvider] = useState('openai');
   const [fetchApiKey, setFetchApiKey] = useState('');
   const [fetchBaseUrl, setFetchBaseUrl] = useState('');
+  const [providerPresets, setProviderPresets] = useState<ProviderPreset[]>([]);
   const [remoteModels, setRemoteModels] = useState<{ id: string; name: string; displayName: string }[]>([]);
   const [selectedRemoteModels, setSelectedRemoteModels] = useState<Set<string>>(new Set());
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [showFetchPanel, setShowFetchPanel] = useState(false);
   const [batchRegistering, setBatchRegistering] = useState(false);
+
+  const findPreset = (providerId: string) => providerPresets.find(p => p.id === providerId);
   
   const fetchData = async () => {
     setLoading(true);
@@ -134,12 +139,20 @@ export function AdminPage() {
 
       // Fetch credit features and models
       try {
-        const [features, modelList] = await Promise.all([
+        const [features, modelList, presets] = await Promise.all([
           fetchAdminCreditFeatures(),
           fetchModelRegistry(),
+          fetchProviderPresets(),
         ]);
         setCreditFeatures(features);
         setModels(modelList);
+        setProviderPresets(presets);
+        if (presets.length > 0) {
+          const openaiPreset = presets.find((p) => p.id === 'openai');
+          const first = openaiPreset || presets[0];
+          setFetchProvider((prev) => presets.some((item) => item.id === prev) ? prev : first.id);
+          setFetchBaseUrl((prev) => prev || first.defaultBaseUrl || '');
+        }
       } catch (e) {
         console.warn('Credit/model data fetch failed:', e);
       }
@@ -583,9 +596,11 @@ export function AdminPage() {
                   <Button
                     onClick={() => {
                       setShowFetchPanel(false);
+                      const openaiPreset = providerPresets.find((p) => p.id === 'openai');
+                      const firstPreset = openaiPreset || providerPresets[0];
                       setNewModelForm(newModelForm ? null : {
-                        provider: 'openai', modelName: '', displayName: '',
-                        apiKey: '', baseUrl: '', creditMultiplier: 1.0,
+                        provider: firstPreset?.id || 'openai', modelName: '', displayName: '',
+                        apiKey: '', baseUrl: firstPreset?.defaultBaseUrl || '', creditMultiplier: 1.0,
                       });
                     }}
                     variant="outline"
@@ -610,17 +625,19 @@ export function AdminPage() {
                           setFetchProvider(val);
                           setRemoteModels([]);
                           setSelectedRemoteModels(new Set());
-                          // 重置 baseUrl
-                          if (val !== 'custom') setFetchBaseUrl('');
+                          const preset = providerPresets.find((item) => item.id === val);
+                          setFetchBaseUrl(preset?.defaultBaseUrl || '');
                         }}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="openai">OpenAI</SelectItem>
-                            <SelectItem value="gemini">Google Gemini</SelectItem>
-                            <SelectItem value="deepseek">DeepSeek</SelectItem>
-                            <SelectItem value="custom">自定义 (OpenAI 兼容)</SelectItem>
+                            {providerPresets.map((item) => (
+                              <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
+                            ))}
+                            {providerPresets.length === 0 && (
+                              <SelectItem value="openai">OpenAI</SelectItem>
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
@@ -633,16 +650,14 @@ export function AdminPage() {
                           onChange={(e) => setFetchApiKey(e.target.value)}
                         />
                       </div>
-                      {fetchProvider === 'custom' && (
-                        <div className="col-span-full">
-                          <label className="text-xs text-muted-foreground mb-1 block">Base URL</label>
-                          <Input
-                            placeholder="https://api.example.com/v1"
-                            value={fetchBaseUrl}
-                            onChange={(e) => setFetchBaseUrl(e.target.value)}
-                          />
-                        </div>
-                      )}
+                      <div className="col-span-full">
+                        <label className="text-xs text-muted-foreground mb-1 block">Base URL（可覆盖默认值）</label>
+                        <Input
+                          placeholder={findPreset(fetchProvider)?.defaultBaseUrl || 'https://api.example.com/v1'}
+                          value={fetchBaseUrl}
+                          onChange={(e) => setFetchBaseUrl(e.target.value)}
+                        />
+                      </div>
                     </div>
 
                     <Button
@@ -651,10 +666,11 @@ export function AdminPage() {
                         setFetchingModels(true);
                         setError(null);
                         try {
+                          const effectiveBaseUrl = fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl;
                           const result = await fetchRemoteModels(
                             fetchProvider,
                             fetchApiKey,
-                            fetchProvider === 'custom' ? fetchBaseUrl : undefined
+                            effectiveBaseUrl
                           );
                           setRemoteModels(result);
                           setSelectedRemoteModels(new Set());
@@ -779,12 +795,13 @@ export function AdminPage() {
                             try {
                               const toRegister = remoteModels.filter(m => selectedRemoteModels.has(m.id));
                               for (const m of toRegister) {
+                                const effectiveBaseUrl = fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl;
                                 await createModel({
                                   provider: fetchProvider,
                                   modelName: m.name,
-                                  displayName: m.displayName,
+                                  displayName: m.displayName || m.name,
                                   apiKey: fetchApiKey,
-                                  baseUrl: fetchProvider === 'custom' ? fetchBaseUrl : undefined,
+                                  baseUrl: effectiveBaseUrl,
                                   creditMultiplier: 1.0,
                                 });
                               }
@@ -817,7 +834,29 @@ export function AdminPage() {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-muted-foreground">提供商</label>
-                        <Input value={newModelForm.provider} onChange={(e) => setNewModelForm({ ...newModelForm, provider: e.target.value })} />
+                        <Select
+                          value={newModelForm.provider}
+                          onValueChange={(value) => {
+                            const preset = providerPresets.find((p) => p.id === value);
+                            setNewModelForm({
+                              ...newModelForm,
+                              provider: value,
+                              baseUrl: preset?.defaultBaseUrl || '',
+                            });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providerPresets.map((item) => (
+                              <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
+                            ))}
+                            {providerPresets.length === 0 && (
+                              <SelectItem value="openai">OpenAI</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <label className="text-xs text-muted-foreground">模型名称</label>
@@ -836,14 +875,29 @@ export function AdminPage() {
                         <Input type="password" value={newModelForm.apiKey} onChange={(e) => setNewModelForm({ ...newModelForm, apiKey: e.target.value })} />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs text-muted-foreground">Base URL (可选)</label>
-                        <Input value={newModelForm.baseUrl} onChange={(e) => setNewModelForm({ ...newModelForm, baseUrl: e.target.value })} />
+                        <label className="text-xs text-muted-foreground">Base URL（可选，留空将使用预设）</label>
+                        <Input
+                          placeholder={findPreset(newModelForm.provider)?.defaultBaseUrl || 'https://api.example.com/v1'}
+                          value={newModelForm.baseUrl}
+                          onChange={(e) => setNewModelForm({ ...newModelForm, baseUrl: e.target.value })}
+                        />
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <Button onClick={async () => {
                         try {
-                          await createModel(newModelForm);
+                          const normalizedModelName = String(newModelForm.modelName || '').trim();
+                          if (!normalizedModelName) {
+                            setError('模型名称不能为空');
+                            return;
+                          }
+                          const preset = findPreset(newModelForm.provider);
+                          await createModel({
+                            ...newModelForm,
+                            modelName: normalizedModelName,
+                            displayName: String(newModelForm.displayName || normalizedModelName).trim(),
+                            baseUrl: String(newModelForm.baseUrl || '').trim() || preset?.defaultBaseUrl || '',
+                          });
                           setNewModelForm(null);
                           fetchData();
                         } catch (e) { setError((e as Error).message); }

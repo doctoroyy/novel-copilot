@@ -3,7 +3,8 @@ export {
   useAIConfig, 
   AIConfigProvider, 
   getAIConfigHeaders, 
-  PROVIDER_MODELS 
+  PROVIDER_MODELS,
+  BUILTIN_PROVIDER_PRESETS
 } from '@/contexts/AIConfigContext';
 
 export type { AIConfig, AIProvider } from '@/contexts/AIConfigContext';
