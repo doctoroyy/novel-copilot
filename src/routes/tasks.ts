@@ -3,6 +3,34 @@ import type { Env } from '../worker.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
+function toTimestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return Date.now();
+
+    if (/^\d+$/.test(trimmed)) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        return numeric;
+      }
+    }
+
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+
+    const parsedUtc = Date.parse(`${trimmed}Z`);
+    if (Number.isFinite(parsedUtc)) {
+      return parsedUtc;
+    }
+  }
+  return Date.now();
+}
+
 async function getProjectIdByRef(
   db: D1Database,
   projectRef: string,
@@ -33,7 +61,10 @@ tasksRoutes.get('/active-tasks', async (c) => {
       ORDER BY t.created_at DESC
     `).bind(userId).all();
 
-    const formatted = (tasks as any[]).map(task => ({
+    const formatted = (tasks as any[]).map(task => {
+      const createdAtMs = toTimestampMs(task.created_at);
+      const updatedAtMs = toTimestampMs(task.updated_at);
+      return {
       id: task.id,
       projectId: task.project_id,
       projectName: task.project_name,
@@ -47,10 +78,11 @@ tasksRoutes.get('/active-tasks', async (c) => {
       cancelRequested: Boolean(task.cancel_requested),
       status: task.status,
       errorMessage: task.error_message,
-      createdAt: new Date(task.created_at + 'Z').getTime(),
-      updatedAt: new Date(task.updated_at + 'Z').getTime(),
-      updatedAtMs: new Date(task.updated_at + 'Z').getTime(), // UTC timestamp in ms
-    }));
+      createdAt: createdAtMs,
+      updatedAt: updatedAtMs,
+      updatedAtMs,
+      };
+    });
 
     return c.json({ success: true, tasks: formatted });
   } catch (error) {
@@ -136,6 +168,8 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       return c.json({ success: true, task: null });
     }
 
+    const createdAtMs = toTimestampMs(task.created_at);
+    const updatedAtMs = toTimestampMs(task.updated_at);
     const result: GenerationTask = {
       id: task.id,
       projectId: task.project_id,
@@ -150,9 +184,9 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       cancelRequested: Boolean(task.cancel_requested),
       status: task.status,
       errorMessage: task.error_message,
-      createdAt: task.created_at,
-      updatedAt: task.updated_at,
-      updatedAtMs: task.updated_at, // Unix timestamp in ms
+      createdAt: createdAtMs,
+      updatedAt: updatedAtMs,
+      updatedAtMs,
     };
 
     return c.json({ success: true, task: result });
@@ -488,6 +522,8 @@ export async function getTaskById(
 
   if (!task) return null;
 
+  const createdAtMs = toTimestampMs(task.created_at);
+  const updatedAtMs = toTimestampMs(task.updated_at);
   return {
     id: task.id,
     projectId: task.project_id,
@@ -502,8 +538,8 @@ export async function getTaskById(
     cancelRequested: Boolean(task.cancel_requested),
     status: task.status,
     errorMessage: task.error_message,
-    createdAt: task.created_at,
-    updatedAt: task.updated_at,
-    updatedAtMs: task.updated_at,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+    updatedAtMs,
   };
 }
