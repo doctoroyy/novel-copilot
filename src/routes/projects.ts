@@ -24,7 +24,7 @@ async function getProjectIdentityByRef(
 // List all projects for current user
 projectsRoutes.get('/', async (c) => {
   const userId = c.get('userId');
-  
+
   try {
     const { results } = await c.env.DB.prepare(`
       SELECT 
@@ -53,6 +53,7 @@ projectsRoutes.get('/', async (c) => {
         needHumanReason: row.need_human_reason,
       },
       hasOutline: Boolean(row.has_outline),
+      createdAt: row.created_at,
       outlineSummary: null,
     }));
 
@@ -66,7 +67,7 @@ projectsRoutes.get('/', async (c) => {
 projectsRoutes.get('/:name', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     const project = await c.env.DB.prepare(`
       SELECT p.*, s.*, o.outline_json
@@ -116,13 +117,13 @@ projectsRoutes.get('/:name', async (c) => {
 // Create project (owned by current user)
 projectsRoutes.post('/', async (c) => {
   const userId = c.get('userId');
-  
+
   try {
     const { name, bible, totalChapters = 100 } = await c.req.json();
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     const trimmedBible = typeof bible === 'string' ? bible.trim() : '';
     const parsedTotalChapters = Number.parseInt(String(totalChapters), 10);
-    
+
     if (!trimmedName || !trimmedBible) {
       return c.json({ success: false, error: 'Name and bible are required' }, 400);
     }
@@ -150,7 +151,7 @@ projectsRoutes.post('/', async (c) => {
 projectsRoutes.delete('/:name', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     const project = await getProjectIdentityByRef(c.env.DB, projectRef, userId);
 
@@ -159,7 +160,7 @@ projectsRoutes.delete('/:name', async (c) => {
     }
 
     // Soft delete: set deleted_at timestamp
-    await c.env.DB.prepare(`UPDATE projects SET deleted_at = datetime('now') WHERE id = ?`).bind(project.id).run();
+    await c.env.DB.prepare(`UPDATE projects SET deleted_at = (unixepoch() * 1000) WHERE id = ?`).bind(project.id).run();
 
     return c.json({ success: true });
   } catch (error) {
@@ -171,7 +172,7 @@ projectsRoutes.delete('/:name', async (c) => {
 projectsRoutes.put('/:name/bible', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     const { bible } = await c.req.json();
 
@@ -179,7 +180,7 @@ projectsRoutes.put('/:name/bible', async (c) => {
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
-    
+
     await c.env.DB.prepare(`
       UPDATE projects SET bible = ? WHERE id = ? AND user_id = ?
     `).bind(bible, project.id, userId).run();
@@ -194,7 +195,7 @@ projectsRoutes.put('/:name/bible', async (c) => {
 projectsRoutes.put('/:name/reset', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     const project = await getProjectIdentityByRef(c.env.DB, projectRef, userId);
 
@@ -215,7 +216,7 @@ projectsRoutes.put('/:name/reset', async (c) => {
     `).bind(id).run();
 
     // Soft delete all chapters
-    await c.env.DB.prepare(`UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND deleted_at IS NULL`).bind(id).run();
+    await c.env.DB.prepare(`UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND deleted_at IS NULL`).bind(id).run();
 
     return c.json({ success: true });
   } catch (error) {
@@ -228,7 +229,7 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
   const projectRef = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  
+
   try {
     const chapter = await c.env.DB.prepare(`
       SELECT c.content FROM chapters c
@@ -253,7 +254,7 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
   const projectRef = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
   const userId = c.get('userId');
-  
+
   try {
     const project = await getProjectIdentityByRef(c.env.DB, projectRef, userId);
 
@@ -274,7 +275,7 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
 
     // Soft delete the chapter
     await c.env.DB.prepare(`
-      UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND chapter_index = ?
+      UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index = ?
     `).bind(projectId, index).run();
 
     // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
@@ -290,8 +291,8 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
       UPDATE states SET next_chapter_index = ? WHERE project_id = ?
     `).bind(newNextChapterIndex, projectId).run();
 
-    return c.json({ 
-      success: true, 
+    return c.json({
+      success: true,
       message: `Chapter ${index} deleted`,
       newNextChapterIndex,
     });
@@ -304,10 +305,10 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
 projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     const { indices } = await c.req.json();
-    
+
     if (!Array.isArray(indices) || indices.length === 0) {
       return c.json({ success: false, error: 'indices array is required' }, 400);
     }
@@ -323,7 +324,7 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
     // Soft delete chapters in batch
     const placeholders = indices.map(() => '?').join(', ');
     await c.env.DB.prepare(`
-      UPDATE chapters SET deleted_at = datetime('now') WHERE project_id = ? AND chapter_index IN (${placeholders}) AND deleted_at IS NULL
+      UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index IN (${placeholders}) AND deleted_at IS NULL
     `).bind(projectId, ...indices).run();
 
     // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
@@ -339,8 +340,8 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
       UPDATE states SET next_chapter_index = ? WHERE project_id = ?
     `).bind(newNextChapterIndex, projectId).run();
 
-    return c.json({ 
-      success: true, 
+    return c.json({
+      success: true,
       message: `Deleted ${indices.length} chapters`,
       deletedIndices: indices,
       newNextChapterIndex,
@@ -355,7 +356,7 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 projectsRoutes.get('/:name/download', async (c) => {
   const projectRef = c.req.param('name');
   const userId = c.get('userId');
-  
+
   try {
     // 1. Fetch project details, bible, and outline
     const project = await c.env.DB.prepare(`
@@ -390,7 +391,7 @@ projectsRoutes.get('/:name/download', async (c) => {
     // 3. Create ZIP using JSZip
     const JSZip = (await import('jszip')).default;
     const zip = new JSZip();
-    
+
     // Create root folder matches project name
     const root = zip.folder(projectName);
     if (!root) throw new Error('Failed to create root folder in ZIP');
@@ -409,26 +410,26 @@ projectsRoutes.get('/:name/download', async (c) => {
     // Add full concatenated text file
     let fullText = `${projectName}\n\n`;
     if (bibleContent) fullText += `【Story Bible】\n${bibleContent}\n\n`;
-    
+
     const chaptersFolder = root.folder('chapters');
-    
+
     chapters.forEach((ch: any) => {
       // Extract title for filename
       const content = ch.content as string;
-      const titleMatch = content.match(/^#?\s*第?\d*[章回节]?\s*[：:.]?\s*(.+)$/m) || 
-                         content.match(/^(.+)$/m);
-      
+      const titleMatch = content.match(/^#?\s*第?\d*[章回节]?\s*[：:.]?\s*(.+)$/m) ||
+        content.match(/^(.+)$/m);
+
       let title = `第${ch.chapter_index}章`;
       if (titleMatch && titleMatch[1]) {
         // Clean up title
         const rawTitle = titleMatch[1].trim()
           .replace(/[\\/:*?"<>|]/g, '_'); // Remove invalid filename chars
-        
+
         // If title doesn't start with "第", add prefix
         if (!rawTitle.startsWith('第')) {
-            title = `第${ch.chapter_index}章 ${rawTitle}`;
+          title = `第${ch.chapter_index}章 ${rawTitle}`;
         } else {
-            title = rawTitle;
+          title = rawTitle;
         }
       }
 

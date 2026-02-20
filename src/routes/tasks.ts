@@ -47,8 +47,8 @@ tasksRoutes.get('/active-tasks', async (c) => {
       cancelRequested: Boolean(task.cancel_requested),
       status: task.status,
       errorMessage: task.error_message,
-      createdAt: task.created_at,
-      updatedAt: task.updated_at,
+      createdAt: new Date(task.created_at + 'Z').getTime(),
+      updatedAt: new Date(task.updated_at + 'Z').getTime(),
       updatedAtMs: new Date(task.updated_at + 'Z').getTime(), // UTC timestamp in ms
     }));
 
@@ -74,8 +74,8 @@ export type GenerationTask = {
   cancelRequested: boolean;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: number;
+  updatedAt: number;
   updatedAtMs: number; // Unix timestamp in ms for reliable health check
 };
 
@@ -98,7 +98,7 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
     if (task.status === 'running' || task.status === 'paused') {
       await c.env.DB.prepare(`
         UPDATE generation_tasks
-        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND user_id = ?
       `).bind(taskId, userId).run();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
@@ -152,7 +152,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       errorMessage: task.error_message,
       createdAt: task.created_at,
       updatedAt: task.updated_at,
-      updatedAtMs: new Date(task.updated_at + 'Z').getTime(), // UTC timestamp in ms
+      updatedAtMs: task.updated_at, // Unix timestamp in ms
     };
 
     return c.json({ success: true, task: result });
@@ -175,7 +175,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
 
     await c.env.DB.prepare(`
       UPDATE generation_tasks 
-      SET status = 'paused', updated_at = CURRENT_TIMESTAMP
+      SET status = 'paused', updated_at = (unixepoch() * 1000)
       WHERE id = ? AND project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
     `).bind(taskId, projectId, userId).run();
 
@@ -208,7 +208,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
     if (task.status === 'running') {
       await c.env.DB.prepare(`
         UPDATE generation_tasks
-        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
@@ -217,7 +217,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
     if (task.status === 'paused') {
       await c.env.DB.prepare(`
         UPDATE generation_tasks
-        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+        SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
@@ -264,13 +264,13 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
 
     await c.env.DB.prepare(`
       UPDATE generation_tasks
-      SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+      SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'running'
     `).bind(projectId, userId).run();
 
     await c.env.DB.prepare(`
       UPDATE generation_tasks
-      SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = CURRENT_TIMESTAMP
+      SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
     `).bind(projectId, userId).run();
 
@@ -313,7 +313,7 @@ export async function createGenerationTask(
   // First, stop any existing running tasks to avoid overlap
   await db.prepare(`
     UPDATE generation_tasks 
-    SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = CURRENT_TIMESTAMP
+    SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = (unixepoch() * 1000)
     WHERE project_id = ? AND user_id = ? AND status = 'running'
   `).bind(projectId, userId).run();
 
@@ -344,7 +344,7 @@ export async function updateTaskProgress(
     failedChapters.push(completedChapter);
     await db.prepare(`
       UPDATE generation_tasks 
-      SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
+      SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(JSON.stringify(failedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
   } else {
@@ -352,7 +352,7 @@ export async function updateTaskProgress(
     completedChapters.push(completedChapter);
     await db.prepare(`
       UPDATE generation_tasks 
-      SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
+      SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(JSON.stringify(completedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
@@ -366,7 +366,7 @@ export async function completeTask(
 ): Promise<void> {
   await db.prepare(`
     UPDATE generation_tasks 
-    SET status = ?, error_message = ?, current_message = ?, updated_at = CURRENT_TIMESTAMP
+    SET status = ?, error_message = ?, current_message = ?, updated_at = (unixepoch() * 1000)
     WHERE id = ?
   `).bind(
     success ? 'completed' : 'failed',
@@ -397,8 +397,8 @@ export async function checkRunningTask(
       `).bind(projectId).first()) as any;
 
   if (task) {
-    return { 
-      isRunning: true, 
+    return {
+      isRunning: true,
       taskId: task.id,
       task: {
         ...task,
@@ -425,13 +425,13 @@ export async function updateTaskMessage(
   if (currentChapter !== undefined) {
     await db.prepare(`
       UPDATE generation_tasks 
-      SET current_message = ?, current_progress = ?, updated_at = CURRENT_TIMESTAMP
+      SET current_message = ?, current_progress = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(message, currentChapter, taskId).run();
   } else {
     await db.prepare(`
       UPDATE generation_tasks 
-      SET current_message = ?, updated_at = CURRENT_TIMESTAMP
+      SET current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(message, taskId).run();
   }
@@ -468,6 +468,6 @@ export async function getTaskById(
     errorMessage: task.error_message,
     createdAt: task.created_at,
     updatedAt: task.updated_at,
-    updatedAtMs: new Date(task.updated_at + 'Z').getTime(),
+    updatedAtMs: task.updated_at,
   };
 }

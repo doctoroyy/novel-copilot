@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS model_registry_new (
   is_active INTEGER DEFAULT 1,
   is_default INTEGER DEFAULT 0,
   config_json TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 INSERT INTO model_registry_new SELECT * FROM model_registry;
@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS feature_model_mappings (
   feature_key TEXT PRIMARY KEY,
   model_id TEXT NOT NULL,
   temperature REAL DEFAULT 0.7,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000),
   FOREIGN KEY (feature_key) REFERENCES credit_features(feature_key),
   FOREIGN KEY (model_id) REFERENCES model_registry(id)
 );

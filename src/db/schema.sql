@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
   google_id TEXT UNIQUE,
   email TEXT UNIQUE,
   avatar_url TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  last_login_at DATETIME DEFAULT NULL
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  last_login_at INTEGER DEFAULT NULL
 );
 
 -- Invitation codes table
@@ -18,12 +18,12 @@ CREATE TABLE IF NOT EXISTS invitation_codes (
   code TEXT PRIMARY KEY,
   created_by TEXT REFERENCES users(id),
   used_by TEXT REFERENCES users(id) DEFAULT NULL,
-  used_at DATETIME DEFAULT NULL,
-  expires_at DATETIME DEFAULT NULL,
+  used_at INTEGER DEFAULT NULL,
+  expires_at INTEGER DEFAULT NULL,
   max_uses INTEGER DEFAULT 1,
   used_count INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- Projects table
@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL UNIQUE,
   bible TEXT NOT NULL,
   user_id TEXT REFERENCES users(id),
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  deleted_at DATETIME DEFAULT NULL
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  deleted_at INTEGER DEFAULT NULL
 );
 
 -- State table (one per project)
@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS chapters (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   chapter_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  deleted_at DATETIME DEFAULT NULL,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  deleted_at INTEGER DEFAULT NULL,
   UNIQUE(project_id, chapter_index)
 );
 
@@ -77,8 +77,8 @@ CREATE INDEX IF NOT EXISTS idx_chapters_deleted ON chapters(project_id, deleted_
 CREATE TABLE IF NOT EXISTS characters (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   characters_json TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- =====================================================
@@ -90,8 +90,8 @@ CREATE TABLE IF NOT EXISTS character_states (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   registry_json TEXT NOT NULL,
   last_updated_chapter INTEGER DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- =====================================================
@@ -103,8 +103,8 @@ CREATE TABLE IF NOT EXISTS plot_graphs (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   graph_json TEXT NOT NULL,
   last_updated_chapter INTEGER DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- =====================================================
@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS narrative_config (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   pacing_curve_json TEXT,
   narrative_arc_json TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- =====================================================
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS chapter_qc (
   qc_json TEXT NOT NULL,
   passed INTEGER DEFAULT 0,
   score INTEGER DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
   UNIQUE(project_id, chapter_index)
 );
 
@@ -157,8 +157,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   cancel_requested INTEGER DEFAULT 0,
   status TEXT DEFAULT 'running' CHECK(status IN ('running', 'paused', 'completed', 'failed')),
   error_message TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON generation_tasks(project_id, status);

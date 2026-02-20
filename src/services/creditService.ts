@@ -24,7 +24,7 @@ export interface CreditTransaction {
   type: 'consume' | 'recharge' | 'reward' | 'refund';
   description: string | null;
   metadata: string | null;
-  created_at: string;
+  created_at: number;
 }
 
 export interface ModelRegistryEntry {

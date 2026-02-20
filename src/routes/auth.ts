@@ -58,7 +58,7 @@ authRoutes.post('/register', async (c) => {
 
     // Mark invitation code as used
     await c.env.DB.prepare(`
-      UPDATE invitation_codes SET used_by = ?, used_at = datetime('now') WHERE code = ?
+      UPDATE invitation_codes SET used_by = ?, used_at = (unixepoch() * 1000) WHERE code = ?
     `).bind(userId, invitationCode).run();
 
     // Generate token
@@ -102,7 +102,7 @@ authRoutes.post('/login', async (c) => {
 
     // Update last login
     await c.env.DB.prepare(`
-      UPDATE users SET last_login_at = datetime('now') WHERE id = ?
+      UPDATE users SET last_login_at = (unixepoch() * 1000) WHERE id = ?
     `).bind((user as any).id).run();
 
     // Generate token
@@ -305,7 +305,7 @@ authRoutes.get('/google/callback', async (c) => {
 
     // Update last login
     await c.env.DB.prepare(`
-      UPDATE users SET last_login_at = datetime('now') WHERE id = ?
+      UPDATE users SET last_login_at = (unixepoch() * 1000) WHERE id = ?
     `).bind(user.id).run();
 
     // Generate JWT token

@@ -99,7 +99,7 @@ charactersRoutes.post('/:name/generate', async (c) => {
     // 3. 保存到数据库
     await c.env.DB.prepare(`
       INSERT INTO characters (project_id, characters_json) VALUES (?, ?)
-      ON CONFLICT(project_id) DO UPDATE SET characters_json = excluded.characters_json, updated_at = CURRENT_TIMESTAMP
+      ON CONFLICT(project_id) DO UPDATE SET characters_json = excluded.characters_json, updated_at = (unixepoch() * 1000)
     `).bind(project.id, JSON.stringify(crg)).run();
 
     return c.json({ success: true, characters: crg });
@@ -130,7 +130,7 @@ charactersRoutes.put('/:name', async (c) => {
 
     await c.env.DB.prepare(`
       INSERT INTO characters (project_id, characters_json) VALUES (?, ?)
-      ON CONFLICT(project_id) DO UPDATE SET characters_json = excluded.characters_json, updated_at = CURRENT_TIMESTAMP
+      ON CONFLICT(project_id) DO UPDATE SET characters_json = excluded.characters_json, updated_at = (unixepoch() * 1000)
     `).bind(project.id, JSON.stringify(characters)).run();
 
     return c.json({ success: true });
