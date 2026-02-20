@@ -49,6 +49,37 @@ async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise
   return getAIConfigFromRegistry(db, featureKey || 'generate_chapter');
 }
 
+async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Promise<AIConfig | null> {
+  try {
+    const mapping = await db.prepare(`
+      SELECT m.provider, m.model_name, m.api_key_encrypted, m.base_url
+      FROM feature_model_mappings fmm
+      JOIN model_registry m ON fmm.model_id = m.id
+      WHERE fmm.feature_key = ? AND m.is_active = 1
+      LIMIT 1
+    `).bind(featureKey).first() as {
+      provider: string;
+      model_name: string;
+      api_key_encrypted: string | null;
+      base_url: string | null;
+    } | null;
+
+    if (!mapping || !mapping.api_key_encrypted) {
+      return null;
+    }
+
+    return {
+      provider: mapping.provider as any,
+      model: mapping.model_name,
+      apiKey: mapping.api_key_encrypted,
+      baseUrl: mapping.base_url || undefined,
+    };
+  } catch (error) {
+    console.warn(`Failed to load feature-mapped model for ${featureKey}:`, (error as Error).message);
+    return null;
+  }
+}
+
 // Normalize chapter data from LLM output to consistent structure
 function normalizeChapter(ch: any, fallbackIndex: number): { index: number; title: string; goal: string; hook: string } {
   return {
@@ -747,6 +778,16 @@ export async function runChapterGenerationTaskInBackground(params: {
         summaryUpdateInterval,
         outline,
       });
+      const summaryModelConfig = summaryUpdatePlan.shouldUpdate
+        ? await getFeatureMappedAIConfig(env.DB, 'generate_summary_update')
+        : null;
+      const effectiveSummaryAiConfig = summaryModelConfig || aiConfig;
+
+      if (summaryUpdatePlan.shouldUpdate && summaryModelConfig) {
+        console.log(
+          `[SummaryModel] 第 ${chapterIndex} 章使用 ${summaryModelConfig.provider}/${summaryModelConfig.model} 更新剧情摘要`
+        );
+      }
 
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
       const CHAPTER_MAX_RETRIES = 3;
@@ -788,6 +829,7 @@ export async function runChapterGenerationTaskInBackground(params: {
             chapterGoalHint,
             chapterTitle: outlineTitle,
             characters,
+            summaryAiConfig: effectiveSummaryAiConfig,
             skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
             onProgress: (message, status) => {
               const attemptProgressMessage = `[尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}] ${message}`;
