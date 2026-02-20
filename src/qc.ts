@@ -86,27 +86,70 @@ export function quickEndingHeuristic(chapterText: string): {
 }
 
 /**
+ * 章节基础结构检测
+ * 仅要求：有标题 + 有正文
+ */
+export function quickChapterFormatHeuristic(chapterText: string): {
+  hit: boolean;
+  reasons: string[];
+} {
+  const reasons: string[] = [];
+  const trimmed = chapterText.trim();
+
+  if (!trimmed) {
+    return { hit: true, reasons: ['章节内容为空'] };
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  const firstNonEmptyIdx = lines.findIndex((line) => line.trim().length > 0);
+  if (firstNonEmptyIdx < 0) {
+    return { hit: true, reasons: ['章节内容为空'] };
+  }
+
+  const titleLine = lines[firstNonEmptyIdx].replace(/^#+\s*/, '').trim();
+  if (!titleLine) {
+    reasons.push('缺少章节标题');
+  } else if (!/^第[一二三四五六七八九十百千万零两\d]+[章节回]/.test(titleLine)) {
+    reasons.push(`标题格式不规范（当前标题: "${titleLine}"）`);
+  }
+
+  const body = lines.slice(firstNonEmptyIdx + 1).join('\n').trim();
+  if (!body) {
+    reasons.push('缺少章节正文');
+  } else if (body.length < 200) {
+    reasons.push(`正文过短（仅 ${body.length} 字）`);
+  }
+
+  return {
+    hit: reasons.length > 0,
+    reasons,
+  };
+}
+
+/**
  * 构建重写指令
  */
 export function buildRewriteInstruction(args: {
   chapterIndex: number;
   totalChapters: number;
   reasons: string[];
+  isFinalChapter?: boolean;
 }): string {
-  const { chapterIndex, totalChapters, reasons } = args;
+  const { chapterIndex, totalChapters, reasons, isFinalChapter = false } = args;
 
   return `
 【重写要求】
-你刚才写的第 ${chapterIndex}/${totalChapters} 章出现质量问题（提前收尾或内容疑似被截断）。
+你刚才写的第 ${chapterIndex}/${totalChapters} 章出现质量问题（结构不合规/提前收尾/内容疑似被截断）。
 
 检测到的问题：
 ${reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 请重写该章，严格遵守：
-1. 这不是最终章，严禁出现：完结/终章/尾声/后记/感谢读者/全书完/总结一生 等任何收尾语气
-2. 仍然保持本章推进剧情：有一个明确冲突→解决一小步→引出更大危机
-3. 结尾必须是强钩子（读者会想立刻点下一章），且最后一句必须完整，不允许输出到一半戛然而止
-4. 只输出 JSON：{ "title": "...", "content": "..." }
+1. 第一行必须是章节标题，格式为「第${chapterIndex}章 XXX」。
+2. 标题下面必须是正文，正文必须完整且可读，不能只有几句摘要。
+3. ${isFinalChapter ? '这是最终章，可以收束主线，但正文仍需完整。' : '这不是最终章，严禁出现：完结/终章/尾声/后记/感谢读者/全书完/总结一生 等收尾语气。'}
+4. 结尾必须是完整句，不能输出到一半戛然而止。
+5. 只输出章节文本：标题 + 正文；不要 JSON、不要代码块、不要解释说明。
 `.trim();
 }
 
