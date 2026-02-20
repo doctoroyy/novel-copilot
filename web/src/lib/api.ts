@@ -1029,3 +1029,28 @@ export async function fetchRemoteModels(
   return data.models;
 }
 
+export type ProviderPreset = {
+  id: string;
+  label: string;
+  protocol: 'openai' | 'gemini' | 'anthropic';
+  defaultBaseUrl?: string;
+  isCustom?: boolean;
+};
+
+export async function fetchProviderPresets(): Promise<ProviderPreset[]> {
+  const res = await fetch(`${API_BASE}/admin/provider-presets`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.providers || [];
+}
+
+export async function fetchPublicProviderPresets(): Promise<ProviderPreset[]> {
+  const res = await fetch(`${API_BASE}/config/provider-presets`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || data.message || '加载 provider 列表失败');
+  return data.providers || [];
+}

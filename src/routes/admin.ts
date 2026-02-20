@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getProviderPreset, getProviderPresets, normalizeProviderId } from '../services/providerCatalog.js';
 
 interface Bindings {
   DB: D1Database;
@@ -347,8 +348,24 @@ adminRoutes.get('/model-registry', async (c) => {
 adminRoutes.post('/model-registry', async (c) => {
   try {
     const { provider, modelName, displayName, apiKey, baseUrl, creditMultiplier, capabilities, configJson } = await c.req.json();
-    if (!provider || !modelName || !displayName) {
-      return c.json({ success: false, error: 'provider, modelName, displayName 不能为空' }, 400);
+    if (!provider || !modelName) {
+      return c.json({ success: false, error: 'provider, modelName 不能为空' }, 400);
+    }
+
+    const normalizedProvider = normalizeProviderId(String(provider));
+    const preset = getProviderPreset(normalizedProvider);
+    const normalizedModelName = String(modelName).trim();
+    const normalizedDisplayName = String(displayName || normalizedModelName).trim();
+    const resolvedBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl || null;
+
+    if (!normalizedModelName) {
+      return c.json({ success: false, error: 'modelName 不能为空' }, 400);
+    }
+    if (!normalizedDisplayName) {
+      return c.json({ success: false, error: 'displayName 不能为空' }, 400);
+    }
+    if (!resolvedBaseUrl && (normalizedProvider === 'custom' || !preset)) {
+      return c.json({ success: false, error: '该 provider 需要填写 Base URL' }, 400);
     }
 
     const id = crypto.randomUUID();
@@ -356,8 +373,8 @@ adminRoutes.post('/model-registry', async (c) => {
       INSERT INTO model_registry (id, provider, model_name, display_name, api_key_encrypted, base_url, credit_multiplier, capabilities, config_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      id, provider, modelName, displayName,
-      apiKey || null, baseUrl || null,
+      id, normalizedProvider, normalizedModelName, normalizedDisplayName,
+      apiKey || null, resolvedBaseUrl,
       creditMultiplier || 1.0,
       JSON.stringify(capabilities || []),
       JSON.stringify(configJson || {})
@@ -379,8 +396,8 @@ adminRoutes.put('/model-registry/:id', async (c) => {
     const updates: string[] = [];
     const values: any[] = [];
 
-    if (body.displayName !== undefined) { updates.push('display_name = ?'); values.push(body.displayName); }
-    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(body.provider); }
+    if (body.displayName !== undefined) { updates.push('display_name = ?'); values.push(String(body.displayName || '').trim()); }
+    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(normalizeProviderId(String(body.provider))); }
     if (body.modelName !== undefined) { updates.push('model_name = ?'); values.push(body.modelName); }
     if (body.apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(body.apiKey || null); }
     if (body.baseUrl !== undefined) { updates.push('base_url = ?'); values.push(body.baseUrl || null); }
@@ -496,16 +513,21 @@ adminRoutes.post('/users/:id/credit', async (c) => {
 });
 
 // ==========================================
-// 远程模型列表获取代理
+// Provider presets + remote model fetch
 // ==========================================
 
-// 预设 Provider 配置
-const PROVIDER_PRESETS: Record<string, { name: string; baseUrl: string; type: 'openai' | 'gemini' }> = {
-  openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', type: 'openai' },
-  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', type: 'openai' },
-  gemini: { name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com', type: 'gemini' },
-  // 兼容各种 OpenAI 格式的第三方服务
-};
+adminRoutes.get('/provider-presets', async (c) => {
+  return c.json({
+    success: true,
+    providers: getProviderPresets().map((item) => ({
+      id: item.id,
+      label: item.label,
+      protocol: item.protocol,
+      defaultBaseUrl: item.defaultBaseUrl || '',
+      isCustom: Boolean(item.isCustom),
+    })),
+  });
+});
 
 // 从远程 API 获取可用模型列表
 adminRoutes.post('/fetch-models', async (c) => {
@@ -516,12 +538,16 @@ adminRoutes.post('/fetch-models', async (c) => {
       return c.json({ success: false, error: 'provider 和 apiKey 不能为空' }, 400);
     }
 
-    const preset = PROVIDER_PRESETS[provider];
-    const providerType = preset?.type || 'openai'; // 默认按 OpenAI 兼容处理
-    const effectiveBaseUrl = baseUrl || preset?.baseUrl;
+    const normalizedProvider = normalizeProviderId(String(provider));
+    const preset = getProviderPreset(normalizedProvider);
+    const providerType = preset?.protocol || 'openai';
+    const effectiveBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl;
 
     if (!effectiveBaseUrl) {
-      return c.json({ success: false, error: '请提供 Base URL' }, 400);
+      return c.json({
+        success: false,
+        error: `请提供 Base URL。provider=${normalizedProvider} 未配置默认地址`,
+      }, 400);
     }
 
     let models: { id: string; name: string; displayName: string }[] = [];
@@ -551,6 +577,27 @@ adminRoutes.post('/fetch-models', async (c) => {
           name: m.name?.replace('models/', '') || m.name,
           displayName: m.displayName || m.name?.replace('models/', '') || m.name,
         }));
+    } else if (providerType === 'anthropic') {
+      const res = await fetch(`${effectiveBaseUrl}/v1/models`, {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } })) as any;
+        throw new Error(err.error?.message || err.message || `Anthropic API 错误: ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      const modelList = data.data || [];
+      models = modelList.map((m: any) => ({
+        id: m.id || m.name,
+        name: m.id || m.name,
+        displayName: m.display_name || m.id || m.name,
+      }));
     } else {
       // OpenAI 兼容 API: GET /v1/models 或 /models
       const modelsUrl = effectiveBaseUrl.endsWith('/v1')
@@ -581,7 +628,14 @@ adminRoutes.post('/fetch-models', async (c) => {
     // 按名称排序
     models.sort((a, b) => a.name.localeCompare(b.name));
 
-    return c.json({ success: true, models, count: models.length });
+    return c.json({
+      success: true,
+      provider: normalizedProvider,
+      protocol: providerType,
+      baseUrl: effectiveBaseUrl,
+      models,
+      count: models.length,
+    });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }

@@ -1,8 +1,23 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, AIProvider } from '../services/aiClient';
+import { getProviderPresets } from '../services/providerCatalog.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();
+
+// Public provider presets for client-side custom provider settings
+configRoutes.get('/provider-presets', async (c) => {
+  return c.json({
+    success: true,
+    providers: getProviderPresets().map((item) => ({
+      id: item.id,
+      label: item.label,
+      protocol: item.protocol,
+      defaultBaseUrl: item.defaultBaseUrl || '',
+      isCustom: Boolean(item.isCustom),
+    })),
+  });
+});
 
 // Test AI connection (config passed in body, not stored on server)
 configRoutes.post('/test', async (c) => {
@@ -51,4 +66,3 @@ async function testAIConnection(config: {
     return { success: false, message: `连接失败: ${(error as Error).message}` };
   }
 }
-
