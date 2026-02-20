@@ -20,33 +20,33 @@ export const generationRoutes = new Hono<{ Bindings: Env }>();
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
 async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise<AIConfig | null> {
   const userId = c.get('userId');
-  
+
   // 1. Check if user has permission for custom provider
   if (userId) {
     const user = await db.prepare('SELECT allow_custom_provider FROM users WHERE id = ?').bind(userId).first() as any;
     if (user?.allow_custom_provider) {
-       // 2. Try to get config from headers
-       // Note: headers in Hono are accessible via c.req.header()
-       // We map x-custom-* headers to what getAIConfigFromHeaders expects (x-ai-*) or just read them directly here
-       const headers = c.req.header();
-       const customProvider = headers['x-custom-provider'];
-       const customModel = headers['x-custom-model'];
-       const customBaseUrl = headers['x-custom-base-url'];
-       const customApiKey = headers['x-custom-api-key'];
+      // 2. Try to get config from headers
+      // Note: headers in Hono are accessible via c.req.header()
+      // We map x-custom-* headers to what getAIConfigFromHeaders expects (x-ai-*) or just read them directly here
+      const headers = c.req.header();
+      const customProvider = headers['x-custom-provider'];
+      const customModel = headers['x-custom-model'];
+      const customBaseUrl = headers['x-custom-base-url'];
+      const customApiKey = headers['x-custom-api-key'];
 
-       if (customProvider && customModel && customApiKey) {
-         return {
-           provider: customProvider as any,
-           model: customModel,
-           apiKey: customApiKey,
-           baseUrl: customBaseUrl,
-         };
-       }
+      if (customProvider && customModel && customApiKey) {
+        return {
+          provider: customProvider as any,
+          model: customModel,
+          apiKey: customApiKey,
+          baseUrl: customBaseUrl,
+        };
+      }
     }
   }
 
   // 3. Fallback to registry
-  return getAIConfigFromRegistry(db, featureKey || 'generate_chapter'); 
+  return getAIConfigFromRegistry(db, featureKey || 'generate_chapter');
 }
 
 // Normalize chapter data from LLM output to consistent structure
@@ -200,18 +200,18 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         // Phase 1: Generate master outline
         sendEvent('progress', { phase: 1, message: characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...' });
         console.log('Phase 1: Generating master outline...');
-      // 0. Consume Credit
-    try {
-        await consumeCredit(c.env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
-    } catch (error) {
-        sendEvent('error', { error: (error as Error).message, status: 402 });
-        controller.close();
-        clearInterval(heartbeatInterval);
-        return;
-    }
+        // 0. Consume Credit
+        try {
+          await consumeCredit(c.env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
+        } catch (error) {
+          sendEvent('error', { error: (error as Error).message, status: 402 });
+          controller.close();
+          clearInterval(heartbeatInterval);
+          return;
+        }
 
-    // 1. Generate Outline (传入 characters 以获得更好的大局观)
-    const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount, characters });
+        // 1. Generate Outline (传入 characters 以获得更好的大局观)
+        const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount, characters });
         const totalVolumes = masterOutline.volumes?.length || 0;
         console.log(`Master outline generated: ${totalVolumes} volumes`);
         sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
@@ -220,27 +220,27 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         const volumes = [];
         for (let i = 0; i < masterOutline.volumes.length; i++) {
           const vol = masterOutline.volumes[i];
-          const previousVolumeEndState = i > 0 
-            ? masterOutline.volumes[i - 1].volumeEndState || 
-              `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
+          const previousVolumeEndState = i > 0
+            ? masterOutline.volumes[i - 1].volumeEndState ||
+            `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
             : null;
-          
-          sendEvent('progress', { 
-            phase: 2, 
-            volumeIndex: i + 1, 
-            totalVolumes, 
+
+          sendEvent('progress', {
+            phase: 2,
+            volumeIndex: i + 1,
+            totalVolumes,
             volumeTitle: vol.title,
-            message: `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...` 
+            message: `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...`
           });
           console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
-          
+
           const chapters = await generateVolumeChapters(aiConfig, { bible, masterOutline, volume: vol, previousVolumeSummary: previousVolumeEndState || undefined });
           const normalizedVolume = normalizeVolume(vol, i, chapters);
           volumes.push(normalizedVolume);
-          
-          sendEvent('volume_complete', { 
-            volumeIndex: i + 1, 
-            totalVolumes, 
+
+          sendEvent('volume_complete', {
+            volumeIndex: i + 1,
+            totalVolumes,
             volumeTitle: normalizedVolume.title,
             chapterCount: normalizedVolume.chapters?.length || 0
           });
@@ -274,10 +274,10 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         console.log(`Outline generation complete for ${name}!`);
 
-        sendEvent('done', { 
-          success: true, 
+        sendEvent('done', {
+          success: true,
           outline,
-          validation: validation.valid ? undefined : validation 
+          validation: validation.valid ? undefined : validation
         });
 
         clearInterval(heartbeatInterval);
@@ -371,9 +371,9 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 
         // Check if chapter already exists when not regenerating
         if (index <= maxIndex && !regenerate) {
-           sendEvent('error', { error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` });
-           controller.close();
-           return;
+          sendEvent('error', { error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` });
+          controller.close();
+          return;
         }
 
         // Prepare prompt context
@@ -387,7 +387,7 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
         // Get chapter goal from outline
         const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
         const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-        
+
         let chapterGoalHint: string | undefined;
         let outlineTitle: string | undefined;
         if (outline) {
@@ -406,11 +406,11 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
 
         // 0. Consume Credit
         try {
-            await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${index} 章`);
+          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${index} 章`);
         } catch (error) {
-            sendEvent('error', { error: (error as Error).message, status: 402 }); // 402 Payment Required
-            controller.close();
-            return;
+          sendEvent('error', { error: (error as Error).message, status: 402 }); // 402 Payment Required
+          controller.close();
+          return;
         }
 
         // Generate chapter
@@ -482,7 +482,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
-  
+
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
@@ -532,107 +532,36 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
     const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-    const results: { chapter: number; title: string }[] = [];
 
-    // Store the starting index BEFORE the loop to avoid double-increment bug
+    // Store the starting index
     const startingChapterIndex = project.next_chapter_index;
 
-    for (let i = 0; i < chaptersToGenerate; i++) {
-      // Use the ORIGINAL starting index + i, NOT the constantly-updating project.next_chapter_index
-      const chapterIndex = startingChapterIndex + i;
-      if (chapterIndex > project.total_chapters) break;
+    // 1. Create a Generation Task in D1
+    // (This signals to active-task API that a task is now 'running')
+    const taskId = await createGenerationTask(
+      c.env.DB,
+      project.id,
+      userId,
+      project.total_chapters, // MUST be the total chapters (e.g., 10), not the batch size (e.g., 2), or UI resets
+      startingChapterIndex
+    );
 
-      // Get last 2 chapters
-      const { results: lastChapters } = await c.env.DB.prepare(`
-        SELECT content FROM chapters 
-        WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
-        ORDER BY chapter_index DESC LIMIT 2
-      `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+    // 2. Enqueue the task into Cloudflare Queues
+    await startGenerationChain(c, taskId, userId, aiConfig,
+      c.req.header('referer') || c.req.header('origin'),
+      c.req.header('authorization'),
+      chaptersToGenerate
+    );
 
-      // Get chapter goal from outline
-      let chapterGoalHint: string | undefined;
-      let outlineTitle: string | undefined;
-      if (outline) {
-        for (const vol of outline.volumes) {
-          const ch = vol.chapters?.find((c: any) => c.index === chapterIndex);
-          if (ch) {
-            outlineTitle = ch.title;
-            chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
-            break;
-          }
-        }
-      }
+    // 3. Respond with 202 immediately to free up the client
+    return c.json({
+      success: true,
+      message: 'Generation task has been enqueued in the background.',
+      taskId
+    }, 202);
 
-      // 0. Consume Credit
-      try {
-          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${chapterIndex} 章`);
-      } catch (error) {
-          return c.json({ success: false, error: (error as Error).message }, 402); // 402 Payment Required
-      }
-
-      // Generate chapter
-      const result = await writeOneChapter({
-        aiConfig,
-        bible: project.bible,
-        rollingSummary: project.rolling_summary || '',
-        openLoops: JSON.parse(project.open_loops || '[]'),
-        lastChapters: lastChapters.map((c: any) => c.content).reverse(),
-        chapterIndex,
-        totalChapters: project.total_chapters,
-        chapterGoalHint,
-        chapterTitle: outlineTitle,
-        characters,
-        onProgress: (message, status) => {
-          // Import eventBus dynamically to avoid top-level side effects if possible, or just use it
-          import('../eventBus.js').then(({ eventBus }) => {
-            eventBus.progress({
-              projectName: name,
-              current: i,
-              total: chaptersToGenerate,
-              chapterIndex,
-              status: status || 'generating',
-              message,
-            });
-          });
-        },
-      });
-
-
-      const chapterText = result.chapterText;
-
-      // Save chapter
-      await c.env.DB.prepare(`
-        INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-      `).bind(project.id, chapterIndex, chapterText).run();
-
-      // Extract title
-      const titleMatch = chapterText.match(/^第?\d*[章回节]?\s*[：:.]?\s*(.+)/m);
-      const title = titleMatch ? titleMatch[1] : (outlineTitle || `Chapter ${chapterIndex}`);
-
-      results.push({ chapter: chapterIndex, title });
-
-      // Update state
-      await c.env.DB.prepare(`
-        UPDATE states SET 
-          next_chapter_index = ?,
-          rolling_summary = ?,
-          open_loops = ?
-        WHERE project_id = ?
-      `).bind(
-        chapterIndex + 1,
-        result.updatedSummary,
-        JSON.stringify(result.updatedOpenLoops),
-        project.id
-      ).run();
-
-      // Update project object for next iteration in loop
-      project.rolling_summary = result.updatedSummary;
-      project.open_loops = JSON.stringify(result.updatedOpenLoops);
-      project.next_chapter_index = chapterIndex + 1;
-    }
-
-    return c.json({ success: true, generated: results });
   } catch (error) {
+    console.error('Generation Failed with 500:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
@@ -752,28 +681,45 @@ async function handleTaskCancellationIfNeeded(params: {
   return { shouldStop: true, cancelled: true };
 }
 
-// Helper to trigger background generation (uses while-loop internally, no self-fetch needed)
+// Helper to trigger background generation (now uses Cloudflare Queue)
 async function startGenerationChain(
-    c: any,
-    taskId: number,
-    userId: string,
-    aiConfig: AIConfig,
-    origin?: string,
-    authHeader?: string
+  c: any,
+  taskId: number,
+  userId: string,
+  aiConfig: AIConfig,
+  origin?: string,
+  authHeader?: string,
+  chaptersToGenerate?: number
 ) {
-     c.executionCtx.waitUntil(
-        runChapterGenerationTaskInBackground({
-            env: c.env,
-            aiConfig,
-            userId,
-            taskId,
-            origin,
-            authHeader
-        })
+  if (c.env.GENERATION_QUEUE) {
+    // Queue implementation
+    await c.env.GENERATION_QUEUE.send({
+      taskId,
+      userId,
+      aiConfig,
+      origin,
+      authHeader,
+      chaptersToGenerate
+    });
+    console.log(`Task ${taskId} enqueued successfully.`);
+  } else {
+    // Fallback for local dev if queue is not bound
+    console.warn('GENERATION_QUEUE not bound, falling back to waitUntil');
+    c.executionCtx.waitUntil(
+      runChapterGenerationTaskInBackground({
+        env: c.env,
+        aiConfig,
+        userId,
+        taskId,
+        origin,
+        authHeader,
+        chaptersToGenerate
+      })
     );
+  }
 }
 
-async function runChapterGenerationTaskInBackground(params: {
+export async function runChapterGenerationTaskInBackground(params: {
   env: Env;
   aiConfig: AIConfig;
   userId: string;
@@ -792,15 +738,19 @@ async function runChapterGenerationTaskInBackground(params: {
     taskId,
     origin,
     authHeader,
+    projectName,
+    projectId,
+    chaptersToGenerate,
+    startingChapterIndex
   } = params;
 
   try {
     // 1. Load Task State (fresh each iteration)
     const task = await getTaskById(env.DB, taskId, userId);
-      if (!task) {
-        console.warn(`Task ${taskId} not found or access denied`);
-        return;
-      }
+    if (!task) {
+      console.warn(`Task ${taskId} not found or access denied`);
+      return;
+    }
 
     // 2. Load Project (fresh each iteration for updated rolling_summary)
     const project = await env.DB.prepare(`
@@ -835,17 +785,17 @@ async function runChapterGenerationTaskInBackground(params: {
     // 4. Determine Scope
     const totalProcessed = completedCount + failedCount;
 
-    if (totalProcessed >= task.targetCount) {
+    if (totalProcessed >= task.targetCount || (chaptersToGenerate !== undefined && (completedCount + failedCount) >= chaptersToGenerate)) {
       // Task Complete!
       await completeTask(env.DB, taskId, true, undefined);
       await emitProgressEvent({
-          projectName: project.name,
-          current: task.targetCount,
-          total: task.targetCount,
-          chapterIndex: task.startChapter + task.targetCount - 1,
-          status: 'done',
-          message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount} 章`,
-        });
+        projectName: project.name,
+        current: totalProcessed,
+        total: task.targetCount,
+        chapterIndex: task.startChapter + totalProcessed - 1,
+        status: 'done',
+        message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount} 章`,
+      });
       return;
     }
 
@@ -854,16 +804,16 @@ async function runChapterGenerationTaskInBackground(params: {
     const chapterIndex = task.startChapter + currentStepIndex;
 
     if (chapterIndex > project.total_chapters) {
-       await completeTask(env.DB, taskId, true, '已达到项目总章节数');
-       await emitProgressEvent({
-          projectName: project.name,
-          current: totalProcessed,
-          total: task.targetCount,
-          chapterIndex: chapterIndex - 1,
-          status: 'done',
-          message: `生成结束：已达到项目总章节数`,
-        });
-       return;
+      await completeTask(env.DB, taskId, true, '已达到项目总章节数');
+      await emitProgressEvent({
+        projectName: project.name,
+        current: totalProcessed,
+        total: task.targetCount,
+        chapterIndex: chapterIndex - 1,
+        status: 'done',
+        message: `生成结束：已达到项目总章节数`,
+      });
+      return;
     }
 
     await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
@@ -879,217 +829,218 @@ async function runChapterGenerationTaskInBackground(params: {
     // 6. Generate ONE Chapter
     let isSuccess = false;
     try {
-        // 6.0 Consume Credit
-        try {
-            await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
-        } catch (creditError) {
-            await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
-            await completeTask(env.DB, taskId, false, (creditError as Error).message);
-            void emitProgressEvent({
-              projectName: project.name,
-              current: completedCount,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'error',
-              message: `创作能量不足: ${(creditError as Error).message}`,
-            });
-            return;
-        }
+      // 6.0 Consume Credit
+      try {
+        await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+      } catch (creditError) {
+        await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
+        await completeTask(env.DB, taskId, false, (creditError as Error).message);
+        void emitProgressEvent({
+          projectName: project.name,
+          current: completedCount,
+          total: task.targetCount,
+          chapterIndex,
+          status: 'error',
+          message: `创作能量不足: ${(creditError as Error).message}`,
+        });
+        return;
+      }
 
-        // 6.1 Prepare Context
-        const { results: lastChapters } = await env.DB.prepare(`
+      // 6.1 Prepare Context
+      const { results: lastChapters } = await env.DB.prepare(`
             SELECT content FROM chapters
             WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
             ORDER BY chapter_index DESC LIMIT 2
           `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
 
-        let chapterGoalHint: string | undefined;
-        let outlineTitle: string | undefined;
-        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
-        if (outline) {
-            for (const vol of outline.volumes) {
-              const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
-              if (ch) {
-                outlineTitle = ch.title;
-                chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
-                break;
-              }
-            }
+      let chapterGoalHint: string | undefined;
+      let outlineTitle: string | undefined;
+      const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
+      if (outline) {
+        for (const vol of outline.volumes) {
+          const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
+          if (ch) {
+            outlineTitle = ch.title;
+            chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+            break;
+          }
         }
+      }
 
-        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-        const CHAPTER_MAX_RETRIES = 3;
-        let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
-        let lastChapterError: unknown;
+      const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
+      const CHAPTER_MAX_RETRIES = 3;
+      let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
+      let lastChapterError: unknown;
 
-        for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
-            try {
-               if (retryAttempt > 0) {
-                 const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
-                 await emitProgressEvent({
-                    projectName: project.name,
-                    current: completedCount,
-                    total: task.targetCount,
-                    chapterIndex,
-                    status: 'generating',
-                    message: `生成失败，${retryDelay/1000}秒后重试...`,
-                 });
-                 await new Promise((resolve) => setTimeout(resolve, retryDelay));
-               }
+      for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
+        try {
+          if (retryAttempt > 0) {
+            const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
+            await emitProgressEvent({
+              projectName: project.name,
+              current: completedCount,
+              total: task.targetCount,
+              chapterIndex,
+              status: 'generating',
+              message: `生成失败，${retryDelay / 1000}秒后重试...`,
+            });
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          }
 
-               // Check cancel again before heavy work
-               const retryControl = await handleTaskCancellationIfNeeded({
-                 db: env.DB,
-                 taskId,
-                 projectName: project.name,
-                 total: task.targetCount,
-                 chapterIndex,
-                 current: completedCount,
-               });
-               if (retryControl.shouldStop) return;
+          // Check cancel again before heavy work
+          const retryControl = await handleTaskCancellationIfNeeded({
+            db: env.DB,
+            taskId,
+            projectName: project.name,
+            total: task.targetCount,
+            chapterIndex,
+            current: completedCount,
+          });
+          if (retryControl.shouldStop) return;
 
-               await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
+          await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
 
-               result = await writeOneChapter({
-                aiConfig,
-                bible: project.bible,
-                rollingSummary: project.rolling_summary || '',
-                openLoops: JSON.parse(project.open_loops || '[]'),
-                lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
+          result = await writeOneChapter({
+            aiConfig,
+            bible: project.bible,
+            rollingSummary: project.rolling_summary || '',
+            openLoops: JSON.parse(project.open_loops || '[]'),
+            lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
+            chapterIndex,
+            totalChapters: project.total_chapters,
+            chapterGoalHint,
+            chapterTitle: outlineTitle,
+            characters,
+            onProgress: (message, status) => {
+              updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
+              void emitProgressEvent({
+                projectName: project.name,
+                current: completedCount,
+                total: task.targetCount,
                 chapterIndex,
-                totalChapters: project.total_chapters,
-                chapterGoalHint,
-                chapterTitle: outlineTitle,
-                characters,
-                onProgress: (message, status) => {
-                  updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
-                  void emitProgressEvent({
-                    projectName: project.name,
-                    current: completedCount,
-                    total: task.targetCount,
-                    chapterIndex,
-                    status,
-                    message,
-                  });
-                },
+                status,
+                message,
               });
+            },
+          });
 
-               break; // Success
-            } catch(err) {
-               lastChapterError = err;
-               console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
-               if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
-            }
+          break; // Success
+        } catch (err) {
+          lastChapterError = err;
+          console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
+          if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
         }
+      }
 
-        if (!result) throw lastChapterError || new Error("Generated failed");
+      if (!result) throw lastChapterError || new Error("Generated failed");
 
-        // 6.2 Save Result
-        const chapterText = result.chapterText;
-        await env.DB.prepare(`
+      // 6.2 Save Result
+      const chapterText = result.chapterText;
+      await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
 
-        await env.DB.prepare(`
+      await env.DB.prepare(`
             UPDATE states SET
               next_chapter_index = ?,
               rolling_summary = ?,
               open_loops = ?
             WHERE project_id = ?
           `).bind(
-            chapterIndex + 1,
-            result.updatedSummary,
-            JSON.stringify(result.updatedOpenLoops),
-            project.id
-          ).run();
+        chapterIndex + 1,
+        result.updatedSummary,
+        JSON.stringify(result.updatedOpenLoops),
+        project.id
+      ).run();
 
-        await updateTaskProgress(env.DB, taskId, chapterIndex, false);
+      await updateTaskProgress(env.DB, taskId, chapterIndex, false);
 
-        await emitProgressEvent({
-            projectName: project.name,
-            current: completedCount + 1,
-            total: task.targetCount,
-            chapterIndex,
-            status: 'saving',
-            message: `第 ${chapterIndex} 章已完成`,
-          });
-          
-        isSuccess = true;
+      await emitProgressEvent({
+        projectName: project.name,
+        current: completedCount + 1,
+        total: task.targetCount,
+        chapterIndex,
+        status: 'saving',
+        message: `第 ${chapterIndex} 章已完成`,
+      });
+
+      isSuccess = true;
 
     } catch (chapterError) {
-        console.error(`Chapter ${chapterIndex} failed:`, chapterError);
-        await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
-        await emitProgressEvent({
-            projectName: project.name,
-            current: completedCount + failedCount + 1,
-            total: task.targetCount,
-            chapterIndex,
-            status: 'error',
-            message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
-          });
+      console.error(`Chapter ${chapterIndex} failed:`, chapterError);
+      await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
+      await emitProgressEvent({
+        projectName: project.name,
+        current: completedCount + failedCount + 1,
+        total: task.targetCount,
+        chapterIndex,
+        status: 'error',
+        message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
+      });
     }
 
     // 7. Check Completion & Relay to Next Step
     const freshTask = await getTaskById(env.DB, taskId, userId);
     const newCompletedCount = freshTask?.completedChapters.length || 0;
     const newFailedCount = freshTask?.failedChapters.length || 0;
-    
-    if (newCompletedCount + newFailedCount >= task.targetCount) {
-        // Done
-        await completeTask(env.DB, taskId, true, undefined);
-        await emitProgressEvent({
-            projectName: project.name,
-            current: task.targetCount,
-            total: task.targetCount,
-            chapterIndex,
-            status: 'done',
-            message: `生成完成：成功 ${newCompletedCount} 章，失败 ${newFailedCount} 章`,
-         });
-        return;
+
+    if (newCompletedCount + newFailedCount >= task.targetCount || (chaptersToGenerate !== undefined && (newCompletedCount + newFailedCount) >= chaptersToGenerate)) {
+      // Done
+      await completeTask(env.DB, taskId, true, undefined);
+      await emitProgressEvent({
+        projectName: project.name,
+        current: newCompletedCount + newFailedCount,
+        total: task.targetCount,
+        chapterIndex,
+        status: 'done',
+        message: `生成完成：成功 ${newCompletedCount} 章，失败 ${newFailedCount} 章`,
+      });
+      return;
     }
 
     // RELAY: Trigger next step via subrequest
     if (origin && !task.cancelRequested) {
-       console.log(`Relaying to next chapter: ${taskId}`);
-       
-       // Use fetch to trigger the next worker
-       // Note: We don't await this fetch because we want the current worker to exit successfully
-       // However, in Cloudflare Workers, we must ensure the fetch is registered with waitUntil 
-       // or awaited if we want to ensure it's sent.
-       // Here we are inside a waitUntil (likely), but to be safe, we await it since this worker is finishing anyway.
-       
-       try {
-           const response = await fetch(`${origin}/api/generation/projects/${project.name}/tasks/${taskId}/process-next`, {
-               method: 'POST',
-               headers: {
-                   'Content-Type': 'application/json',
-                   'Authorization': authHeader || ''
-               },
-               body: JSON.stringify({
-                   aiConfig,
-                   origin,
-                   authHeader,
-                   userId
-               })
-           });
-           
-           if (!response.ok) {
-               console.error(`Relay failed: ${response.status} ${await response.text()}`);
-               // If relay fails, mark task as failed? Or just log? 
-               // Maybe retry logic here? For now, we log.
-           }
-       } catch (relayError) {
-           console.error('Relay network error:', relayError);
-       }
+      console.log(`Relaying to next chapter: ${taskId}`);
+
+      // Use fetch to trigger the next worker
+      // Note: We don't await this fetch because we want the current worker to exit successfully
+      // However, in Cloudflare Workers, we must ensure the fetch is registered with waitUntil 
+      // or awaited if we want to ensure it's sent.
+      // Here we are inside a waitUntil (likely), but to be safe, we await it since this worker is finishing anyway.
+
+      try {
+        const response = await fetch(`${origin}/api/generation/projects/${project.name}/tasks/${taskId}/process-next`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': authHeader || ''
+          },
+          body: JSON.stringify({
+            aiConfig,
+            origin,
+            authHeader,
+            userId,
+            chaptersToGenerate
+          })
+        });
+
+        if (!response.ok) {
+          console.error(`Relay failed: ${response.status} ${await response.text()}`);
+          // If relay fails, mark task as failed? Or just log? 
+          // Maybe retry logic here? For now, we log.
+        }
+      } catch (relayError) {
+        console.error('Relay network error:', relayError);
+      }
     }
 
   } catch (error) {
-     console.error(`Background task ${taskId} fatal error:`, error);
-     try {
-       await completeTask(env.DB, taskId, false, (error as Error).message);
-     } catch (dbError) {
-       console.warn('Failed to mark task as failed:', dbError);
-     }
+    console.error(`Background task ${taskId} fatal error:`, error);
+    try {
+      await completeTask(env.DB, taskId, false, (error as Error).message);
+    } catch (dbError) {
+      console.warn('Failed to mark task as failed:', dbError);
+    }
   }
 }
 
@@ -1098,9 +1049,9 @@ async function runChapterGenerationTaskInBackground(params: {
 generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) => {
   const name = c.req.param('name');
   const taskId = parseInt(c.req.param('taskId'));
-  
+
   const authUserId = c.get('userId') as string | null;
-  const { aiConfig, origin, authHeader, userId: bodyUserId } = await c.req.json();
+  const { aiConfig, origin, authHeader, userId: bodyUserId, chaptersToGenerate } = await c.req.json();
 
   if (!aiConfig || !origin || !bodyUserId) {
     return c.json({ success: false, error: 'Missing required parameters' }, 400);
@@ -1113,7 +1064,6 @@ generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) =>
 
   const effectiveUserId = authUserId || bodyUserId;
 
-  // Use executionCtx.waitUntil to run in background so we can return response immediately to the caller (previous worker)
   c.executionCtx.waitUntil(
     runChapterGenerationTaskInBackground({
       env: c.env,
@@ -1121,7 +1071,8 @@ generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) =>
       userId: effectiveUserId,
       taskId,
       origin,
-      authHeader
+      authHeader,
+      chaptersToGenerate
     })
   );
 
@@ -1186,33 +1137,33 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   let chaptersToGenerate = Math.min(requestedCount, remaining);
 
   const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
-  
+
   // Smart Resume Logic: If no running task, check if we should resume a recently failed one
   if (!runningTaskCheck.isRunning) {
-      const latestTask = await c.env.DB.prepare(`
+    const latestTask = await c.env.DB.prepare(`
           SELECT * FROM generation_tasks 
           WHERE project_id = ? AND user_id = ? 
           ORDER BY created_at DESC LIMIT 1
       `).bind(project.id, userId).first() as any;
 
-      if (latestTask && (latestTask.status === 'failed' || latestTask.status === 'error')) {
-          const completed = JSON.parse(latestTask.completed_chapters || '[]').length;
-          const target = latestTask.target_count;
-          
-          // Heuristic:
-          // 1. The failed task had the SAME target count as the current request (e.g. 20)
-          // 2. The project's next_chapter_index aligns with where the failed task left off
-          //    (next_chapter_index should be start_chapter + completed)
-          const expectedNext = latestTask.start_chapter + completed;
-          
-          if (target === requestedCount && project.next_chapter_index === expectedNext && completed < target) {
-              const adjustedCount = target - completed;
-              if (adjustedCount > 0) {
-                  console.log(`[Smart Resume] Detected failed task ${latestTask.id}. Resuming with adjusted count: ${chaptersToGenerate} -> ${adjustedCount}`);
-                  chaptersToGenerate = adjustedCount;
-              }
-          }
+    if (latestTask && (latestTask.status === 'failed' || latestTask.status === 'error')) {
+      const completed = JSON.parse(latestTask.completed_chapters || '[]').length;
+      const target = latestTask.target_count;
+
+      // Heuristic:
+      // 1. The failed task had the SAME target count as the current request (e.g. 20)
+      // 2. The project's next_chapter_index aligns with where the failed task left off
+      //    (next_chapter_index should be start_chapter + completed)
+      const expectedNext = latestTask.start_chapter + completed;
+
+      if (target === requestedCount && project.next_chapter_index === expectedNext && completed < target) {
+        const adjustedCount = target - completed;
+        if (adjustedCount > 0) {
+          console.log(`[Smart Resume] Detected failed task ${latestTask.id}. Resuming with adjusted count: ${chaptersToGenerate} -> ${adjustedCount}`);
+          chaptersToGenerate = adjustedCount;
+        }
       }
+    }
   }
   const runningTaskUpdatedAt = runningTaskCheck.task?.updated_at
     ? new Date(`${runningTaskCheck.task.updated_at}Z`).getTime()
@@ -1241,7 +1192,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     );
 
   // Always start/restart the chain — even on resume, the previous chain may have died silently
-  startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader);
+  startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader, chaptersToGenerate);
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
   const encoder = new TextEncoder();
@@ -1483,19 +1434,19 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
     // Start Chain
     const authHeader = c.req.header('Authorization') || '';
     const origin = new URL(c.req.url).origin;
-    
+
     startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader);
-  
+
     // We return immediately, the task runs in background (via startGenerationChain -> waitUntil)
     // Client can poll task status or listen to SSE
-    return c.json({ 
-        success: true, 
-        message: 'Task started', 
-        taskId,
-        contextStats: {
-             characterStatesActive: project.character_states_json ? JSON.parse(project.character_states_json).length : 0,
-             // simplified stats as we return early
-        }
+    return c.json({
+      success: true,
+      message: 'Task started',
+      taskId,
+      contextStats: {
+        characterStatesActive: project.character_states_json ? JSON.parse(project.character_states_json).length : 0,
+        // simplified stats as we return early
+      }
     });
 
     /* 
@@ -1731,7 +1682,7 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
           }
         }
 
-        sendEvent('start', { 
+        sendEvent('start', {
           totalVolumes: volumesToRefine.length,
           volumeIndices: volumesToRefine,
         });
@@ -1758,9 +1709,9 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
               `${prevVol.climax}（主角已达成：${prevVol.goal}）`;
           }
 
-          const chaptersData = await generateVolumeChapters(aiConfig, { 
-            bible, 
-            masterOutline: outline, 
+          const chaptersData = await generateVolumeChapters(aiConfig, {
+            bible,
+            masterOutline: outline,
             volume: vol,
             previousVolumeSummary,
           });
