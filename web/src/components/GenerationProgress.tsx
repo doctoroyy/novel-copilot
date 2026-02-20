@@ -40,6 +40,31 @@ export function GenerationProgress({
 }: GenerationProgressProps) {
   const [dots, setDots] = useState('');
   const [elapsedTime, setElapsedTime] = useState(0);
+
+  const normalizeTimestampMs = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (/^\d+$/.test(trimmed)) {
+        const numeric = Number(trimmed);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          return numeric;
+        }
+      }
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+      const parsedUtc = Date.parse(`${trimmed}Z`);
+      if (Number.isFinite(parsedUtc) && parsedUtc > 0) {
+        return parsedUtc;
+      }
+    }
+    return null;
+  };
   
   // Animated dots
   useEffect(() => {
@@ -52,9 +77,24 @@ export function GenerationProgress({
   
   // Elapsed time counter
   useEffect(() => {
-    if (!isGenerating || !startTime) return;
+    if (!isGenerating) {
+      setElapsedTime(0);
+      return;
+    }
+    const normalizedStartTime = normalizeTimestampMs(startTime);
+    if (!normalizedStartTime) {
+      setElapsedTime(0);
+      return;
+    }
+
+    const updateElapsed = () => {
+      const seconds = Math.floor((Date.now() - normalizedStartTime) / 1000);
+      setElapsedTime(Math.max(0, Number.isFinite(seconds) ? seconds : 0));
+    };
+
+    updateElapsed();
     const interval = setInterval(() => {
-      setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+      updateElapsed();
     }, 1000);
     return () => clearInterval(interval);
   }, [isGenerating, startTime]);
@@ -64,18 +104,27 @@ export function GenerationProgress({
   // Calculate progress based on completed chapters.
   // current represents completed chapter count in batch generation.
   let percentage = 0;
+  const safeCurrent = Number.isFinite(current) ? current : 0;
+  const safeTotal = Number.isFinite(total) ? total : 0;
+  const safeElapsedTime = Number.isFinite(elapsedTime) ? Math.max(0, elapsedTime) : 0;
+
   if (status === 'done') {
     percentage = 100;
-  } else if (total > 0) {
-    const completed = Math.max(0, current);
-    percentage = (completed / total) * 100;
+  } else if (safeTotal > 0) {
+    const completed = Math.max(0, safeCurrent);
+    percentage = (completed / safeTotal) * 100;
   }
   
-  const progress = Math.min(100, Math.max(0, percentage));
-  const estimatedTotalTime = current > 0 ? (elapsedTime / current) * total : 0;
-  const remainingTime = Math.max(0, Math.floor(estimatedTotalTime - elapsedTime));
+  const progress = Number.isFinite(percentage) ? Math.min(100, Math.max(0, percentage)) : 0;
+  const estimatedTotalTime = safeCurrent > 0 ? (safeElapsedTime / safeCurrent) * safeTotal : 0;
+  const remainingTime = Number.isFinite(estimatedTotalTime)
+    ? Math.max(0, Math.floor(estimatedTotalTime - safeElapsedTime))
+    : 0;
   
   const formatTime = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return '0秒';
+    }
     if (seconds < 60) return `${seconds}秒`;
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -109,8 +158,8 @@ export function GenerationProgress({
           
           {/* Time display */}
           <div className="text-right text-xs lg:text-sm text-muted-foreground">
-            <div>已用时: {formatTime(elapsedTime)}</div>
-            {current > 0 && remainingTime > 0 && (
+            <div>已用时: {formatTime(safeElapsedTime)}</div>
+            {safeCurrent > 0 && remainingTime > 0 && (
               <div className="text-primary">预计还需: {formatTime(remainingTime)}</div>
             )}
           </div>
