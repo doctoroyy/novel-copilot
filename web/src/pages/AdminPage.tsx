@@ -103,11 +103,36 @@ export function AdminPage() {
   const [remoteModels, setRemoteModels] = useState<{ id: string; name: string; displayName: string }[]>([]);
   const [selectedRemoteModels, setSelectedRemoteModels] = useState<Set<string>>(new Set());
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [showFetchPanel, setShowFetchPanel] = useState(false);
   const [batchRegistering, setBatchRegistering] = useState(false);
 
   const findPreset = (providerId: string) => providerPresets.find(p => p.id === providerId);
+
+  const openManualAddForm = (prefill?: Partial<{
+    provider: string;
+    modelName: string;
+    displayName: string;
+    apiKey: string;
+    baseUrl: string;
+    creditMultiplier: number;
+  }>) => {
+    const openaiPreset = providerPresets.find((p) => p.id === 'openai');
+    const fallbackPreset = openaiPreset || providerPresets[0];
+    const provider = prefill?.provider || fetchProvider || fallbackPreset?.id || 'openai';
+    const preset = findPreset(provider);
+    setFetchModelsError(null);
+    setShowFetchPanel(false);
+    setNewModelForm({
+      provider,
+      modelName: prefill?.modelName || '',
+      displayName: prefill?.displayName || '',
+      apiKey: prefill?.apiKey || '',
+      baseUrl: String(prefill?.baseUrl || '').trim() || preset?.defaultBaseUrl || '',
+      creditMultiplier: prefill?.creditMultiplier ?? 1.0,
+    });
+  };
   
   const fetchData = async () => {
     setLoading(true);
@@ -585,7 +610,11 @@ export function AdminPage() {
                 <div className="flex gap-2">
                   <Button
                     onClick={() => {
-                      setShowFetchPanel(!showFetchPanel);
+                      const next = !showFetchPanel;
+                      setShowFetchPanel(next);
+                      if (!next) {
+                        setFetchModelsError(null);
+                      }
                       setNewModelForm(null);
                     }}
                     className="flex-1"
@@ -595,13 +624,11 @@ export function AdminPage() {
                   </Button>
                   <Button
                     onClick={() => {
-                      setShowFetchPanel(false);
-                      const openaiPreset = providerPresets.find((p) => p.id === 'openai');
-                      const firstPreset = openaiPreset || providerPresets[0];
-                      setNewModelForm(newModelForm ? null : {
-                        provider: firstPreset?.id || 'openai', modelName: '', displayName: '',
-                        apiKey: '', baseUrl: firstPreset?.defaultBaseUrl || '', creditMultiplier: 1.0,
-                      });
+                      if (newModelForm) {
+                        setNewModelForm(null);
+                        return;
+                      }
+                      openManualAddForm();
                     }}
                     variant="outline"
                   >
@@ -625,6 +652,7 @@ export function AdminPage() {
                           setFetchProvider(val);
                           setRemoteModels([]);
                           setSelectedRemoteModels(new Set());
+                          setFetchModelsError(null);
                           const preset = providerPresets.find((item) => item.id === val);
                           setFetchBaseUrl(preset?.defaultBaseUrl || '');
                         }}>
@@ -665,6 +693,7 @@ export function AdminPage() {
                         if (!fetchApiKey) { setError('请输入 API Key'); return; }
                         setFetchingModels(true);
                         setError(null);
+                        setFetchModelsError(null);
                         try {
                           const effectiveBaseUrl = fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl;
                           const result = await fetchRemoteModels(
@@ -674,8 +703,11 @@ export function AdminPage() {
                           );
                           setRemoteModels(result);
                           setSelectedRemoteModels(new Set());
+                          setFetchModelsError(null);
                         } catch (e) {
-                          setError((e as Error).message);
+                          const message = (e as Error).message;
+                          setError(message);
+                          setFetchModelsError(message);
                           setRemoteModels([]);
                         } finally {
                           setFetchingModels(false);
@@ -690,6 +722,29 @@ export function AdminPage() {
                         <><Search className="h-4 w-4 mr-2" /> 获取模型列表</>
                       )}
                     </Button>
+
+                    {fetchModelsError && remoteModels.length === 0 && (
+                      <div className="p-3 rounded-lg border border-destructive/30 bg-destructive/5 space-y-2">
+                        <p className="text-sm text-destructive">模型列表获取失败：{fetchModelsError}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openManualAddForm({
+                              provider: fetchProvider,
+                              apiKey: fetchApiKey,
+                              baseUrl: fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl || '',
+                            })}
+                          >
+                            <Plus className="h-3.5 w-3.5 mr-1" />
+                            改为手动添加
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setFetchModelsError(null)}>
+                            关闭
+                          </Button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 模型列表 */}
                     {remoteModels.length > 0 && (
