@@ -927,9 +927,24 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       }
     }
   }
-  const runningTaskUpdatedAt = runningTaskCheck.task?.updated_at
-    ? new Date(`${runningTaskCheck.task.updated_at}Z`).getTime()
-    : 0;
+  const rawUpdatedAt = runningTaskCheck.task?.updated_at;
+  const runningTaskUpdatedAt = (() => {
+    if (typeof rawUpdatedAt === 'number' && Number.isFinite(rawUpdatedAt)) {
+      return rawUpdatedAt;
+    }
+    if (typeof rawUpdatedAt === 'string') {
+      const trimmed = rawUpdatedAt.trim();
+      if (/^\d+$/.test(trimmed)) {
+        const numeric = Number(trimmed);
+        if (Number.isFinite(numeric)) return numeric;
+      }
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+      const parsedUtc = Date.parse(`${trimmed}Z`);
+      if (Number.isFinite(parsedUtc)) return parsedUtc;
+    }
+    return 0;
+  })();
   const runningTaskFreshThresholdMs = 30 * 60 * 1000;
   const isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
   const isResumed = Boolean(runningTaskCheck.isRunning && runningTaskCheck.taskId && isRunningTaskFresh);
