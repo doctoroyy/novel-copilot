@@ -322,15 +322,23 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 
   if (!skipSummaryUpdate) {
     params.onProgress?.('正在更新剧情记忆...', 'updating_summary');
-    const summaryResult = await generateSummaryUpdate(
-      aiConfig,
-      bible,
-      params.rollingSummary,
-      params.openLoops,
-      chapterText
-    );
-    updatedSummary = summaryResult.updatedSummary;
-    updatedOpenLoops = summaryResult.updatedOpenLoops;
+    try {
+      const summaryResult = await generateSummaryUpdate(
+        aiConfig,
+        bible,
+        params.rollingSummary,
+        params.openLoops,
+        chapterText
+      );
+      updatedSummary = summaryResult.updatedSummary;
+      updatedOpenLoops = summaryResult.updatedOpenLoops;
+    } catch (summaryError) {
+      console.warn(
+        `[EnhancedSummary] 第 ${chapterIndex} 章摘要更新失败，已保留上一版摘要:`,
+        (summaryError as Error).message
+      );
+      params.onProgress?.('剧情摘要更新失败，已保留上一版摘要', 'updating_summary');
+    }
   }
 
   // 8. 更新人物状态（可选）

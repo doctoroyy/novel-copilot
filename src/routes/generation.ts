@@ -589,7 +589,9 @@ function planSummaryUpdate(params: {
     outline,
   } = params;
 
-  const isLastOfBatch = currentStepIndex >= targetCount - 1;
+  // For single-chapter tasks, do not force summary update by "last batch";
+  // otherwise interval-based strategy (e.g. every 2 chapters) is bypassed.
+  const isLastOfBatch = targetCount > 1 && currentStepIndex >= targetCount - 1;
   if (isLastOfBatch) {
     return {
       shouldUpdate: true,
