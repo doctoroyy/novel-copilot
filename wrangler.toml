@@ -11,6 +11,19 @@ database_name = "novel-copilot-db"
 database_id = "bf1b57ae-c545-4a1f-b791-cf76bcc968f3"
 migrations_dir = "migrations"
 
+# Queue Producer (for sending tasks)
+[[queues.producers]]
+binding = "GENERATION_QUEUE"
+queue = "novel-copilot-generation-queue"
+
+# Queue Consumer (for executing tasks in background)
+[[queues.consumers]]
+queue = "novel-copilot-generation-queue"
+max_batch_size = 1 # Only process 1 generation task at a time per worker instance
+max_retries = 3 # Retry up to 3 times on failure
+max_concurrency = 5 # Prevent too many concurrent LLM calls bursting
+
+
 # Development settings
 [dev]
 port = 8787

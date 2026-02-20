@@ -16,6 +16,7 @@ import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddlew
 export interface Env {
   DB: D1Database;
   ANIME_VIDEOS: R2Bucket;
+  GENERATION_QUEUE: Queue<any>;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -152,4 +153,30 @@ app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
 
 // SPA routing is handled by wrangler.toml: not_found_handling = "single-page-application"
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext) {
+    const { runChapterGenerationTaskInBackground } = await import('./routes/generation.js');
+    
+    for (const message of batch.messages) {
+      try {
+        const payload = message.body;
+        console.log(`Processing queue message: Task ID ${payload.taskId}`);
+        
+        await runChapterGenerationTaskInBackground({
+          env,
+          aiConfig: payload.aiConfig,
+          userId: payload.userId,
+          taskId: payload.taskId,
+          origin: payload.origin,
+          authHeader: payload.authHeader
+        });
+        
+        message.ack(); // Acknowledge successful processing
+      } catch (error) {
+        console.error('Error processing queue message:', error);
+        message.retry(); // Retry on failure
+      }
+    }
+  }
+};
