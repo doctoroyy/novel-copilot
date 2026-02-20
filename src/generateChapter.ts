@@ -5,15 +5,7 @@ import type { CharacterStateRegistry } from './types/characterState.js';
 import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
-import { z } from 'zod';
-
-/**
- * 生成后的更新数据 Schema
- */
-const UpdateSchema = z.object({
-  rollingSummary: z.string().min(10),
-  openLoops: z.array(z.string()).max(12),
-});
+import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 
 /**
  * 章节生成参数
@@ -161,6 +153,7 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
   } = params;
 
   const isFinal = chapterIndex === totalChapters;
+  const normalizedSummary = normalizeRollingSummary(rollingSummary || '');
 
   // 构建人物状态上下文 (Phase 1 新增)
   const characterStateContext = characterStates
@@ -177,7 +170,7 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
 ${bible}
 
 ${characterStateContext ? characterStateContext + '\n' : ''}【Rolling Summary（到目前为止剧情摘要）】
-${rollingSummary || '（暂无摘要：请根据近章原文自行推断并保持一致）'}
+${normalizedSummary || '（暂无摘要：请根据近章原文自行推断并保持一致）'}
 
 【Open Loops（未解伏笔/悬念，最多12条）】
 ${openLoops.length ? openLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（暂无）'}
@@ -323,7 +316,9 @@ async function generateSummaryUpdate(
 
 输出格式：
 {
-  "rollingSummary": "用 350~700 字总结到本章为止的剧情（强调人物状态变化、关键因果、目前局势）",
+  "longTermMemory": "长期记忆：压缩较早章节，只保留稳定设定、人物长期目标与核心因果（建议 180~320 字）",
+  "midTermMemory": "中期记忆：承上启下的阶段进展与关键转折（建议 220~380 字）",
+  "recentMemory": "近期记忆：最近 3~5 章的细节、冲突状态、即时动机（建议 280~520 字，信息最完整）",
   "openLoops": ["未解伏笔1", "未解伏笔2", ...] // 3~8 条，每条不超过 30 字
 }
 `.trim();
@@ -333,12 +328,15 @@ async function generateSummaryUpdate(
 ${bible.slice(0, 1200)}...
 
 【此前 Rolling Summary】
-${previousSummary || '（无）'}
+${normalizeRollingSummary(previousSummary || '') || '（无）'}
+
+【此前 Open Loops】
+${previousOpenLoops.length ? previousOpenLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（无）'}
 
 【本章原文】
 ${chapterText}
 
-请输出更新后的 JSON：
+请按“越近越详细、越远越压缩”的原则输出更新后的 JSON。
 `.trim();
 
   const raw = await generateTextWithRetry(
@@ -346,23 +344,7 @@ ${chapterText}
     { system, prompt, temperature: 0.2, maxTokens: 1000 },
     2
   );
-
-  // 容错：去掉可能的代码块标记
-  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
-
-  try {
-    const parsed = UpdateSchema.parse(JSON.parse(jsonText));
-    return {
-      updatedSummary: parsed.rollingSummary,
-      updatedOpenLoops: parsed.openLoops,
-    };
-  } catch (error) {
-    console.warn('Summary update parsing failed, using fallback');
-    return {
-      updatedSummary: previousSummary,
-      updatedOpenLoops: previousOpenLoops,
-    };
-  }
+  return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
 }
 
 /**

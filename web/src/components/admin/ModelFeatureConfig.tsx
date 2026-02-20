@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { getAuthHeaders } from '@/lib/auth';
+import { fetchGenerationSettings, updateGenerationSettings } from '@/lib/api';
 
 interface FeatureMapping {
   feature_key: string;
@@ -35,6 +38,9 @@ export function ModelFeatureConfig() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [summaryUpdateInterval, setSummaryUpdateInterval] = useState('2');
+  const [savingGenerationSettings, setSavingGenerationSettings] = useState(false);
+  const [generationSettingsError, setGenerationSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -44,6 +50,7 @@ export function ModelFeatureConfig() {
     try {
       setLoading(true);
       setError(null);
+      setGenerationSettingsError(null);
       const headers = getAuthHeaders();
       const [modelsRes, featuresRes, mappingsRes] = await Promise.all([
         fetch('/api/admin/model-registry', { headers }).then(r => r.json()),
@@ -65,6 +72,13 @@ export function ModelFeatureConfig() {
       // 检查是否有数据加载失败
       if (!modelsRes.success || !featuresRes.success) {
         setError(modelsRes.error || featuresRes.error || '加载数据失败');
+      }
+
+      try {
+        const settings = await fetchGenerationSettings();
+        setSummaryUpdateInterval(String(settings.summaryUpdateInterval || 2));
+      } catch (settingsError) {
+        console.warn('Failed to load generation settings', settingsError);
       }
     } catch (err) {
       console.error('Failed to load config data', err);
@@ -93,6 +107,30 @@ export function ModelFeatureConfig() {
       console.error('Failed to save mapping', error);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveSummaryUpdateInterval = async () => {
+    setGenerationSettingsError(null);
+    const parsed = Number.parseInt(summaryUpdateInterval, 10);
+
+    if (!Number.isInteger(parsed)) {
+      setGenerationSettingsError('摘要更新间隔必须是整数');
+      return;
+    }
+    if (parsed < 1 || parsed > 20) {
+      setGenerationSettingsError('摘要更新间隔范围为 1-20 章');
+      return;
+    }
+
+    try {
+      setSavingGenerationSettings(true);
+      const settings = await updateGenerationSettings(parsed);
+      setSummaryUpdateInterval(String(settings.summaryUpdateInterval));
+    } catch (err) {
+      setGenerationSettingsError((err as Error).message || '保存失败');
+    } finally {
+      setSavingGenerationSettings(false);
     }
   };
 
@@ -126,10 +164,45 @@ export function ModelFeatureConfig() {
           <h3 className="text-lg font-medium">模型分流配置</h3>
           <p className="text-sm text-muted-foreground">为不同功能指定特定的 AI 模型</p>
         </div>
-        {saving && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> 保存中...</span>}
+        {(saving || savingGenerationSettings) && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> 保存中...</span>}
       </div>
 
       <div className="grid gap-6">
+        <Card>
+          <CardHeader className="py-4">
+            <CardTitle className="text-base">章节摘要更新策略</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Label htmlFor="summary-update-interval">每隔</Label>
+              <Input
+                id="summary-update-interval"
+                type="number"
+                min={1}
+                max={20}
+                className="w-28"
+                value={summaryUpdateInterval}
+                onChange={(e) => setSummaryUpdateInterval(e.target.value)}
+              />
+              <Label htmlFor="summary-update-interval">章更新一次剧情摘要</Label>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleSaveSummaryUpdateInterval}
+                disabled={savingGenerationSettings}
+              >
+                保存
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              默认值为 2。数值越小，摘要更新越频繁、连贯性更强，但会增加生成耗时。
+            </p>
+            {generationSettingsError && (
+              <p className="text-xs text-destructive">{generationSettingsError}</p>
+            )}
+          </CardContent>
+        </Card>
+
         {Object.entries(groupedFeatures).map(([category, categoryFeatures]) => (
           <Card key={category}>
             <CardHeader className="py-4">
