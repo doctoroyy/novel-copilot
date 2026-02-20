@@ -13,6 +13,17 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at INTEGER DEFAULT NULL
 );
 
+-- System settings (global runtime configuration)
+CREATE TABLE IF NOT EXISTS system_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  description TEXT,
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
+);
+
+INSERT OR IGNORE INTO system_settings (setting_key, setting_value, description)
+VALUES ('summary_update_interval', '2', '批量生成时摘要更新间隔（章）');
+
 -- Invitation codes table
 CREATE TABLE IF NOT EXISTS invitation_codes (
   code TEXT PRIMARY KEY,
@@ -48,6 +59,20 @@ CREATE TABLE IF NOT EXISTS states (
   need_human_reason TEXT DEFAULT NULL
 );
 
+-- Summary memory snapshots (章节级记忆快照)
+CREATE TABLE IF NOT EXISTS summary_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chapter_index INTEGER NOT NULL,
+  rolling_summary TEXT NOT NULL,
+  open_loops TEXT DEFAULT '[]',
+  summary_updated INTEGER DEFAULT 1,
+  update_reason TEXT DEFAULT 'interval',
+  model_provider TEXT,
+  model_name TEXT,
+  created_at INTEGER DEFAULT (unixepoch() * 1000)
+);
+
 -- Chapters table
 CREATE TABLE IF NOT EXISTS chapters (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +93,8 @@ CREATE TABLE IF NOT EXISTS outlines (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_project_index ON chapters(project_id, chapter_index);
+CREATE INDEX IF NOT EXISTS idx_summary_memories_project_chapter ON summary_memories(project_id, chapter_index DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_summary_memories_created_at ON summary_memories(project_id, created_at DESC);
 
 -- Indexes for soft delete queries
 CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted_at);

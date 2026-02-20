@@ -26,6 +26,7 @@ import {
   buildTimelineContext,
   getCharacterNameMap,
 } from './context/timelineManager.js';
+import { compressRollingSummaryRecency } from './utils/rollingSummary.js';
 
 /**
  * 上下文预算配置
@@ -336,15 +337,8 @@ export function optimizeRollingSummary(
   chapterIndex: number,
   maxTokens: number = 900
 ): string {
-  const maxChars = maxTokens * 2;
-
-  if (!summary || summary.length <= maxChars) {
-    return summary || '';
-  }
-
-  // 简单截断，保留最近的内容（通常在末尾）
-  // 更好的实现应该用 AI 重新压缩
-  return summary.slice(-maxChars);
+  void chapterIndex;
+  return compressRollingSummaryRecency(summary || '', maxTokens);
 }
 
 /**

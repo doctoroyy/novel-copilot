@@ -528,7 +528,10 @@ async function handleTaskCancellationIfNeeded(params: {
   return { shouldStop: true, cancelled: true };
 }
 
-const DEFAULT_SUMMARY_UPDATE_INTERVAL = 5;
+const DEFAULT_SUMMARY_UPDATE_INTERVAL = 2;
+const MIN_SUMMARY_UPDATE_INTERVAL = 1;
+const MAX_SUMMARY_UPDATE_INTERVAL = 20;
+const SUMMARY_UPDATE_INTERVAL_KEY = 'summary_update_interval';
 
 type SummaryUpdatePlan = {
   shouldUpdate: boolean;
@@ -536,11 +539,37 @@ type SummaryUpdatePlan = {
   nextPlannedChapter: number;
 };
 
-function getSummaryUpdateInterval(env: Env): number {
-  const raw = (env as any).SUMMARY_UPDATE_INTERVAL;
-  const parsed = Number.parseInt(String(raw ?? ''), 10);
-  if (Number.isInteger(parsed) && parsed >= 1) {
-    return parsed;
+function normalizeSummaryUpdateInterval(value: unknown): number | null {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) {
+    return null;
+  }
+  if (parsed < MIN_SUMMARY_UPDATE_INTERVAL || parsed > MAX_SUMMARY_UPDATE_INTERVAL) {
+    return null;
+  }
+  return parsed;
+}
+
+async function getSummaryUpdateInterval(db: D1Database, env: Env): Promise<number> {
+  try {
+    const row = await db.prepare(`
+      SELECT setting_value
+      FROM system_settings
+      WHERE setting_key = ?
+      LIMIT 1
+    `).bind(SUMMARY_UPDATE_INTERVAL_KEY).first() as { setting_value?: string } | null;
+
+    const fromDb = normalizeSummaryUpdateInterval(row?.setting_value);
+    if (fromDb !== null) {
+      return fromDb;
+    }
+  } catch (error) {
+    console.warn('Failed to read summary update interval from DB:', (error as Error).message);
+  }
+
+  const fromEnv = normalizeSummaryUpdateInterval((env as any).SUMMARY_UPDATE_INTERVAL);
+  if (fromEnv !== null) {
+    return fromEnv;
   }
   return DEFAULT_SUMMARY_UPDATE_INTERVAL;
 }
@@ -601,6 +630,47 @@ function formatDurationMs(ms: number): string {
     return '0.0s';
   }
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+async function appendSummaryMemorySnapshot(params: {
+  db: D1Database;
+  projectId: string;
+  chapterIndex: number;
+  rollingSummary: string;
+  openLoops: string[];
+  summaryUpdated: boolean;
+  updateReason: SummaryUpdatePlan['reason'];
+  modelProvider?: string;
+  modelName?: string;
+}) {
+  try {
+    await params.db.prepare(`
+      INSERT INTO summary_memories (
+        project_id,
+        chapter_index,
+        rolling_summary,
+        open_loops,
+        summary_updated,
+        update_reason,
+        model_provider,
+        model_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      params.projectId,
+      params.chapterIndex,
+      params.rollingSummary,
+      JSON.stringify(params.openLoops || []),
+      params.summaryUpdated ? 1 : 0,
+      params.updateReason,
+      params.modelProvider || null,
+      params.modelName || null
+    ).run();
+  } catch (error) {
+    console.warn(
+      `[SummaryMemory] Failed to persist snapshot for project=${params.projectId}, chapter=${params.chapterIndex}:`,
+      (error as Error).message
+    );
+  }
 }
 
 // Helper to trigger background generation (now uses Cloudflare Queue)
@@ -770,7 +840,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         }
       }
 
-      const summaryUpdateInterval = getSummaryUpdateInterval(env);
+      const summaryUpdateInterval = await getSummaryUpdateInterval(env.DB, env);
       const summaryUpdatePlan = planSummaryUpdate({
         chapterIndex,
         currentStepIndex,
@@ -898,6 +968,18 @@ export async function runChapterGenerationTaskInBackground(params: {
         JSON.stringify(result.updatedOpenLoops),
         project.id
       ).run();
+
+      await appendSummaryMemorySnapshot({
+        db: env.DB,
+        projectId: project.id,
+        chapterIndex,
+        rollingSummary: result.updatedSummary,
+        openLoops: result.updatedOpenLoops,
+        summaryUpdated: !result.skippedSummary,
+        updateReason: summaryUpdatePlan.reason,
+        modelProvider: result.skippedSummary ? undefined : effectiveSummaryAiConfig.provider,
+        modelName: result.skippedSummary ? undefined : effectiveSummaryAiConfig.model,
+      });
 
       await updateTaskProgress(env.DB, taskId, chapterIndex, false);
 

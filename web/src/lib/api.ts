@@ -1013,6 +1013,26 @@ export async function fetchCreditStats(): Promise<any> {
   return data.stats;
 }
 
+export async function fetchGenerationSettings(): Promise<{ summaryUpdateInterval: number }> {
+  const res = await fetch(`${API_BASE}/admin/generation-settings`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.settings as { summaryUpdateInterval: number };
+}
+
+export async function updateGenerationSettings(summaryUpdateInterval: number): Promise<{ summaryUpdateInterval: number }> {
+  const res = await fetch(`${API_BASE}/admin/generation-settings`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ summaryUpdateInterval }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.settings as { summaryUpdateInterval: number };
+}
+
 // 从远程 AI 提供商获取可用模型列表
 export async function fetchRemoteModels(
   provider: string,
