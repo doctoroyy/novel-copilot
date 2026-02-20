@@ -10,6 +10,10 @@ export interface AIConfig {
   baseUrl?: string;
 }
 
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+const MAX_AUTO_EXPAND_OUTPUT_TOKENS = 24000;
+
 /**
  * Convert internal AIConfig to pi-ai Model
  */
@@ -22,11 +26,13 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
 
   let provider: any = effectiveProvider || 'openai';
   let baseUrl = config.baseUrl || preset?.defaultBaseUrl;
+  let maxTokens = DEFAULT_MAX_OUTPUT_TOKENS;
 
   if (preset?.protocol === 'gemini' || effectiveProvider === 'gemini') {
     api = 'google-generative-ai';
     provider = 'google';
     baseUrl = normalizeGeminiBaseUrl(baseUrl);
+    maxTokens = GEMINI_DEFAULT_MAX_OUTPUT_TOKENS;
   } else if (preset?.protocol === 'anthropic' || effectiveProvider === 'anthropic') {
     api = 'anthropic';
     provider = 'anthropic';
@@ -52,7 +58,7 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
-    maxTokens: 4096,
+    maxTokens,
   };
 }
 
@@ -101,7 +107,7 @@ export async function generateText(
 /**
  * Classify error types for retry/fallback decisions
  */
-type ErrorType = 'rate_limit' | 'server_error' | 'timeout' | 'auth_error' | 'invalid_request' | 'unknown';
+type ErrorType = 'rate_limit' | 'server_error' | 'timeout' | 'auth_error' | 'invalid_request' | 'truncated' | 'unknown';
 
 function isTruncatedStopReason(stopReason?: string): boolean {
   if (!stopReason) return false;
@@ -113,7 +119,7 @@ function classifyError(error: Error): ErrorType {
   const message = error.message.toLowerCase();
 
   if (message.includes('输出被截断') || message.includes('truncated') || message.includes('stopreason=length')) {
-    return 'invalid_request';
+    return 'truncated';
   }
   if (message.includes('quota') || message.includes('429') || message.includes('rate')) {
     return 'rate_limit';
@@ -140,13 +146,16 @@ function classifyError(error: Error): ErrorType {
  * Check if error is retryable
  */
 function isRetryableError(errorType: ErrorType): boolean {
-  return ['rate_limit', 'server_error', 'timeout', 'unknown'].includes(errorType);
+  return ['rate_limit', 'server_error', 'timeout', 'truncated', 'unknown'].includes(errorType);
 }
 
 /**
  * Get delay for retry based on error type and attempt number
  */
 function getRetryDelay(errorType: ErrorType, attempt: number): number {
+  if (errorType === 'truncated') {
+    return 0;
+  }
   if (errorType === 'rate_limit') {
     return 10000 * Math.pow(2, attempt);
   }
@@ -154,6 +163,30 @@ function getRetryDelay(errorType: ErrorType, attempt: number): number {
     return 3000 * (attempt + 1);
   }
   return 2000 * (attempt + 1);
+}
+
+function isGeminiConfig(config: AIConfig): boolean {
+  const preset = getProviderPreset(normalizeProviderId(config.provider));
+  if (preset?.protocol === 'gemini') return true;
+  return /generativelanguage\.googleapis\.com/i.test(String(config.baseUrl || ''));
+}
+
+function getAutoExpandTokenCap(config: AIConfig): number {
+  if (isGeminiConfig(config)) {
+    return MAX_AUTO_EXPAND_OUTPUT_TOKENS;
+  }
+  return 12000;
+}
+
+function getNextExpandedMaxTokens(current: number | undefined, cap: number): number | null {
+  if (current === undefined || !Number.isFinite(current) || current <= 0) {
+    return Math.min(8192, cap);
+  }
+  if (current >= cap) {
+    return null;
+  }
+  const next = Math.ceil(current * 1.5);
+  return Math.min(Math.max(current + 512, next), cap);
 }
 
 /**
@@ -165,14 +198,27 @@ export async function generateTextWithRetry(
   maxRetries = 5
 ): Promise<string> {
   let lastError: Error | undefined;
+  const requestArgs: Parameters<typeof generateText>[1] = { ...args };
 
   for (let i = 0; i < maxRetries; i++) {
     try {
-      return await generateText(config, args);
+      return await generateText(config, requestArgs);
     } catch (error) {
       lastError = error as Error;
       const errorType = classifyError(lastError);
       console.warn(`Generation attempt ${i + 1} failed (${errorType}):`, lastError.message);
+
+      if (errorType === 'truncated') {
+        const cap = getAutoExpandTokenCap(config);
+        const nextMaxTokens = getNextExpandedMaxTokens(requestArgs.maxTokens, cap);
+        if (nextMaxTokens !== null) {
+          requestArgs.maxTokens = nextMaxTokens;
+          console.warn(
+            `Detected truncated output, retrying with higher maxTokens=${nextMaxTokens} (cap=${cap})`
+          );
+          continue;
+        }
+      }
 
       if (!isRetryableError(errorType)) {
         throw lastError;
