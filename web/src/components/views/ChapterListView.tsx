@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
 import { generateSingleChapter } from '@/lib/api';
+import { useGeneration } from '@/contexts/GenerationContext';
 import { ChapterEditor } from '@/components/ChapterEditor';
 
 // Cross-platform clipboard copy with fallback for mobile browsers
@@ -76,6 +77,7 @@ export function ChapterListView({
   onGenerateNextChapter,
   isProjectGenerating = false,
 }: ChapterListViewProps) {
+  const { startTask, activeTasks } = useGeneration();
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -105,8 +107,24 @@ export function ChapterListView({
   const nextChapterIndex = project.state.nextChapterIndex;
   const generatedChapters = Math.max(0, nextChapterIndex - 1);
   const remainingChapters = Math.max(0, project.state.totalChapters - generatedChapters);
-  const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && generatingChapter === null && !isProjectGenerating;
-  const isGeneratingNextChapter = isProjectGenerating || generatingChapter === nextChapterIndex;
+
+  // Check if any active task is generating our project
+  const currentProjectTasks = activeTasks.filter(t => t.projectName === project.id);
+  const isGeneratingTaskActive = currentProjectTasks.some(t => t.status === 'generating' || t.status === 'preparing' || t.status === 'saving');
+
+  // Check if specific chapters are currently being generated in background
+  const getIsChapterGenerating = (index: number) => {
+    return generatingChapter === index || currentProjectTasks.some(t => {
+      if (t.type !== 'chapters') return false;
+      // If it's a single chapter task
+      if (t.title.includes(`第 ${index} 章`)) return true;
+      // If it's a batch task, we check if current progress matches (approximate)
+      return t.current === index || (t.startChapter && index >= t.startChapter && index < (t.startChapter + (t.total || 0)));
+    });
+  };
+
+  const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && !isProjectGenerating && !isGeneratingTaskActive;
+  const isGeneratingNextChapter = isProjectGenerating || isGeneratingTaskActive || generatingChapter === nextChapterIndex;
 
   const getChapterTitle = (chapterIndex: number) => {
     if (!project.outline) return null;
@@ -202,11 +220,12 @@ export function ChapterListView({
         await onGenerateNextChapter();
       } else {
         await generateSingleChapter(project.id, nextIndex, false);
-        await onProjectRefresh?.();
+        startTask('chapters', `生成第 ${nextIndex} 章`, project.id, 1);
+        // We don't need to refresh immediately as the background task will be tracked in FloatingProgressButton
       }
     } catch (err) {
       console.error('Generation failed:', err);
-      setActionError(`生成失败：${(err as Error).message}`);
+      setActionError(`生成提交失败：${(err as Error).message}`);
     } finally {
       setGeneratingChapter(null);
     }
@@ -220,10 +239,10 @@ export function ChapterListView({
     setGeneratingChapter(index);
     try {
       await generateSingleChapter(project.id, index, true);
-      await onProjectRefresh?.();
+      startTask('chapters', `重写第 ${index} 章`, project.id, 1);
     } catch (err) {
       console.error('Regeneration failed:', err);
-      setActionError(`重写失败：${(err as Error).message}`);
+      setActionError(`重写提交失败：${(err as Error).message}`);
     } finally {
       setGeneratingChapter(null);
     }
@@ -307,7 +326,7 @@ export function ChapterListView({
                     </Button>
                   </>
                 ) : (
-                    <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
+                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
                     <Trash2 className="h-3.5 w-3.5" />
                     批量删除
                   </Button>
@@ -319,16 +338,16 @@ export function ChapterListView({
                 {actionError}
               </div>
             )}
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               className="text-xs h-7 ml-auto"
               onClick={() => setEditingChapter({ content: '' })}
             >
               <Edit className="h-3.5 w-3.5 mr-1" />
               新建章节
             </Button>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               className="text-xs h-7 ml-2"
               onClick={handleGenerateNext}
               disabled={!canGenerateNext}
@@ -416,11 +435,11 @@ export function ChapterListView({
                                     </button>
                                     <button
                                       onClick={(e) => handleRegenerate(chapterIndex, e)}
-                                      disabled={generatingChapter === chapterIndex}
+                                      disabled={getIsChapterGenerating(chapterIndex)}
                                       className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                                       title="重新生成"
                                     >
-                                      {generatingChapter === chapterIndex ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                                      {getIsChapterGenerating(chapterIndex) ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
                                       重写
                                     </button>
                                     {onDeleteChapter && (
@@ -593,11 +612,11 @@ export function ChapterListView({
                             </button>
                             <button
                               onClick={(e) => handleRegenerate(index, e)}
-                              disabled={generatingChapter === index}
+                              disabled={getIsChapterGenerating(index)}
                               className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                               title="重新生成"
                             >
-                              {generatingChapter === index ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
+                              {getIsChapterGenerating(index) ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
                               重写
                             </button>
                             {onDeleteChapter && (

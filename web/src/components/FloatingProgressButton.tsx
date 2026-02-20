@@ -76,8 +76,8 @@ export function FloatingProgressButton() {
           "fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg",
           "flex items-center justify-center transition-all duration-300",
           "hover:scale-110 active:scale-95",
-          hasActiveTasks 
-            ? "bg-primary text-primary-foreground" 
+          hasActiveTasks
+            ? "bg-primary text-primary-foreground"
             : "bg-card border border-border text-muted-foreground hover:text-foreground"
         )}
       >
@@ -102,7 +102,7 @@ export function FloatingProgressButton() {
               <Activity className="w-4 h-4" />
               任务管理
             </h3>
-            <button 
+            <button
               onClick={() => setIsOpen(false)}
               className="p-1 hover:bg-muted rounded-md transition-colors"
             >
@@ -123,10 +123,10 @@ export function FloatingProgressButton() {
               <div className="space-y-2">
                 {allTasks.map(task => {
                   const config = TASK_CONFIG[task.type];
-                  const progressPercent = task.total && task.total > 0 
+                  const progressPercent = task.total && task.total > 0
                     ? Math.min(100, Math.max(0, Math.round((Math.max(0, task.current || 0) / task.total) * 100)))
                     : null;
-                  
+
                   return (
                     <div key={task.id} className="bg-muted/50 rounded-lg p-3">
                       <div className="flex items-start gap-2">
@@ -138,6 +138,7 @@ export function FloatingProgressButton() {
                           <p className="text-xs text-muted-foreground">
                             {config.label}
                             {task.projectName && ` · ${task.projectName}`}
+                            {task.startChapter && ` · 第 ${task.startChapter} 章起`}
                             {progressPercent !== null && ` · ${progressPercent}%`}
                           </p>
                         </div>
@@ -160,7 +161,7 @@ export function FloatingProgressButton() {
                       {/* Progress bar for tasks with progress */}
                       {progressPercent !== null && (
                         <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className="h-full bg-primary transition-all duration-300"
                             style={{ width: `${progressPercent}%` }}
                           />
@@ -169,7 +170,7 @@ export function FloatingProgressButton() {
                       {/* Indeterminate progress for tasks without specific progress */}
                       {progressPercent === null && (
                         <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden relative">
-                          <div 
+                          <div
                             className="absolute h-full w-1/3 bg-primary rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]"
                             style={{
                               animation: 'indeterminate 1.5s ease-in-out infinite',
@@ -186,14 +187,14 @@ export function FloatingProgressButton() {
 
           {/* History Section */}
           <div className="max-h-[40vh] overflow-y-auto">
-            <button 
+            <button
               onClick={() => setShowHistory(!showHistory)}
               className="w-full px-3 py-2 flex items-center justify-between text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
             >
               <span>历史记录 ({history.length})</span>
               {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
-            
+
             {showHistory && (
               <div className="px-3 pb-3 space-y-2">
                 {history.length === 0 ? (

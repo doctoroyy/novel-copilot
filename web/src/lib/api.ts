@@ -318,15 +318,19 @@ export async function generateChapters(
   name: string,
   chaptersToGenerate: number,
   aiHeaders?: Record<string, string>
-): Promise<{ chapter: number; title: string }[]> {
+): Promise<{ taskId: number; message: string }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ chaptersToGenerate }),
   });
   const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.generated;
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!data.success) throw new Error(data.error || 'Generation failed');
+  return {
+    taskId: data.taskId,
+    message: data.message
+  };
 }
 
 // Streaming generation event types
@@ -370,6 +374,32 @@ export type GenerationEvent = {
   totalGenerated?: number;
   totalFailed?: number;
 };
+
+/**
+ * Generate a single chapter (async background task)
+ * Returns the taskId to track progress
+ */
+export async function generateSingleChapter(
+  name: string,
+  index: number,
+  regenerate: boolean = false,
+  aiHeaders?: Record<string, string>
+): Promise<{ taskId: number; message: string }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/generate`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
+    body: JSON.stringify({ regenerate }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!data.success) throw new Error(data.error || 'Generation failed');
+
+  return {
+    taskId: data.taskId,
+    message: data.message
+  };
+}
 
 /**
  * Stream chapter generation with real-time updates
@@ -806,51 +836,7 @@ export async function chatWithChapter(
   return data.response;
 }
 
-export async function generateSingleChapter(
-  name: string,
-  index: number,
-  regenerate: boolean = false,
-  aiHeaders?: Record<string, string>,
-  onMessage?: (msg: any) => void
-): Promise<void> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/generate`, {
-    method: 'POST',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ regenerate }),
-  });
-
-  if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || 'Failed to start generation');
-  }
-
-  if (!res.body) throw new Error('No response body');
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        try {
-          const parsed = JSON.parse(data);
-          onMessage?.(parsed);
-        } catch (e) {
-          console.error('Failed to parse SSE message:', e);
-        }
-      }
-    }
-  }
-}
+// generateSingleChapter is defined above
 
 export async function createChapter(
   name: string,

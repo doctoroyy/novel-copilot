@@ -299,7 +299,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
   });
 });
 
-// Generate single chapter (with order validation)
+// Generate single chapter (now as an async background task)
 generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
   const name = c.req.param('name');
   const index = parseInt(c.req.param('index'), 10);
@@ -313,165 +313,61 @@ generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  const encoder = new TextEncoder();
+  try {
+    const { regenerate = false } = await c.req.json().catch(() => ({}));
 
-  // Create a readable stream for SSE
-  const stream = new ReadableStream({
-    async start(controller) {
-      // Helper to send SSE event
-      const sendEvent = (type: string, data: any) => {
-        try {
-          const payload = JSON.stringify({ type, ...data });
-          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-        } catch (e) {
-          console.error('Error sending event', e);
-        }
-      };
+    // Get project with state and outline
+    const project = await c.env.DB.prepare(`
+      SELECT p.id, p.name, p.bible, s.next_chapter_index, s.total_chapters
+      FROM projects p
+      JOIN states s ON p.id = s.project_id
+      WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as any;
 
-      try {
-        const { regenerate = false } = await c.req.json().catch(() => ({}));
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
 
-        // Get project with state and outline
-        const project = await c.env.DB.prepare(`
-          SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
-          FROM projects p
-          JOIN states s ON p.id = s.project_id
-          LEFT JOIN outlines o ON p.id = o.project_id
-          LEFT JOIN characters c ON p.id = c.project_id
-          WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
-          ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
-          LIMIT 1
-        `).bind(name, name, userId, name).first() as any;
+    // Validate chapter order
+    const maxChapterResult = await c.env.DB.prepare(`
+      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
+    `).bind(project.id).first() as any;
 
-        if (!project) {
-          sendEvent('error', { error: 'Project not found' });
-          controller.close();
-          return;
-        }
+    const maxIndex = maxChapterResult?.max_index || 0;
 
-        const runningTask = await checkRunningTask(c.env.DB, project.id, userId);
-        if (runningTask.isRunning) {
-          sendEvent('error', { error: '当前有后台章节任务正在运行，请先等待完成或取消任务后再单章生成。' });
-          controller.close();
-          return;
-        }
+    if (index > maxIndex + 1) {
+      return c.json({ success: false, error: `无法跳过生成。当前最大章节为第 ${maxIndex} 章，必须先生成第 ${maxIndex + 1} 章。` }, 400);
+    }
 
-        // Validate chapter order
-        const maxChapterResult = await c.env.DB.prepare(`
-          SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-        `).bind(project.id).first() as any;
+    // Check if chapter already exists when not regenerating
+    if (index <= maxIndex && !regenerate) {
+      return c.json({ success: false, error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` }, 409);
+    }
 
-        const maxIndex = maxChapterResult?.max_index || 0;
+    // Use task system for background generation
+    const taskId = await createGenerationTask(
+      c.env.DB,
+      project.id,
+      userId,
+      1, // Just one chapter
+      index
+    );
 
-        if (index > maxIndex + 1) {
-          sendEvent('error', { error: `无法跳过生成。当前最大章节为第 ${maxIndex} 章，必须先生成第 ${maxIndex + 1} 章。` });
-          controller.close();
-          return;
-        }
+    // Enqueue
+    await startGenerationChain(c, taskId, userId, aiConfig, 1);
 
-        // Check if chapter already exists when not regenerating
-        if (index <= maxIndex && !regenerate) {
-          sendEvent('error', { error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` });
-          controller.close();
-          return;
-        }
+    return c.json({
+      success: true,
+      message: '章节生成任务已在后台启动',
+      taskId
+    }, 202);
 
-        // Prepare prompt context
-        // If regenerating a middle chapter, we use the content of the PREVIOUS chapter as 'lastChapters' logic
-        const { results: lastChapters } = await c.env.DB.prepare(`
-          SELECT content FROM chapters 
-          WHERE project_id = ? AND chapter_index < ? AND deleted_at IS NULL
-          ORDER BY chapter_index DESC LIMIT 2
-        `).bind(project.id, index).all();
-
-        // Get chapter goal from outline
-        const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
-        const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-
-        let chapterGoalHint: string | undefined;
-        let outlineTitle: string | undefined;
-        if (outline) {
-          for (const vol of outline.volumes) {
-            const ch = vol.chapters?.find((c: any) => c.index === index);
-            if (ch) {
-              outlineTitle = ch.title;
-              chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
-              break;
-            }
-          }
-        }
-
-        sendEvent('start', { index, title: outlineTitle });
-        sendEvent('progress', { message: '正在调用 AI 生成...' });
-
-        // 0. Consume Credit
-        try {
-          await consumeCredit(c.env.DB, userId, 'generate_chapter', `生成章节: ${project.name || '未知项目'} 第 ${index} 章`);
-        } catch (error) {
-          sendEvent('error', { error: (error as Error).message, status: 402 }); // 402 Payment Required
-          controller.close();
-          return;
-        }
-
-        // Generate chapter
-        const result = await writeOneChapter({
-          aiConfig,
-          bible: project.bible,
-          rollingSummary: project.rolling_summary || '', // Use current summary (might be slightly off for mid-chapter regen, but acceptable)
-          openLoops: JSON.parse(project.open_loops || '[]'),
-          lastChapters: lastChapters.map((c: any) => c.content).reverse(),
-          chapterIndex: index,
-          totalChapters: project.total_chapters,
-          chapterGoalHint,
-          chapterTitle: outlineTitle,
-          characters,
-          onProgress: (message, status) => {
-            sendEvent('progress', { message, status });
-          },
-        });
-
-        const chapterText = result.chapterText;
-
-        // Save chapter
-        await c.env.DB.prepare(`
-          INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-        `).bind(project.id, index, chapterText).run();
-
-        // ONLY update state if we are appending a new chapter (not regenerating old ones)
-        // Updating state for old chapters is dangerous as it invalidates future summaries
-        if (index === maxIndex + 1) {
-          await c.env.DB.prepare(`
-            UPDATE states SET 
-              next_chapter_index = ?,
-              rolling_summary = ?,
-              open_loops = ?
-            WHERE project_id = ?
-          `).bind(
-            index + 1,
-            result.updatedSummary,
-            JSON.stringify(result.updatedOpenLoops),
-            project.id
-          ).run();
-        }
-
-        sendEvent('done', { success: true, index, content: chapterText });
-        controller.close();
-
-      } catch (error) {
-        console.error('Generation error:', error);
-        sendEvent('error', { error: (error as Error).message });
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+  } catch (error) {
+    console.error('Async single chapter generation failed:', error);
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
 });
 
 // Generate chapters
@@ -504,14 +400,6 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
-    }
-
-    const runningTask = await checkRunningTask(c.env.DB, project.id, userId);
-    if (runningTask.isRunning) {
-      return c.json(
-        { success: false, error: '当前有后台章节任务正在运行，请先等待完成或取消任务后再发起此请求。' },
-        409
-      );
     }
 
     // Validate state: check if nextChapterIndex matches actual chapter data
