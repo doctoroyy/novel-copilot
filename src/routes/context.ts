@@ -4,6 +4,7 @@
  * 管理:
  * - 人物状态 (Character States)
  * - 剧情图谱 (Plot Graph)
+ * - 剧情摘要记忆快照 (Summary Memories)
  * - 叙事配置 (Narrative Config)
  * - QC 结果 (QC Results)
  */
@@ -50,6 +51,68 @@ function getAIConfigFromHeaders(c: any): AIConfig | null {
 
   return { provider: provider as AIConfig['provider'], model, apiKey, baseUrl };
 }
+
+// ==================== Summary Memory API ====================
+
+// Get summary memory snapshots for a project
+contextRoutes.get('/projects/:name/summary-memories', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId') as string | null;
+  const limitRaw = Number.parseInt(c.req.query('limit') || '30', 10);
+  const limit = Number.isInteger(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 30;
+
+  try {
+    const project = await c.env.DB.prepare(`
+      SELECT id
+      FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as { id: string } | null;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const { results } = await c.env.DB.prepare(`
+      SELECT id, chapter_index, rolling_summary, open_loops, summary_updated, update_reason, model_provider, model_name, created_at
+      FROM summary_memories
+      WHERE project_id = ?
+      ORDER BY chapter_index DESC, id DESC
+      LIMIT ?
+    `).bind(project.id, limit).all();
+
+    const memories = (results || []).map((row: any) => {
+      let openLoops: string[] = [];
+      try {
+        openLoops = row.open_loops ? JSON.parse(row.open_loops) : [];
+      } catch {
+        openLoops = [];
+      }
+      return {
+        id: row.id,
+        chapterIndex: row.chapter_index,
+        rollingSummary: row.rolling_summary,
+        openLoops,
+        summaryUpdated: Boolean(row.summary_updated),
+        updateReason: row.update_reason,
+        modelProvider: row.model_provider,
+        modelName: row.model_name,
+        createdAt: row.created_at,
+      };
+    });
+
+    return c.json({
+      success: true,
+      data: {
+        total: memories.length,
+        memories,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
 
 // ==================== Character States API ====================
 

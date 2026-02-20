@@ -603,6 +603,47 @@ function formatDurationMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+async function appendSummaryMemorySnapshot(params: {
+  db: D1Database;
+  projectId: string;
+  chapterIndex: number;
+  rollingSummary: string;
+  openLoops: string[];
+  summaryUpdated: boolean;
+  updateReason: SummaryUpdatePlan['reason'];
+  modelProvider?: string;
+  modelName?: string;
+}) {
+  try {
+    await params.db.prepare(`
+      INSERT INTO summary_memories (
+        project_id,
+        chapter_index,
+        rolling_summary,
+        open_loops,
+        summary_updated,
+        update_reason,
+        model_provider,
+        model_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      params.projectId,
+      params.chapterIndex,
+      params.rollingSummary,
+      JSON.stringify(params.openLoops || []),
+      params.summaryUpdated ? 1 : 0,
+      params.updateReason,
+      params.modelProvider || null,
+      params.modelName || null
+    ).run();
+  } catch (error) {
+    console.warn(
+      `[SummaryMemory] Failed to persist snapshot for project=${params.projectId}, chapter=${params.chapterIndex}:`,
+      (error as Error).message
+    );
+  }
+}
+
 // Helper to trigger background generation (now uses Cloudflare Queue)
 async function startGenerationChain(
   c: any,
@@ -898,6 +939,18 @@ export async function runChapterGenerationTaskInBackground(params: {
         JSON.stringify(result.updatedOpenLoops),
         project.id
       ).run();
+
+      await appendSummaryMemorySnapshot({
+        db: env.DB,
+        projectId: project.id,
+        chapterIndex,
+        rollingSummary: result.updatedSummary,
+        openLoops: result.updatedOpenLoops,
+        summaryUpdated: !result.skippedSummary,
+        updateReason: summaryUpdatePlan.reason,
+        modelProvider: result.skippedSummary ? undefined : effectiveSummaryAiConfig.provider,
+        modelName: result.skippedSummary ? undefined : effectiveSummaryAiConfig.model,
+      });
 
       await updateTaskProgress(env.DB, taskId, chapterIndex, false);
 
