@@ -548,8 +548,6 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     // 2. Enqueue the task into Cloudflare Queues
     await startGenerationChain(c, taskId, userId, aiConfig,
-      c.req.header('referer') || c.req.header('origin'),
-      c.req.header('authorization'),
       chaptersToGenerate
     );
 
@@ -687,8 +685,6 @@ async function startGenerationChain(
   taskId: number,
   userId: string,
   aiConfig: AIConfig,
-  origin?: string,
-  authHeader?: string,
   chaptersToGenerate?: number
 ) {
   if (c.env.GENERATION_QUEUE) {
@@ -697,8 +693,6 @@ async function startGenerationChain(
       taskId,
       userId,
       aiConfig,
-      origin,
-      authHeader,
       chaptersToGenerate
     });
     console.log(`Task ${taskId} enqueued successfully.`);
@@ -711,8 +705,6 @@ async function startGenerationChain(
         aiConfig,
         userId,
         taskId,
-        origin,
-        authHeader,
         chaptersToGenerate
       })
     );
@@ -724,24 +716,14 @@ export async function runChapterGenerationTaskInBackground(params: {
   aiConfig: AIConfig;
   userId: string;
   taskId: number;
-  origin?: string;
-  authHeader?: string;
-  projectName?: string;
-  projectId?: string;
   chaptersToGenerate?: number;
-  startingChapterIndex?: number;
 }) {
   const {
     env,
     aiConfig,
     userId,
     taskId,
-    origin,
-    authHeader,
-    projectName,
-    projectId,
     chaptersToGenerate,
-    startingChapterIndex
   } = params;
 
   try {
@@ -998,39 +980,20 @@ export async function runChapterGenerationTaskInBackground(params: {
       return;
     }
 
-    // RELAY: Trigger next step via subrequest
-    if (origin && !task.cancelRequested) {
-      console.log(`Relaying to next chapter: ${taskId}`);
-
-      // Use fetch to trigger the next worker
-      // Note: We don't await this fetch because we want the current worker to exit successfully
-      // However, in Cloudflare Workers, we must ensure the fetch is registered with waitUntil 
-      // or awaited if we want to ensure it's sent.
-      // Here we are inside a waitUntil (likely), but to be safe, we await it since this worker is finishing anyway.
+    // RELAY: Trigger next step via Queue (more robust than fetch)
+    if (env.GENERATION_QUEUE && !task.cancelRequested) {
+      console.log(`[Queue] Enqueuing next step for task: ${taskId}`);
 
       try {
-        const response = await fetch(`${origin}/api/generation/projects/${project.name}/tasks/${taskId}/process-next`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': authHeader || ''
-          },
-          body: JSON.stringify({
-            aiConfig,
-            origin,
-            authHeader,
-            userId,
-            chaptersToGenerate
-          })
+        await env.GENERATION_QUEUE.send({
+          taskId,
+          userId,
+          aiConfig,
+          chaptersToGenerate
         });
-
-        if (!response.ok) {
-          console.error(`Relay failed: ${response.status} ${await response.text()}`);
-          // If relay fails, mark task as failed? Or just log? 
-          // Maybe retry logic here? For now, we log.
-        }
-      } catch (relayError) {
-        console.error('Relay network error:', relayError);
+      } catch (queueError) {
+        console.error('[Queue] Failed to enqueue next step:', queueError);
+        // If enqueuing next step fails, we might want to mark the task as failed or just rely on manual resume
       }
     }
 
@@ -1043,41 +1006,6 @@ export async function runChapterGenerationTaskInBackground(params: {
     }
   }
 }
-
-// [RELAY] Process Next Step — triggered by the previous worker to continue the chain
-// This avoids Cloudflare subrequest limits by spawning a fresh worker for each chapter.
-generationRoutes.post('/projects/:name/tasks/:taskId/process-next', async (c) => {
-  const name = c.req.param('name');
-  const taskId = parseInt(c.req.param('taskId'));
-
-  const authUserId = c.get('userId') as string | null;
-  const { aiConfig, origin, authHeader, userId: bodyUserId, chaptersToGenerate } = await c.req.json();
-
-  if (!aiConfig || !origin || !bodyUserId) {
-    return c.json({ success: false, error: 'Missing required parameters' }, 400);
-  }
-
-  // Security check: Ensure the authenticated user matches the requested user (if auth is active)
-  if (authUserId && authUserId !== bodyUserId) {
-    return c.json({ success: false, error: 'User ID mismatch' }, 403);
-  }
-
-  const effectiveUserId = authUserId || bodyUserId;
-
-  c.executionCtx.waitUntil(
-    runChapterGenerationTaskInBackground({
-      env: c.env,
-      aiConfig,
-      userId: effectiveUserId,
-      taskId,
-      origin,
-      authHeader,
-      chaptersToGenerate
-    })
-  );
-
-  return c.json({ success: true, message: 'Next step triggered' });
-});
 
 // Streaming chapter generation monitor (task runs in background)
 generationRoutes.post('/projects/:name/generate-stream', async (c) => {
@@ -1192,7 +1120,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     );
 
   // Always start/restart the chain — even on resume, the previous chain may have died silently
-  startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader, chaptersToGenerate);
+  startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate);
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
   const encoder = new TextEncoder();
@@ -1435,7 +1363,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
     const authHeader = c.req.header('Authorization') || '';
     const origin = new URL(c.req.url).origin;
 
-    startGenerationChain(c, taskId, userId, aiConfig, origin, authHeader);
+    startGenerationChain(c, taskId, userId, aiConfig);
 
     // We return immediately, the task runs in background (via startGenerationChain -> waitUntil)
     // Client can poll task status or listen to SSE

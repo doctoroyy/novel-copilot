@@ -113,9 +113,9 @@ authRoutes.post('/login', async (c) => {
 
     return c.json({
       success: true,
-      user: { 
-        id: (user as any).id, 
-        username: (user as any).username, 
+      user: {
+        id: (user as any).id,
+        username: (user as any).username,
         role: (user as any).role || 'user',
         allowCustomProvider: !!(user as any).allow_custom_provider,
       },
@@ -187,7 +187,7 @@ authRoutes.get('/google', async (c) => {
   // Get the origin from request or use default
   const origin = c.req.header('Origin') || c.req.header('Referer')?.replace(/\/$/, '') || 'https://novel-copilot.doctoroyy.workers.dev';
   const redirectUri = `${origin}/api/auth/google/callback`;
-  
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -199,7 +199,7 @@ authRoutes.get('/google', async (c) => {
   });
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-  
+
   return c.redirect(authUrl);
 });
 
@@ -222,7 +222,7 @@ authRoutes.get('/google/callback', async (c) => {
     const clientId = c.env.GOOGLE_CLIENT_ID;
     // @ts-ignore
     const clientSecret = c.env.GOOGLE_CLIENT_SECRET;
-    
+
     if (!clientId || !clientSecret) {
       return c.redirect(`${state || ''}/login?error=oauth_not_configured`);
     }
@@ -244,7 +244,7 @@ authRoutes.get('/google/callback', async (c) => {
     });
 
     const tokenData = await tokenResponse.json() as any;
-    
+
     if (tokenData.error) {
       console.error('Token exchange error:', tokenData);
       return c.redirect(`${origin}/login?error=token_exchange_failed`);
@@ -282,7 +282,7 @@ authRoutes.get('/google/callback', async (c) => {
         // Create new user
         const userId = crypto.randomUUID();
         const username = googleUser.name || googleUser.email.split('@')[0];
-        
+
         // Ensure unique username
         let finalUsername = username;
         let counter = 1;
