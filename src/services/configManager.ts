@@ -84,7 +84,7 @@ export interface SystemConfig {
  * 默认上下文预算
  */
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
-  totalTokens: 16000,
+  totalTokens: 24000,
   allocation: {
     bible: 0.15,
     characterState: 0.10,
@@ -207,6 +207,9 @@ export function getContextBudgetForModel(model: string): ContextBudget {
   // 根据模型调整 token 预算
   const modelContextSizes: Record<string, number> = {
     // Gemini models
+    'gemini-2.5-pro': 1048576,
+    'gemini-2.5-flash': 1048576,
+    'gemini-2.0-pro': 1048576,
     'gemini-2.0-flash': 128000,
     'gemini-1.5-pro': 128000,
     'gemini-1.5-flash': 128000,
@@ -221,16 +224,16 @@ export function getContextBudgetForModel(model: string): ContextBudget {
   };
   
   // 找到匹配的模型或使用默认值
-  let contextSize = 16000;
+  let contextSize = 128000;
   for (const [modelName, size] of Object.entries(modelContextSizes)) {
     if (model.includes(modelName)) {
       contextSize = size;
       break;
     }
   }
-  
-  // 使用模型上下文的 10% 作为预算（保守策略）
-  const adjustedTokens = Math.min(contextSize * 0.1, 32000);
+
+  // 使用模型上下文的 15% 作为预算，并放宽上限
+  const adjustedTokens = Math.min(contextSize * 0.15, 48000);
   
   return {
     ...baseConfig,
