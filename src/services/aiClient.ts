@@ -1,6 +1,7 @@
 import { completeSimple, Model as PiAiModel, streamSimple, SimpleStreamOptions } from '@mariozechner/pi-ai';
+import { detectProviderByBaseUrl, getProviderPreset, normalizeProviderId } from './providerCatalog.js';
 
-export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
+export type AIProvider = string;
 
 export interface AIConfig {
   provider: AIProvider;
@@ -14,31 +15,30 @@ export interface AIConfig {
  */
 function toPiAiModel(config: AIConfig): PiAiModel<any> {
   let api: any = 'openai-completions';
-  let provider: any = config.provider;
-  let baseUrl = config.baseUrl;
+  const normalizedProvider = normalizeProviderId(config.provider);
+  const providerByUrl = detectProviderByBaseUrl(config.baseUrl);
+  const effectiveProvider = providerByUrl || normalizedProvider;
+  const preset = getProviderPreset(effectiveProvider) || getProviderPreset(normalizedProvider);
 
-  if (config.provider === 'gemini') {
+  let provider: any = effectiveProvider || 'openai';
+  let baseUrl = config.baseUrl || preset?.defaultBaseUrl;
+
+  if (preset?.protocol === 'gemini' || effectiveProvider === 'gemini') {
     api = 'google-generative-ai';
     provider = 'google';
-    if (!baseUrl) {
-      // Default Google Generative AI base URL is handled by pi-ai if not set
-    }
-  } else if (config.provider === 'deepseek') {
-    provider = 'openai'; // DeepSeek is OpenAI compatible
-    if (!baseUrl) {
-      baseUrl = 'https://api.deepseek.com/v1';
-    }
-  } else if (config.provider === 'openai') {
-    provider = 'openai';
-    if (!baseUrl) {
-      baseUrl = 'https://api.openai.com/v1';
-    }
+  } else if (preset?.protocol === 'anthropic' || effectiveProvider === 'anthropic') {
+    api = 'anthropic';
+    provider = 'anthropic';
   } else {
-    // custom or unknown
-    provider = 'openai';
-    if (!baseUrl) {
-      throw new Error('Custom provider requires baseUrl');
-    }
+    api = 'openai-completions';
+    provider = effectiveProvider || 'openai';
+  }
+
+  if (!baseUrl && provider === 'custom') {
+    throw new Error('Custom provider requires baseUrl');
+  }
+  if (!baseUrl && !preset && effectiveProvider !== 'openai') {
+    throw new Error(`Provider "${config.provider}" requires baseUrl`);
   }
 
   return {
@@ -341,7 +341,7 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
   }
 
   return {
-    provider: provider as AIProvider,
+    provider: normalizeProviderId(provider) as AIProvider,
     model: model as string,
     apiKey: apiKey as string,
     baseUrl: baseUrl as string,
@@ -383,7 +383,7 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
     }
 
     return {
-      provider: model.provider as AIProvider,
+      provider: normalizeProviderId(model.provider) as AIProvider,
       model: model.model_name,
       apiKey: model.api_key_encrypted || '',
       baseUrl: model.base_url || undefined,
