@@ -535,9 +535,38 @@ const SUMMARY_UPDATE_INTERVAL_KEY = 'summary_update_interval';
 
 type SummaryUpdatePlan = {
   shouldUpdate: boolean;
-  reason: 'last_batch' | 'volume_end' | 'interval' | 'deferred';
+  reason: 'last_batch' | 'volume_end' | 'interval' | 'retry_pending' | 'deferred';
   nextPlannedChapter: number;
 };
+
+async function hasPendingSummaryRetry(
+  db: D1Database,
+  projectId: string,
+  chapterIndex: number
+): Promise<boolean> {
+  try {
+    const row = await db.prepare(`
+      SELECT chapter_index, summary_updated, update_reason
+      FROM summary_memories
+      WHERE project_id = ?
+      ORDER BY chapter_index DESC, id DESC
+      LIMIT 1
+    `).bind(projectId).first() as {
+      chapter_index?: number;
+      summary_updated?: number;
+      update_reason?: string;
+    } | null;
+
+    if (!row) return false;
+    if (Number(row.chapter_index) !== chapterIndex - 1) return false;
+    if (Number(row.summary_updated) === 1) return false;
+    if (String(row.update_reason || '') === 'deferred') return false;
+    return true;
+  } catch (error) {
+    console.warn('Failed to check pending summary retry:', (error as Error).message);
+    return false;
+  }
+}
 
 function normalizeSummaryUpdateInterval(value: unknown): number | null {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -579,6 +608,7 @@ function planSummaryUpdate(params: {
   currentStepIndex: number;
   targetCount: number;
   summaryUpdateInterval: number;
+  forceRetry?: boolean;
   outline?: any;
 }): SummaryUpdatePlan {
   const {
@@ -586,8 +616,17 @@ function planSummaryUpdate(params: {
     currentStepIndex,
     targetCount,
     summaryUpdateInterval,
+    forceRetry,
     outline,
   } = params;
+
+  if (forceRetry) {
+    return {
+      shouldUpdate: true,
+      reason: 'retry_pending',
+      nextPlannedChapter: chapterIndex,
+    };
+  }
 
   // For single-chapter tasks, do not force summary update by "last batch";
   // otherwise interval-based strategy (e.g. every 2 chapters) is bypassed.
@@ -843,11 +882,13 @@ export async function runChapterGenerationTaskInBackground(params: {
       }
 
       const summaryUpdateInterval = await getSummaryUpdateInterval(env.DB, env);
+      const forceSummaryRetry = await hasPendingSummaryRetry(env.DB, project.id, chapterIndex);
       const summaryUpdatePlan = planSummaryUpdate({
         chapterIndex,
         currentStepIndex,
         targetCount: task.targetCount,
         summaryUpdateInterval,
+        forceRetry: forceSummaryRetry,
         outline,
       });
       const summaryModelConfig = summaryUpdatePlan.shouldUpdate
@@ -949,10 +990,15 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       // 6.2 Save Result
       const chapterText = result.chapterText;
+      const summaryStatusText = !result.skippedSummary
+        ? '已更新'
+        : summaryUpdatePlan.shouldUpdate
+          ? '更新失败，下一章优先重试'
+          : `延后到第 ${summaryUpdatePlan.nextPlannedChapter} 章`;
       console.log(
         `[Perf][Task ${taskId}] 第 ${chapterIndex} 章: 正文 ${formatDurationMs(result.generationDurationMs)}, ` +
         `摘要 ${formatDurationMs(result.summaryDurationMs)}, 总计 ${formatDurationMs(result.totalDurationMs)}, ` +
-        `摘要${result.skippedSummary ? `延后到第 ${summaryUpdatePlan.nextPlannedChapter} 章` : '已更新'}`
+        `摘要${summaryStatusText}`
       );
       await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
