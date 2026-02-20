@@ -170,25 +170,25 @@ export async function generateOutline(
           if (jsonStr) {
             try {
               const event = JSON.parse(jsonStr);
-              
+
               // Skip heartbeat events
               if (event.type === 'heartbeat') continue;
-              
+
               // Handle progress events
               if (event.type === 'progress' && event.message && onProgress) {
                 onProgress(event.message);
               }
-              
+
               // Handle volume complete
               if (event.type === 'volume_complete' && onProgress) {
                 onProgress(`第 ${event.volumeIndex}/${event.totalVolumes} 卷「${event.volumeTitle}」完成 (${event.chapterCount} 章)`);
               }
-              
+
               // Handle master outline
               if (event.type === 'master_outline' && onProgress) {
                 onProgress(`总体大纲生成完成: ${event.totalVolumes} 卷`);
               }
-              
+
               // Handle done event
               if (event.type === 'done') {
                 if (!event.success) {
@@ -197,7 +197,7 @@ export async function generateOutline(
                 reader.releaseLock();
                 return event.outline as NovelOutline;
               }
-              
+
               // Handle error event
               if (event.type === 'error') {
                 throw new Error(event.error || 'Unknown error');
@@ -330,13 +330,13 @@ export async function generateChapters(
 }
 
 // Streaming generation event types
-export type GenerationEventType = 
-  | 'start' 
-  | 'progress' 
-  | 'chapter_complete' 
-  | 'chapter_error' 
-  | 'done' 
-  | 'error' 
+export type GenerationEventType =
+  | 'start'
+  | 'progress'
+  | 'chapter_complete'
+  | 'chapter_error'
+  | 'done'
+  | 'error'
   | 'heartbeat'
   | 'task_resumed'
   | 'task_created';
@@ -464,30 +464,30 @@ export async function generateChaptersWithProgress(
   const { maxRetries = 5, retryDelayMs = 3000 } = options || {};
   const results: { chapter: number; title: string }[] = [];
   let retryCount = 0;
-  
+
   const isNetworkError = (error: unknown): boolean => {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
-      return msg.includes('network') || 
-             msg.includes('fetch') || 
-             msg.includes('connection') ||
-             msg.includes('net::err') ||
-             msg.includes('aborted');
+      return msg.includes('network') ||
+        msg.includes('fetch') ||
+        msg.includes('connection') ||
+        msg.includes('net::err') ||
+        msg.includes('aborted');
     }
     return false;
   };
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-  
+
   while (retryCount <= maxRetries) {
     try {
       // Check how many chapters we still need to generate
       // The backend will automatically resume from next_chapter_index
-      
+
       // Only check remaining if NOT in resume mode yet (to avoid infinite loop if backend issue)
       // But actually, we just rely on calling generate-stream. 
       // If task is running, backend returns it.
-      
+
       for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
         switch (event.type) {
           case 'start':
@@ -530,28 +530,28 @@ export async function generateChaptersWithProgress(
             throw new Error(event.error || 'Generation failed');
         }
       }
-      
+
       // Stream ended normally
       break;
-      
+
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         // User cancelled, don't retry
         return results;
       }
-      
+
       if (isNetworkError(error) && retryCount < maxRetries) {
         retryCount++;
         callbacks.onReconnecting?.(retryCount, maxRetries);
         await sleep(retryDelayMs * retryCount);
         continue; // Retry - backend will resume from where it left off
       }
-      
+
       // Non-network error or max retries exceeded
       throw error;
     }
   }
-  
+
   return results;
 }
 
@@ -570,8 +570,8 @@ export type GenerationTask = {
   cancelRequested: boolean;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: number;
+  updatedAt: number;
   updatedAtMs: number;  // Unix timestamp in ms for reliable health check
 };
 

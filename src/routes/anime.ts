@@ -384,7 +384,7 @@ animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
       // Update DB
       await c.env.DB.prepare(`
           UPDATE anime_characters 
-          SET image_url = ?, status = 'generated', updated_at = CURRENT_TIMESTAMP
+          SET image_url = ?, status = 'generated', updated_at = (unixepoch() * 1000)
           WHERE id = ?
       `).bind(serveUrl, charId).run();
 
@@ -422,7 +422,7 @@ animeRoutes.patch('/projects/:id/characters/:charId', async (c) => {
     try {
         if (voiceId) {
              await c.env.DB.prepare(`
-                UPDATE anime_characters SET voice_id = ?, updated_at = CURRENT_TIMESTAMP
+                UPDATE anime_characters SET voice_id = ?, updated_at = (unixepoch() * 1000)
                 WHERE id = ? AND project_id = ?
             `).bind(voiceId, charId, projectId).run();
         }
@@ -602,7 +602,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         storyboard[shotIndex] = shot;
         await c.env.DB.prepare(`
             UPDATE anime_episodes 
-            SET storyboard_json = ?, status = 'processing', updated_at = CURRENT_TIMESTAMP
+            SET storyboard_json = ?, status = 'processing', updated_at = (unixepoch() * 1000)
             WHERE id = ?
         `).bind(JSON.stringify(storyboard), episode.id).run();
 
@@ -693,7 +693,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         if (updated) {
              storyboard[shotIndex] = shot;
              await c.env.DB.prepare(`
-                 UPDATE anime_episodes SET storyboard_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+                 UPDATE anime_episodes SET storyboard_json = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
              `).bind(JSON.stringify(storyboard), episode.id).run();
         }
 
@@ -737,7 +737,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
     // Update project status
     await c.env.DB.prepare(`
-      UPDATE anime_projects SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      UPDATE anime_projects SET status = 'processing', updated_at = (unixepoch() * 1000) WHERE id = ?
     `).bind(projectId).run();
 
     // Get episodes to process
@@ -802,7 +802,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
            await c.env.DB.prepare(`
              UPDATE anime_episodes 
-             SET script = ?, storyboard_json = ?, status = 'storyboard', updated_at = CURRENT_TIMESTAMP
+             SET script = ?, storyboard_json = ?, status = 'storyboard', updated_at = (unixepoch() * 1000)
              WHERE id = ?
            `).bind(readableScript, JSON.stringify(refinedStoryboard), episode.id).run();
            
@@ -952,7 +952,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
                 if (updated) {
                     await c.env.DB.prepare(`
                         UPDATE anime_episodes 
-                        SET storyboard_json = ?, video_r2_key = ?, audio_r2_key = ?, updated_at = CURRENT_TIMESTAMP
+                        SET storyboard_json = ?, video_r2_key = ?, audio_r2_key = ?, updated_at = (unixepoch() * 1000)
                         WHERE id = ?
                     `).bind(JSON.stringify(storyboard), episode.video_r2_key || null, episode.audio_r2_key || null, episode.id).run();
                 }
@@ -961,7 +961,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
             // Final status update
             await c.env.DB.prepare(`
                 UPDATE anime_episodes 
-                SET status = 'done', updated_at = CURRENT_TIMESTAMP
+                SET status = 'done', updated_at = (unixepoch() * 1000)
                 WHERE id = ?
             `).bind(episode.id).run();
         }
@@ -989,7 +989,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
         
         await c.env.DB.prepare(`
           UPDATE anime_episodes 
-          SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+          SET status = 'error', error_message = ?, updated_at = (unixepoch() * 1000)
           WHERE id = ?
         `).bind((error as Error).message, episode.id).run();
       }
@@ -1000,7 +1000,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
     // Update project status
     const finalStatus = errors.length === episodes.length ? 'error' : 'done';
     await c.env.DB.prepare(`
-      UPDATE anime_projects SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      UPDATE anime_projects SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
     `).bind(finalStatus, projectId).run();
 
     return c.json({
@@ -1287,7 +1287,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/script', async (c)
         const script = await generateTextScript(episode.novel_chunk as string, parseInt(num), aiConfig);
 
         await c.env.DB.prepare(`
-            UPDATE anime_episodes SET script = ?, status = 'script', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            UPDATE anime_episodes SET script = ?, status = 'script', updated_at = (unixepoch() * 1000) WHERE id = ?
         `).bind(script, episode.id).run();
 
         return c.json({ success: true, script });
@@ -1315,7 +1315,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/storyboard', async
         const storyboard = await generateStoryboardFromScript(episode.script as string, aiConfig);
 
         await c.env.DB.prepare(`
-            UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = (unixepoch() * 1000) WHERE id = ?
         `).bind(JSON.stringify(storyboard), episode.id).run();
 
         return c.json({ success: true, storyboard });
@@ -1418,7 +1418,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
 
             if (updated || hasError) {
                 storyboard[i] = shot;
-                await c.env.DB.prepare(`UPDATE anime_episodes SET storyboard_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+                await c.env.DB.prepare(`UPDATE anime_episodes SET storyboard_json = ?, updated_at = (unixepoch() * 1000) WHERE id = ?`)
                     .bind(JSON.stringify(storyboard), episode.id).run();
             }
         }

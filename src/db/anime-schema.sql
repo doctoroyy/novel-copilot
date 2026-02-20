@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS anime_projects (
   total_episodes INTEGER DEFAULT 60,
   status TEXT DEFAULT 'pending', -- pending/processing/done/error
   error_message TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- Episodes table
@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS anime_episodes (
   duration_seconds INTEGER, -- 视频时长（秒）
   status TEXT DEFAULT 'pending', -- pending/script/storyboard/audio/video/done/error
   error_message TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000),
   UNIQUE(project_id, episode_num)
 );
 
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS anime_series_scripts (
   project_id TEXT NOT NULL REFERENCES anime_projects(id) ON DELETE CASCADE,
   content TEXT NOT NULL, -- Full global script
   outline TEXT, -- JSON scene breakdown per episode or global structure
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_anime_series_scripts_project_unique ON anime_series_scripts(project_id);
@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS anime_characters (
   image_url TEXT, -- Generated image URL (R2 or external)
   voice_id TEXT, -- Voice ID for TTS
   status TEXT DEFAULT 'pending', -- pending/generated/approved
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_anime_characters_project ON anime_characters(project_id);

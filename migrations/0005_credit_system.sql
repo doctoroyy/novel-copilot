@@ -4,7 +4,7 @@
 -- 1. Add credit fields to users table
 -- ALTER TABLE users ADD COLUMN credit_balance INTEGER DEFAULT 150;
 -- ALTER TABLE users ADD COLUMN vip_type TEXT DEFAULT 'free';
--- ALTER TABLE users ADD COLUMN vip_expire_at DATETIME DEFAULT NULL;
+-- ALTER TABLE users ADD COLUMN vip_expire_at INTEGER DEFAULT NULL;
 -- ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1;
 
 -- 2. Credit Features table (功能定价配置)
@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS credit_features (
   is_vip_only INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   category TEXT DEFAULT 'basic',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- 3. Credit Transactions table (消费流水记录)
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
   type TEXT NOT NULL CHECK(type IN ('consume', 'recharge', 'reward', 'refund')),
   description TEXT,
   metadata TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id);
@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS model_registry (
   is_active INTEGER DEFAULT 1,
   is_default INTEGER DEFAULT 0,
   config_json TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000),
   UNIQUE(provider, model_name)
 );
 

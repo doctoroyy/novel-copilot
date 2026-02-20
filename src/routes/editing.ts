@@ -124,7 +124,7 @@ editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
 
     // Update chapter content
     await c.env.DB.prepare(`
-      UPDATE chapters SET content = ?, updated_at = datetime('now') WHERE project_id = ? AND chapter_index = ?
+      UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index = ?
     `).bind(content, projectId, index).run();
 
     return c.json({ success: true });
@@ -250,7 +250,7 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
     if (existing) {
       // Update
       await c.env.DB.prepare(`
-        UPDATE outlines SET outline_json = ?, updated_at = datetime('now') WHERE project_id = ?
+        UPDATE outlines SET outline_json = ?, updated_at = (unixepoch() * 1000) WHERE project_id = ?
       `).bind(JSON.stringify(outline), projectId).run();
     } else {
       // Insert (should strictly not happen if calling update, but good fallback)
@@ -436,7 +436,7 @@ editingRoutes.put('/projects/:name', async (c) => {
         bible = COALESCE(?, bible), 
         background = COALESCE(?, background), 
         role_settings = COALESCE(?, role_settings),
-        updated_at = datetime('now')
+        updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(bible, background, role_settings, (project as any).id).run();
 

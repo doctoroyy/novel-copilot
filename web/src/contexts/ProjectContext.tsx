@@ -31,60 +31,60 @@ interface ProjectContextType {
   // Projects list
   projects: ProjectSummary[];
   loadProjects: () => Promise<void>;
-  
+
   // Selected project
   selectedProject: ProjectDetail | null;
   loadProject: (projectRef: string) => Promise<void>;
   loading: boolean;
   error: string | null;
   setError: (error: string | null) => void;
-  
+
   // UI Config
   config: ReturnType<typeof useAIConfig>['config'];
   isConfigured: boolean;
-  
+
   // Generation state
   generationState: ReturnType<typeof useGeneration>['generationState'];
   setGenerationState: ReturnType<typeof useGeneration>['setGenerationState'];
   generatingOutline: boolean;
-  
+
   // SSE connection
   connected: boolean;
   logs: string[];
   clearLogs: () => void;
   eventsEnabled: boolean;
   toggleEvents: (val?: boolean) => void;
-  
+
   // UI State
   isMobile: boolean;
   sidebarOpen: boolean;
   activityPanelOpen: boolean;
   toggleSidebar: () => void;
   toggleActivityPanel: () => void;
-  
+
   // Navigation
   activeTab: string;
   handleSelectProject: (projectId: string) => void;
   handleTabChange: (tab: string) => void;
-  
+
   // Dialogs
   showSettingsDialog: boolean;
   setShowSettingsDialog: (val: boolean) => void;
   showNewProjectDialog: boolean;
   setShowNewProjectDialog: (val: boolean) => void;
-  
+
   // Project handlers
   handleCreateProject: (name: string, bible: string, chapters: string) => Promise<void>;
   handleDeleteProject: () => Promise<void>;
   handleRefresh: () => Promise<void>;
-  
+
   // Generation handlers
   handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
   handleGenerateChapters: (count: string) => Promise<void>;
   handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
   cancelingGeneration: boolean;
   handleResetProject: () => Promise<void>;
-  
+
   // Chapter handlers
   handleViewChapter: (index: number) => Promise<string>;
   handleDeleteChapter: (index: number) => Promise<void>;
@@ -107,7 +107,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const { projectId } = useParams<{ projectId?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   // Derive active tab from URL pathname
   const tab = useMemo(() => {
     const pathParts = location.pathname.split('/');
@@ -428,7 +428,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           status: 'generating',
           message: task.currentMessage || `正在生成第 ${currentChapter} 章...`,
           projectName: task.projectName,
-          startTime: task.createdAt ? new Date(`${task.createdAt}Z`).getTime() : (task.updatedAtMs || Date.now()),
+          startTime: task.createdAt || task.updatedAtMs || Date.now(),
         });
         startStreamMonitor(selectedProject, task);
       } catch (err) {
@@ -474,7 +474,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Sync SSE progress to GenerationContext
   useEffect(() => {
     if (!generationProgress) return;
-    
+
     if (generationProgress.status === 'done' || generationProgress.status === 'error') {
       setGenerationState(prev => {
         if (prev.projectName && prev.projectName !== generationProgress.projectName) {
@@ -490,7 +490,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
-    
+
     setGenerationState(prev => ({
       ...prev,
       isGenerating: true,
@@ -543,7 +543,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setError('目标章节数必须是大于 0 的整数');
       throw new Error('invalid_project_chapters');
     }
-    
+
     setLoading(true);
     try {
       const created = await createProject(trimmedName, trimmedBible, totalChapters);
@@ -561,7 +561,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleDeleteProject = useCallback(async () => {
     if (!selectedProject) return;
     if (!confirm(`确定要删除项目 "${selectedProject.name}" 吗？此操作不可恢复。`)) return;
-    
+
     setLoading(true);
     try {
       await deleteProject(selectedProject.id);
@@ -594,7 +594,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setError('目标字数必须是大于 0 的整数');
       return;
     }
-    
+
     setGeneratingOutline(true);
     try {
       await generateOutline(selectedProject.id, targetChapters, targetWordCount, customPrompt);
@@ -608,7 +608,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleGenerateChapters = useCallback(async (count: string) => {
     if (!selectedProject || !isConfigured) return;
-    
+
     const requestedCount = Number.parseInt(count, 10);
     if (!Number.isInteger(requestedCount) || requestedCount <= 0) {
       setError('生成章数必须是大于 0 的整数');
@@ -630,11 +630,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
 
     const startChapter = selectedProject.state.nextChapterIndex;
-    
+
     setLoading(true);
     stopStreamMonitor();
     startGeneration(selectedProject.name, chapterCount);
-    
+
     try {
       await generateChaptersWithProgress(
         selectedProject.id,
@@ -805,7 +805,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
-    
+
     setLoading(true);
     try {
       await resetProject(selectedProject.id);
@@ -847,7 +847,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleDownloadBook = useCallback(async () => {
     if (!selectedProject) return;
-    
+
     try {
       const url = `/api/projects/${encodeURIComponent(selectedProject.id)}/download`;
       const response = await fetch(url);
@@ -890,7 +890,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const handleGenerateBible = useCallback(async () => {
     if (!selectedProject || !isConfigured) return;
-    
+
     setLoading(true);
     try {
       // generateBible API: (genre?, theme?, keywords?, aiHeaders?)

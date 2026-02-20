@@ -158,7 +158,7 @@ contextRoutes.put('/projects/:name/character-states/:characterId', async (c) => 
     );
 
     await c.env.DB.prepare(`
-      UPDATE character_states SET registry_json = ?, updated_at = CURRENT_TIMESTAMP
+      UPDATE character_states SET registry_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedRegistry), result.project_id).run();
 
@@ -292,7 +292,7 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing', async (c) => {
     );
 
     await c.env.DB.prepare(`
-      UPDATE plot_graphs SET graph_json = ?, updated_at = CURRENT_TIMESTAMP
+      UPDATE plot_graphs SET graph_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedGraph), result.project_id).run();
 
@@ -332,7 +332,7 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing/:nodeId/resolve', a
     const updatedGraph = manualResolveForeshadowing(graph, nodeId, chapterIndex, result.total_chapters);
 
     await c.env.DB.prepare(`
-      UPDATE plot_graphs SET graph_json = ?, updated_at = CURRENT_TIMESTAMP
+      UPDATE plot_graphs SET graph_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedGraph), result.project_id).run();
 

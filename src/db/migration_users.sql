@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
   google_id TEXT UNIQUE,
   email TEXT UNIQUE,
   avatar_url TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  last_login_at DATETIME DEFAULT NULL
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  last_login_at INTEGER DEFAULT NULL
 );
 
 -- 邀请码表
@@ -19,9 +19,9 @@ CREATE TABLE IF NOT EXISTS invitation_codes (
   code TEXT PRIMARY KEY,
   created_by TEXT REFERENCES users(id),
   used_by TEXT REFERENCES users(id) DEFAULT NULL,
-  used_at DATETIME DEFAULT NULL,
-  expires_at DATETIME DEFAULT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  used_at INTEGER DEFAULT NULL,
+  expires_at INTEGER DEFAULT NULL,
+  created_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 -- 索引

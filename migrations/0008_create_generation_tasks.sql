@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   current_message TEXT DEFAULT NULL,
   status TEXT DEFAULT 'running' CHECK(status IN ('running', 'paused', 'completed', 'failed')),
   error_message TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON generation_tasks(project_id, status);

@@ -12,15 +12,15 @@ const requireAdmin = async (c: any, next: () => Promise<void>) => {
   if (!userId) {
     return c.json({ success: false, error: '未登录' }, 401);
   }
-  
+
   const user = await c.env.DB.prepare(`
     SELECT role FROM users WHERE id = ?
   `).bind(userId).first();
-  
+
   if (!user || (user as any).role !== 'admin') {
     return c.json({ success: false, error: '需要管理员权限' }, 403);
   }
-  
+
   await next();
 };
 
@@ -46,7 +46,7 @@ adminRoutes.get('/users', async (c) => {
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `).all();
-    
+
     return c.json({ success: true, users });
   } catch (error) {
     console.error('Fetch users error:', error);
@@ -57,7 +57,7 @@ adminRoutes.get('/users', async (c) => {
 // Get user activity
 adminRoutes.get('/users/:id/projects', async (c) => {
   const userId = c.req.param('id');
-  
+
   try {
     const { results: projects } = await c.env.DB.prepare(`
       SELECT 
@@ -71,7 +71,7 @@ adminRoutes.get('/users/:id/projects', async (c) => {
       WHERE p.user_id = ? AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC
     `).bind(userId).all();
-    
+
     return c.json({ success: true, projects });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -91,7 +91,7 @@ adminRoutes.get('/invitation-codes', async (c) => {
       FROM invitation_codes
       ORDER BY created_at DESC
     `).all();
-    
+
     return c.json({ success: true, codes });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -102,25 +102,25 @@ adminRoutes.get('/invitation-codes', async (c) => {
 adminRoutes.post('/invitation-codes', async (c) => {
   try {
     const { code, maxUses = 10 } = await c.req.json();
-    
+
     if (!code) {
       return c.json({ success: false, error: '请输入邀请码' }, 400);
     }
-    
+
     // Check if code exists
     const existing = await c.env.DB.prepare(`
       SELECT code FROM invitation_codes WHERE code = ?
     `).bind(code).first();
-    
+
     if (existing) {
       return c.json({ success: false, error: '邀请码已存在' }, 400);
     }
-    
+
     await c.env.DB.prepare(`
       INSERT INTO invitation_codes (code, max_uses, used_count, is_active)
       VALUES (?, ?, 0, 1)
     `).bind(code, maxUses).run();
-    
+
     return c.json({ success: true, code, maxUses });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -130,12 +130,12 @@ adminRoutes.post('/invitation-codes', async (c) => {
 // Delete invitation code
 adminRoutes.delete('/invitation-codes/:code', async (c) => {
   const code = c.req.param('code');
-  
+
   try {
     await c.env.DB.prepare(`
       DELETE FROM invitation_codes WHERE code = ?
     `).bind(code).run();
-    
+
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -146,12 +146,12 @@ adminRoutes.delete('/invitation-codes/:code', async (c) => {
 adminRoutes.patch('/invitation-codes/:code', async (c) => {
   const code = c.req.param('code');
   const { isActive } = await c.req.json();
-  
+
   try {
     await c.env.DB.prepare(`
       UPDATE invitation_codes SET is_active = ? WHERE code = ?
     `).bind(isActive ? 1 : 0, code).run();
-    
+
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -164,15 +164,15 @@ adminRoutes.get('/stats', async (c) => {
     const userCount = await c.env.DB.prepare(`
       SELECT COUNT(*) as count FROM users
     `).first() as any;
-    
+
     const projectCount = await c.env.DB.prepare(`
       SELECT COUNT(*) as count FROM projects WHERE deleted_at IS NULL
     `).first() as any;
-    
+
     const chapterCount = await c.env.DB.prepare(`
       SELECT COUNT(*) as count FROM chapters WHERE deleted_at IS NULL
     `).first() as any;
-    
+
     // Get recent activity
     const { results: recentProjects } = await c.env.DB.prepare(`
       SELECT 
@@ -185,7 +185,7 @@ adminRoutes.get('/stats', async (c) => {
       ORDER BY p.created_at DESC
       LIMIT 10
     `).all();
-    
+
     return c.json({
       success: true,
       stats: {
@@ -250,7 +250,7 @@ adminRoutes.put('/credit-features/:key', async (c) => {
           is_vip_only = COALESCE(?, is_vip_only),
           is_active = COALESCE(?, is_active),
           model_multiplier_enabled = COALESCE(?, model_multiplier_enabled),
-          updated_at = datetime('now')
+          updated_at = (unixepoch() * 1000)
       WHERE feature_key = ?
     `).bind(
       name ?? null, description ?? null, baseCost ?? null, category ?? null,
@@ -300,7 +300,7 @@ adminRoutes.get('/feature-models', async (c) => {
 adminRoutes.post('/feature-models', async (c) => {
   try {
     const { featureKey, modelId, temperature } = await c.req.json();
-    
+
     if (!featureKey || !modelId) {
       return c.json({ success: false, error: 'featureKey and modelId are required' }, 400);
     }
@@ -311,7 +311,7 @@ adminRoutes.post('/feature-models', async (c) => {
       ON CONFLICT(feature_key) DO UPDATE SET
         model_id = excluded.model_id,
         temperature = excluded.temperature,
-        updated_at = CURRENT_TIMESTAMP
+        updated_at = (unixepoch() * 1000)
     `).bind(featureKey, modelId, temperature || 0.7).run();
 
     return c.json({ success: true });
@@ -398,7 +398,7 @@ adminRoutes.put('/model-registry/:id', async (c) => {
       values.push(body.isDefault ? 1 : 0);
     }
 
-    updates.push("updated_at = datetime('now')");
+    updates.push("updated_at = (unixepoch() * 1000)");
     values.push(id);
 
     await c.env.DB.prepare(`

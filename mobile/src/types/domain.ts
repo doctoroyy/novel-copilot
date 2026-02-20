@@ -4,8 +4,8 @@ export type User = {
   role?: string;
   credit_balance?: number;
   allow_custom_provider?: boolean;
-  createdAt?: string;
-  lastLoginAt?: string;
+  createdAt?: number;
+  lastLoginAt?: number;
 };
 
 export type BookState = {
@@ -82,8 +82,8 @@ export type GenerationTask = {
   currentMessage: string | null;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: number;
+  updatedAt: number;
   updatedAtMs: number;
 };
 
@@ -94,8 +94,8 @@ export type AnimeProject = {
   total_episodes: number;
   status: 'pending' | 'processing' | 'done' | 'error';
   error_message?: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 };
 
 export type AnimeEpisode = {
@@ -106,7 +106,7 @@ export type AnimeEpisode = {
   duration_seconds?: number | null;
   video_r2_key?: string | null;
   error_message?: string | null;
-  updated_at?: string;
+  updated_at?: number;
 };
 
 export type AIConfig = {
@@ -152,14 +152,14 @@ export type GenerationStreamEvent = {
   current?: number;
   chapterIndex?: number;
   status?:
-    | 'preparing'
-    | 'generating'
-    | 'analyzing'
-    | 'planning'
-    | 'reviewing'
-    | 'repairing'
-    | 'saving'
-    | 'updating_summary';
+  | 'preparing'
+  | 'generating'
+  | 'analyzing'
+  | 'planning'
+  | 'reviewing'
+  | 'repairing'
+  | 'saving'
+  | 'updating_summary';
   message?: string;
   title?: string;
   preview?: string;
@@ -174,13 +174,13 @@ export type GenerationStreamEvent = {
 
 export type OutlineStreamEvent = {
   type:
-    | 'heartbeat'
-    | 'start'
-    | 'progress'
-    | 'master_outline'
-    | 'volume_complete'
-    | 'done'
-    | 'error';
+  | 'heartbeat'
+  | 'start'
+  | 'progress'
+  | 'master_outline'
+  | 'volume_complete'
+  | 'done'
+  | 'error';
   message?: string;
   error?: string;
   totalVolumes?: number;
@@ -202,8 +202,8 @@ export type ModelRegistry = {
   is_active: boolean; // SQLite stores boolean as 0/1, but API might return boolean or number. Let's assume API normalizes it or check usage.
   is_default: boolean;
   capabilities: string;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 };
 
 export type CreditFeature = {
@@ -212,6 +212,6 @@ export type CreditFeature = {
   description: string;
   base_cost: number;
   is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 };
