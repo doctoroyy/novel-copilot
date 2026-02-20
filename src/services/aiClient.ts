@@ -86,6 +86,12 @@ export async function generateText(
   if (response.stopReason === 'error') {
     throw new Error(response.errorMessage || 'An error occurred during generation');
   }
+  if (isTruncatedStopReason(response.stopReason)) {
+    throw new Error(`AI 输出被截断（stopReason=${response.stopReason}）`);
+  }
+  if (response.stopReason === 'aborted') {
+    throw new Error(response.errorMessage || 'Generation aborted');
+  }
 
   // pi-ai automatically collects content from reasoning fields and content fields
   return response.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
@@ -96,9 +102,18 @@ export async function generateText(
  */
 type ErrorType = 'rate_limit' | 'server_error' | 'timeout' | 'auth_error' | 'invalid_request' | 'unknown';
 
+function isTruncatedStopReason(stopReason?: string): boolean {
+  if (!stopReason) return false;
+  const normalized = stopReason.trim().toLowerCase();
+  return normalized === 'length' || normalized === 'max_tokens' || normalized === 'maxtokens';
+}
+
 function classifyError(error: Error): ErrorType {
   const message = error.message.toLowerCase();
 
+  if (message.includes('输出被截断') || message.includes('truncated') || message.includes('stopreason=length')) {
+    return 'invalid_request';
+  }
   if (message.includes('quota') || message.includes('429') || message.includes('rate')) {
     return 'rate_limit';
   }

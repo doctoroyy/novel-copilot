@@ -253,7 +253,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 
       if (!qcResult.hit) break;
 
-      console.log(`⚠️ 章节 ${chapterIndex} 检测到提前完结信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
+      console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
       
       params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
 
@@ -275,6 +275,13 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 
       wasRewritten = true;
       rewriteCount++;
+    }
+
+    const finalQuickQc = quickEndingHeuristic(chapterText);
+    if (finalQuickQc.hit) {
+      const reason = finalQuickQc.reasons[0] || '章节内容疑似不完整';
+      params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
+      throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
     }
   }
 

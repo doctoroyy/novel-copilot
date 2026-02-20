@@ -226,7 +226,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
         break; // 通过 QC
       }
 
-      console.log(`⚠️ 章节 ${chapterIndex} 检测到提前完结信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
+      console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
       console.log(`   原因: ${qcResult.reasons.join('; ')}`);
       
       params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
@@ -248,8 +248,10 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     // 最终检查
     const finalQc = quickEndingHeuristic(chapterText);
     if (finalQc.hit) {
-      console.log(`❌ 章节 ${chapterIndex} 重写后仍检测到提前完结信号，需要人工介入`);
-      params.onProgress?.('QC 告警: 章节可能提前完结', 'reviewing');
+      const reason = finalQc.reasons[0] || '章节内容疑似不完整';
+      console.log(`❌ 章节 ${chapterIndex} 重写后仍存在 QC 问题，需要人工介入`);
+      params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
+      throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
     }
   }
 
