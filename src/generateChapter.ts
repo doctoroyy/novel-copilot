@@ -196,6 +196,13 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
 `.trim();
 }
 
+function isSameAiConfig(a: AIConfig, b: AIConfig): boolean {
+  return a.provider === b.provider
+    && a.model === b.model
+    && String(a.baseUrl || '') === String(b.baseUrl || '')
+    && a.apiKey === b.apiKey;
+}
+
 /**
  * 生成单章内容
  */
@@ -270,26 +277,49 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     // Phase 4: 更新摘要 (Add status update to UI)
     params.onProgress?.('正在更新剧情摘要...', 'updating_summary');
     const summaryStartedAt = Date.now();
+    const summaryCandidates: AIConfig[] = [summaryAiConfig || aiConfig];
+    if (summaryAiConfig && !isSameAiConfig(summaryAiConfig, aiConfig)) {
+      summaryCandidates.push(aiConfig);
+    }
 
     try {
-      // 生成更新后的摘要和伏笔
-      const summaryResult = await generateSummaryUpdate(
-        summaryAiConfig || aiConfig,
-        params.bible,
-        params.rollingSummary,
-        params.openLoops,
-        chapterText
-      );
+      let summaryResult: { updatedSummary: string; updatedOpenLoops: string[] } | null = null;
+      let lastSummaryError: Error | null = null;
+
+      for (let i = 0; i < summaryCandidates.length; i++) {
+        const candidate = summaryCandidates[i];
+        try {
+          summaryResult = await generateSummaryUpdate(
+            candidate,
+            params.bible,
+            params.rollingSummary,
+            params.openLoops,
+            chapterText
+          );
+          break;
+        } catch (err) {
+          lastSummaryError = err as Error;
+          console.warn(
+            `[SummaryUpdate] 第 ${chapterIndex} 章摘要更新候选模型失败 (${candidate.provider}/${candidate.model}):`,
+            lastSummaryError.message
+          );
+        }
+      }
+
+      if (!summaryResult) {
+        throw lastSummaryError || new Error('摘要更新失败');
+      }
+
       updatedSummary = summaryResult.updatedSummary;
       updatedOpenLoops = summaryResult.updatedOpenLoops;
       skippedSummary = false;
     } catch (summaryError) {
       // 摘要更新失败不应导致整章失败：保留上一版记忆并继续保存章节正文
       console.warn(
-        `[SummaryUpdate] 第 ${chapterIndex} 章摘要更新失败，已保留上一版摘要:`,
+        `[SummaryUpdate] 第 ${chapterIndex} 章摘要更新最终失败，已保留上一版摘要:`,
         (summaryError as Error).message
       );
-      params.onProgress?.('剧情摘要更新失败，已保留上一版摘要', 'updating_summary');
+      params.onProgress?.('剧情摘要更新失败，已保留上一版摘要（下一章将优先重试）', 'updating_summary');
       skippedSummary = true;
     } finally {
       summaryDurationMs = Date.now() - summaryStartedAt;
@@ -353,7 +383,7 @@ ${chapterText}
   const raw = await generateTextWithRetry(
     aiConfig,
     { system, prompt, temperature: 0.2, maxTokens: 1800 },
-    2
+    3
   );
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
 }
