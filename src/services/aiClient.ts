@@ -1,5 +1,5 @@
 import { completeSimple, Model as PiAiModel, streamSimple, SimpleStreamOptions } from '@mariozechner/pi-ai';
-import { detectProviderByBaseUrl, getProviderPreset, normalizeProviderId } from './providerCatalog.js';
+import { detectProviderByBaseUrl, getProviderPreset, normalizeGeminiBaseUrl, normalizeProviderId } from './providerCatalog.js';
 
 export type AIProvider = string;
 
@@ -26,6 +26,7 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
   if (preset?.protocol === 'gemini' || effectiveProvider === 'gemini') {
     api = 'google-generative-ai';
     provider = 'google';
+    baseUrl = normalizeGeminiBaseUrl(baseUrl);
   } else if (preset?.protocol === 'anthropic' || effectiveProvider === 'anthropic') {
     api = 'anthropic';
     provider = 'anthropic';
