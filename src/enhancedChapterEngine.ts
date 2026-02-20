@@ -39,7 +39,7 @@ import {
 } from './qc/multiDimensionalQC.js';
 import { repairChapter } from './qc/repairLoop.js';
 import { buildOptimizedContext, getContextStats } from './contextOptimizer.js';
-import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
+import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import {
   analyzeChapterForEvents,
   applyEventAnalysis,
@@ -245,44 +245,47 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   let wasRewritten = false;
   let rewriteCount = 0;
 
-  // 5. 快速 QC 检测（提前完结）
-  if (!isFinal) {
-    for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
-      params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
-      const qcResult = quickEndingHeuristic(chapterText);
+  // 5. 快速 QC 检测（结构 + 非最终章提前完结）
+  for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
+    params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
+    const formatQc = quickChapterFormatHeuristic(chapterText);
+    const endingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
+    const reasons = [...formatQc.reasons, ...endingQc.reasons];
 
-      if (!qcResult.hit) break;
+    if (reasons.length === 0) break;
 
-      console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
-      
-      params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
+    console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
+    
+    params.onProgress?.(`检测到问题: ${reasons[0]}，正在修复...`, 'repairing');
 
-      const rewriteInstruction = buildRewriteInstruction({
-        chapterIndex,
-        totalChapters,
-        reasons: qcResult.reasons,
-      });
+    const rewriteInstruction = buildRewriteInstruction({
+      chapterIndex,
+      totalChapters,
+      reasons,
+      isFinalChapter: isFinal,
+    });
 
-      const rewritePrompt = `${userPrompt}\n\n${rewriteInstruction}`;
-      chapterText = normalizeGeneratedChapterText(
-        await generateTextWithRetry(aiConfig, {
-          system,
-          prompt: rewritePrompt,
-          temperature: 0.8,
-        }),
-        chapterIndex
-      );
+    const rewritePrompt = `${userPrompt}\n\n${rewriteInstruction}`;
+    chapterText = normalizeGeneratedChapterText(
+      await generateTextWithRetry(aiConfig, {
+        system,
+        prompt: rewritePrompt,
+        temperature: 0.8,
+      }),
+      chapterIndex
+    );
 
-      wasRewritten = true;
-      rewriteCount++;
-    }
+    wasRewritten = true;
+    rewriteCount++;
+  }
 
-    const finalQuickQc = quickEndingHeuristic(chapterText);
-    if (finalQuickQc.hit) {
-      const reason = finalQuickQc.reasons[0] || '章节内容疑似不完整';
-      params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
-      throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
-    }
+  const finalFormatQc = quickChapterFormatHeuristic(chapterText);
+  const finalEndingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
+  const finalReasons = [...finalFormatQc.reasons, ...finalEndingQc.reasons];
+  if (finalReasons.length > 0) {
+    const reason = finalReasons[0] || '章节内容疑似不完整';
+    params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
+    throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
   }
 
   // 6. 多维度 QC（可选）

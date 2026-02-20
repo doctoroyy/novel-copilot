@@ -671,19 +671,6 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
         try {
-          if (retryAttempt > 0) {
-            const retryDelay = 5000 * Math.pow(2, retryAttempt - 1);
-            await emitProgressEvent({
-              projectName: project.name,
-              current: completedCount,
-              total: task.targetCount,
-              chapterIndex,
-              status: 'generating',
-              message: `生成失败，${retryDelay / 1000}秒后重试...`,
-            });
-            await new Promise((resolve) => setTimeout(resolve, retryDelay));
-          }
-
           // Check cancel again before heavy work
           const retryControl = await handleTaskCancellationIfNeeded({
             db: env.DB,
@@ -695,7 +682,16 @@ export async function runChapterGenerationTaskInBackground(params: {
           });
           if (retryControl.shouldStop) return;
 
-          await updateTaskMessage(env.DB, taskId, `正在AI生成 (Try ${retryAttempt + 1})...`, chapterIndex);
+          const attemptLabel = `尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}`;
+          await updateTaskMessage(env.DB, taskId, `正在AI生成（${attemptLabel}）...`, chapterIndex);
+          await emitProgressEvent({
+            projectName: project.name,
+            current: completedCount,
+            total: task.targetCount,
+            chapterIndex,
+            status: 'generating',
+            message: `正在AI生成（${attemptLabel}）...`,
+          });
 
           result = await writeOneChapter({
             aiConfig,
@@ -709,14 +705,15 @@ export async function runChapterGenerationTaskInBackground(params: {
             chapterTitle: outlineTitle,
             characters,
             onProgress: (message, status) => {
-              updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
+              const attemptProgressMessage = `[尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}] ${message}`;
+              updateTaskMessage(env.DB, taskId, attemptProgressMessage, chapterIndex).catch(console.warn);
               void emitProgressEvent({
                 projectName: project.name,
                 current: completedCount,
                 total: task.targetCount,
                 chapterIndex,
                 status,
-                message,
+                message: attemptProgressMessage,
               });
             },
           });
@@ -725,6 +722,26 @@ export async function runChapterGenerationTaskInBackground(params: {
         } catch (err) {
           lastChapterError = err;
           console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
+          const reason = (err as Error)?.message || String(err) || '未知错误';
+          const attempt = retryAttempt + 1;
+          const isLastAttempt = attempt === CHAPTER_MAX_RETRIES;
+
+          if (!isLastAttempt) {
+            const retryDelay = 5000 * Math.pow(2, retryAttempt);
+            const retryMessage = `第 ${chapterIndex} 章第 ${attempt}/${CHAPTER_MAX_RETRIES} 次失败：${reason}；${retryDelay / 1000} 秒后重试`;
+            await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
+            await emitProgressEvent({
+              projectName: project.name,
+              current: completedCount,
+              total: task.targetCount,
+              chapterIndex,
+              status: 'reviewing',
+              message: retryMessage,
+            });
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+            continue;
+          }
+
           if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
         }
       }

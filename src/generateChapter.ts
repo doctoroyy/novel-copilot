@@ -3,7 +3,7 @@ import { getCharacterContext } from './generateCharacters.js';
 import type { CharacterRelationGraph } from './types/characters.js';
 import type { CharacterStateRegistry } from './types/characterState.js';
 import { buildCharacterStateContext } from './context/characterStateManager.js';
-import { quickEndingHeuristic, buildRewriteInstruction } from './qc.js';
+import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { z } from 'zod';
 
@@ -128,11 +128,9 @@ function buildSystemPrompt(isFinal: boolean, chapterIndex: number, chapterTitle?
 - 开头直接进入场景，禁止用概述或旁白开头
 
 输出格式：
-请仅输出严格的 JSON 格式，不要包含任何 Markdown 代码块标记（如 \`\`\`json）：
-{
-  "title": "${titleText}",
-  "content": "章节正文内容...（不要包含标题，不要包含任何【本章写作目标】等元数据）"
-}
+- 第一行必须是章节标题：${titleText}
+- 从第二行开始输出正文内容
+- 不要输出 JSON，不要代码块，不要“以下是正文”等解释说明
 
 当前是否为最终章：${isFinal ? 'true - 可以写结局' : 'false - 禁止收尾'}
 `.trim();
@@ -216,43 +214,46 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   let wasRewritten = false;
   let rewriteCount = 0;
 
-  // QC 检测：非最终章检测提前完结
-  if (!isFinal) {
-    for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
-      params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
-      const qcResult = quickEndingHeuristic(chapterText);
+  // QC 检测：结构（标题+正文）+ 非最终章提前完结检测
+  for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
+    params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
+    const formatQc = quickChapterFormatHeuristic(chapterText);
+    const endingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
+    const reasons = [...formatQc.reasons, ...endingQc.reasons];
 
-      if (!qcResult.hit) {
-        break; // 通过 QC
-      }
-
-      console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
-      console.log(`   原因: ${qcResult.reasons.join('; ')}`);
-      
-      params.onProgress?.(`检测到问题: ${qcResult.reasons[0]}，正在修复...`, 'repairing');
-
-      // 构建重写 prompt
-      const rewriteInstruction = buildRewriteInstruction({
-        chapterIndex,
-        totalChapters,
-        reasons: qcResult.reasons,
-      });
-
-      const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
-      const rawRewriteResponse = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
-      chapterText = parseChapterResponse(rawRewriteResponse, chapterIndex);
-      wasRewritten = true;
-      rewriteCount++;
+    if (reasons.length === 0) {
+      break; // 通过 QC
     }
 
-    // 最终检查
-    const finalQc = quickEndingHeuristic(chapterText);
-    if (finalQc.hit) {
-      const reason = finalQc.reasons[0] || '章节内容疑似不完整';
-      console.log(`❌ 章节 ${chapterIndex} 重写后仍存在 QC 问题，需要人工介入`);
-      params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
-      throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
-    }
+    console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
+    console.log(`   原因: ${reasons.join('; ')}`);
+    
+    params.onProgress?.(`检测到问题: ${reasons[0]}，正在修复...`, 'repairing');
+
+    // 构建重写 prompt
+    const rewriteInstruction = buildRewriteInstruction({
+      chapterIndex,
+      totalChapters,
+      reasons,
+      isFinalChapter: isFinal,
+    });
+
+    const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
+    const rawRewriteResponse = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
+    chapterText = parseChapterResponse(rawRewriteResponse, chapterIndex);
+    wasRewritten = true;
+    rewriteCount++;
+  }
+
+  // 最终检查
+  const finalFormatQc = quickChapterFormatHeuristic(chapterText);
+  const finalEndingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
+  const finalReasons = [...finalFormatQc.reasons, ...finalEndingQc.reasons];
+  if (finalReasons.length > 0) {
+    const reason = finalReasons[0] || '章节内容疑似不完整';
+    console.log(`❌ 章节 ${chapterIndex} 重写后仍存在 QC 问题，需要人工介入`);
+    params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
+    throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
   }
 
   // 是否跳过摘要更新
