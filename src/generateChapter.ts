@@ -66,6 +66,12 @@ export type WriteChapterResult = {
   rewriteCount: number;
   /** 是否跳过了摘要更新 */
   skippedSummary: boolean;
+  /** 正文生成+QC耗时（毫秒） */
+  generationDurationMs: number;
+  /** 摘要更新耗时（毫秒） */
+  summaryDurationMs: number;
+  /** 整体耗时（毫秒） */
+  totalDurationMs: number;
 };
 
 /**
@@ -199,11 +205,13 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
  * 生成单章内容
  */
 export async function writeOneChapter(params: WriteChapterParams): Promise<WriteChapterResult> {
+  const startedAt = Date.now();
   const { aiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
   const isFinal = chapterIndex === totalChapters;
 
   const system = buildSystemPrompt(isFinal, chapterIndex, chapterTitle);
   const prompt = buildUserPrompt(params);
+  const generationStartedAt = Date.now();
 
   // 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
@@ -255,27 +263,34 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
     throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
   }
+  const generationDurationMs = Date.now() - generationStartedAt;
 
   // 是否跳过摘要更新
   let updatedSummary = params.rollingSummary;
   let updatedOpenLoops = params.openLoops;
   let skippedSummary = true;
+  let summaryDurationMs = 0;
 
   if (!skipSummaryUpdate) {
     // Phase 4: 更新摘要 (Add status update to UI)
     params.onProgress?.('正在更新剧情摘要...', 'updating_summary');
+    const summaryStartedAt = Date.now();
 
     // 生成更新后的摘要和伏笔
     const summaryResult = await generateSummaryUpdate(
       aiConfig,
       params.bible,
       params.rollingSummary,
+      params.openLoops,
       chapterText
     );
     updatedSummary = summaryResult.updatedSummary;
     updatedOpenLoops = summaryResult.updatedOpenLoops;
     skippedSummary = false;
+    summaryDurationMs = Date.now() - summaryStartedAt;
   }
+
+  const totalDurationMs = Date.now() - startedAt;
 
   return {
     chapterText,
@@ -284,6 +299,9 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     wasRewritten,
     rewriteCount,
     skippedSummary,
+    generationDurationMs,
+    summaryDurationMs,
+    totalDurationMs,
   };
 }
 
@@ -294,6 +312,7 @@ async function generateSummaryUpdate(
   aiConfig: AIConfig,
   bible: string,
   previousSummary: string,
+  previousOpenLoops: string[],
   chapterText: string
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
   const system = `
@@ -302,14 +321,14 @@ async function generateSummaryUpdate(
 
 输出格式：
 {
-  "rollingSummary": "用 800~1500 字总结到本章为止的剧情（强调人物状态变化、关键因果、目前局势）",
-  "openLoops": ["未解伏笔1", "未解伏笔2", ...] // 5~12 条，每条不超过 30 字
+  "rollingSummary": "用 350~700 字总结到本章为止的剧情（强调人物状态变化、关键因果、目前局势）",
+  "openLoops": ["未解伏笔1", "未解伏笔2", ...] // 3~8 条，每条不超过 30 字
 }
 `.trim();
 
   const prompt = `
 【Story Bible】
-${bible.slice(0, 2000)}...
+${bible.slice(0, 1200)}...
 
 【此前 Rolling Summary】
 ${previousSummary || '（无）'}
@@ -320,7 +339,11 @@ ${chapterText}
 请输出更新后的 JSON：
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2 });
+  const raw = await generateTextWithRetry(
+    aiConfig,
+    { system, prompt, temperature: 0.2, maxTokens: 1000 },
+    2
+  );
 
   // 容错：去掉可能的代码块标记
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
@@ -335,7 +358,7 @@ ${chapterText}
     console.warn('Summary update parsing failed, using fallback');
     return {
       updatedSummary: previousSummary,
-      updatedOpenLoops: [],
+      updatedOpenLoops: previousOpenLoops,
     };
   }
 }
