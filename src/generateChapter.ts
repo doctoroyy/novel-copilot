@@ -21,6 +21,8 @@ const UpdateSchema = z.object({
 export type WriteChapterParams = {
   /** AI 配置 */
   aiConfig: AIConfig;
+  /** 摘要更新专用 AI 配置（可选，不传则复用 aiConfig） */
+  summaryAiConfig?: AIConfig;
   /** Story Bible 内容 */
   bible: string;
   /** 滚动剧情摘要 */
@@ -206,7 +208,7 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
  */
 export async function writeOneChapter(params: WriteChapterParams): Promise<WriteChapterResult> {
   const startedAt = Date.now();
-  const { aiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
+  const { aiConfig, summaryAiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
   const isFinal = chapterIndex === totalChapters;
 
   const system = buildSystemPrompt(isFinal, chapterIndex, chapterTitle);
@@ -278,7 +280,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
 
     // 生成更新后的摘要和伏笔
     const summaryResult = await generateSummaryUpdate(
-      aiConfig,
+      summaryAiConfig || aiConfig,
       params.bible,
       params.rollingSummary,
       params.openLoops,
