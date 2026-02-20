@@ -1,4 +1,4 @@
-// AI Client for Cloudflare Workers (using native fetch)
+import { completeSimple, Model as PiAiModel, streamSimple, SimpleStreamOptions } from '@mariozechner/pi-ai';
 
 export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
@@ -7,6 +7,52 @@ export interface AIConfig {
   model: string;
   apiKey: string;
   baseUrl?: string;
+}
+
+/**
+ * Convert internal AIConfig to pi-ai Model
+ */
+function toPiAiModel(config: AIConfig): PiAiModel<any> {
+  let api: any = 'openai-completions';
+  let provider: any = config.provider;
+  let baseUrl = config.baseUrl;
+
+  if (config.provider === 'gemini') {
+    api = 'google-generative-ai';
+    provider = 'google';
+    if (!baseUrl) {
+      // Default Google Generative AI base URL is handled by pi-ai if not set
+    }
+  } else if (config.provider === 'deepseek') {
+    provider = 'openai'; // DeepSeek is OpenAI compatible
+    if (!baseUrl) {
+      baseUrl = 'https://api.deepseek.com/v1';
+    }
+  } else if (config.provider === 'openai') {
+    provider = 'openai';
+    if (!baseUrl) {
+      baseUrl = 'https://api.openai.com/v1';
+    }
+  } else {
+    // custom or unknown
+    provider = 'openai';
+    if (!baseUrl) {
+      throw new Error('Custom provider requires baseUrl');
+    }
+  }
+
+  return {
+    id: config.model,
+    name: config.model,
+    api,
+    provider,
+    baseUrl: baseUrl || '',
+    reasoning: true, // Enable reasoning field support
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 4096,
+  };
 }
 
 /**
@@ -21,160 +67,28 @@ export async function generateText(
     maxTokens?: number;
   }
 ): Promise<string> {
-  const { system, prompt, temperature = 0.8, maxTokens } = args;
-
   if (!config.apiKey) {
     throw new Error('API Key not configured. Please set up in Settings.');
   }
 
-  if (config.provider === 'gemini') {
-    return generateWithGemini(config, system, prompt, temperature, maxTokens);
-  } else {
-    return generateWithOpenAI(config, system, prompt, temperature, maxTokens);
+  const model = toPiAiModel(config);
+  const options: SimpleStreamOptions = {
+    apiKey: config.apiKey,
+    temperature: args.temperature || 0.8,
+    maxTokens: args.maxTokens,
+  };
+
+  const response = await completeSimple(model, {
+    systemPrompt: args.system,
+    messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
+  }, options);
+
+  if (response.stopReason === 'error') {
+    throw new Error(response.errorMessage || 'An error occurred during generation');
   }
-}
 
-/**
- * Generate with Gemini API using fetch
- */
-async function generateWithGemini(
-  config: AIConfig,
-  system: string,
-  prompt: string,
-  temperature: number,
-  maxTokens?: number
-): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature,
-            maxOutputTokens: maxTokens
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
-
-    if (!response.ok) {
-      let errorMessage = `Gemini API error: ${response.status}`;
-      const contentType = response.headers.get('content-type') || '';
-
-      if (contentType.includes('application/json')) {
-        try {
-          const error = await response.json() as any;
-          errorMessage = error.error?.message || errorMessage;
-        } catch {
-          // Skip
-        }
-      } else {
-        try {
-          const text = await response.text();
-          errorMessage = `${errorMessage}. Response: ${text.slice(0, 200)}`;
-        } catch {
-          // Skip
-        }
-      }
-      throw new Error(errorMessage);
-    }
-
-    const data = await response.json() as any;
-    const candidate = data.candidates?.[0];
-    const text = candidate?.content?.parts?.[0]?.text;
-
-    if (!text?.trim()) {
-      console.log('Gemini empty response. Full body:', JSON.stringify(data));
-      throw new Error('Empty model response');
-    }
-
-    return text.trim();
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-/**
- * Generate with OpenAI-compatible API using fetch
- */
-async function generateWithOpenAI(
-  config: AIConfig,
-  system: string,
-  prompt: string,
-  temperature: number,
-  maxTokens?: number
-): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minutes timeout
-
-  try {
-    const baseUrl = config.baseUrl ||
-      (config.provider === 'openai' ? 'https://api.openai.com/v1' :
-        config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' :
-          config.baseUrl);
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: prompt },
-        ],
-        temperature,
-        max_tokens: maxTokens,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      let errorMessage = `API error: ${response.status} ${response.statusText}`;
-      const contentType = response.headers.get('content-type') || '';
-
-      if (contentType.includes('application/json')) {
-        try {
-          const error = await response.json() as any;
-          errorMessage = error.error?.message || error.message || errorMessage;
-        } catch {
-          // Fallback to default message
-        }
-      } else {
-        try {
-          const text = await response.text();
-          errorMessage = `${errorMessage}. Response: ${text.slice(0, 200)}`;
-        } catch {
-          // Fallback to default message
-        }
-      }
-      throw new Error(errorMessage);
-    }
-
-    const data = await response.json() as any;
-    // Compatibility: check content, then reasoning/thinking fields (often used by models like GLM or DeepSeek)
-    const message = data.choices?.[0]?.message;
-    const text = message?.content || message?.reasoning_content || message?.reasoning || message?.thought;
-
-    if (!text?.trim()) {
-      console.log('Empty response from model. Full body:', JSON.stringify(data));
-      throw new Error('Empty model response');
-    }
-
-    return text.trim();
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  // pi-ai automatically collects content from reasoning fields and content fields
+  return response.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
 }
 
 /**
@@ -335,191 +249,35 @@ export async function* generateTextStream(
   config: AIConfig,
   args: StreamGenerateArgs
 ): AsyncGenerator<string, void, unknown> {
-  const { system, prompt, temperature = 0.8, maxTokens } = args;
-
   if (!config.apiKey) {
     throw new Error('API Key not configured. Please set up in Settings.');
   }
 
-  if (config.provider === 'gemini') {
-    yield* streamWithGemini(config, system, prompt, temperature, maxTokens);
-  } else {
-    yield* streamWithOpenAI(config, system, prompt, temperature, maxTokens);
-  }
-}
+  const model = toPiAiModel(config);
+  const options: SimpleStreamOptions = {
+    apiKey: config.apiKey,
+    temperature: args.temperature || 0.8,
+    maxTokens: args.maxTokens,
+  };
 
-/**
- * Stream with Gemini API using SSE
- */
-async function* streamWithGemini(
-  config: AIConfig,
-  system: string,
-  prompt: string,
-  temperature: number,
-  maxTokens?: number
-): AsyncGenerator<string, void, unknown> {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:streamGenerateContent?key=${config.apiKey}&alt=sse`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          maxOutputTokens: maxTokens,
-        },
-      }),
+  const stream = streamSimple(model, {
+    systemPrompt: args.system,
+    messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
+  }, options);
+
+  for await (const event of stream) {
+    if (event.type === 'text_delta') {
+      yield event.delta;
+    } else if (event.type === 'thinking_delta') {
+      // In this project, we might want to skip thinking delta or wrap it.
+      // For now, let's yield it if it's text-like, or just focus on text_delta for the chapter content.
+      // DeepSeek/GLM reasoning is often followed by content.
+      // If the user wants to see reasoning, we could yield it with a prefix.
+      // But for chapter generation, we usually only want the final content.
+      // However, some models put content in reasoning. pi-ai's text_delta should be correct.
+    } else if (event.type === 'error') {
+      throw new Error(event.error.errorMessage || 'Streaming error');
     }
-  );
-
-  if (!response.ok) {
-    const error = await response.json() as any;
-    throw new Error(error.error?.message || `Gemini API error: ${response.status}`);
-  }
-
-  if (!response.body) {
-    const fallbackText = await generateWithGemini(config, system, prompt, temperature, maxTokens);
-    if (fallbackText) {
-      yield fallbackText;
-      return;
-    }
-    throw new Error('No response body for streaming');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr && jsonStr !== '[DONE]') {
-            try {
-              const data = JSON.parse(jsonStr);
-              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) {
-                yield text;
-              }
-            } catch {
-              // Skip malformed JSON
-            }
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-/**
- * Stream with OpenAI-compatible API using SSE
- */
-async function* streamWithOpenAI(
-  config: AIConfig,
-  system: string,
-  prompt: string,
-  temperature: number,
-  maxTokens?: number
-): AsyncGenerator<string, void, unknown> {
-  const baseUrl = config.baseUrl ||
-    (config.provider === 'openai' ? 'https://api.openai.com/v1' :
-      config.provider === 'deepseek' ? 'https://api.deepseek.com/v1' :
-        config.baseUrl);
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: prompt },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-      stream: true,
-    }),
-  });
-
-  if (!response.ok) {
-    let errorMessage = `API error: ${response.status} ${response.statusText}`;
-    const contentType = response.headers.get('content-type') || '';
-
-    if (contentType.includes('application/json')) {
-      try {
-        const error = await response.json() as any;
-        errorMessage = error.error?.message || error.message || errorMessage;
-      } catch {
-        // Fallback
-      }
-    } else {
-      try {
-        const text = await response.text();
-        errorMessage = `${errorMessage}. Response: ${text.slice(0, 200)}`;
-      } catch {
-        // Fallback
-      }
-    }
-    throw new Error(errorMessage);
-  }
-
-  if (!response.body) {
-    const fallbackText = await generateWithOpenAI(config, system, prompt, temperature, maxTokens);
-    if (fallbackText) {
-      yield fallbackText;
-      return;
-    }
-    throw new Error('No response body for streaming');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr && jsonStr !== '[DONE]') {
-            try {
-              const data = JSON.parse(jsonStr);
-              const delta = data.choices?.[0]?.delta;
-              const content = delta?.content || delta?.reasoning_content || delta?.reasoning || delta?.thought;
-              if (content) {
-                yield content;
-              }
-            } catch {
-              // Skip malformed JSON
-            }
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
   }
 }
 
@@ -569,9 +327,9 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
 
   return {
     provider: provider as AIProvider,
-    model,
-    apiKey,
-    baseUrl,
+    model: model as string,
+    apiKey: apiKey as string,
+    baseUrl: baseUrl as string,
   };
 }
 
