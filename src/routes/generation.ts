@@ -299,76 +299,6 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
   });
 });
 
-// Generate single chapter (now as an async background task)
-generationRoutes.post('/projects/:name/chapters/:index/generate', async (c) => {
-  const name = c.req.param('name');
-  const index = parseInt(c.req.param('index'), 10);
-  const userId = c.get('userId') as string | null;
-  if (!userId) {
-    return c.json({ success: false, error: 'Unauthorized' }, 401);
-  }
-  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_chapter');
-
-  if (!aiConfig) {
-    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
-  }
-
-  try {
-    const { regenerate = false } = await c.req.json().catch(() => ({}));
-
-    // Get project with state and outline
-    const project = await c.env.DB.prepare(`
-      SELECT p.id, p.name, p.bible, s.next_chapter_index, s.total_chapters
-      FROM projects p
-      JOIN states s ON p.id = s.project_id
-      WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
-      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
-      LIMIT 1
-    `).bind(name, name, userId, name).first() as any;
-
-    if (!project) {
-      return c.json({ success: false, error: 'Project not found' }, 404);
-    }
-
-    // Validate chapter order
-    const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-    `).bind(project.id).first() as any;
-
-    const maxIndex = maxChapterResult?.max_index || 0;
-
-    if (index > maxIndex + 1) {
-      return c.json({ success: false, error: `无法跳过生成。当前最大章节为第 ${maxIndex} 章，必须先生成第 ${maxIndex + 1} 章。` }, 400);
-    }
-
-    // Check if chapter already exists when not regenerating
-    if (index <= maxIndex && !regenerate) {
-      return c.json({ success: false, error: `第 ${index} 章已存在。如需重写，请使用重新生成功能。` }, 409);
-    }
-
-    // Use task system for background generation
-    const taskId = await createGenerationTask(
-      c.env.DB,
-      project.id,
-      userId,
-      1, // Just one chapter
-      index
-    );
-
-    // Enqueue
-    await startGenerationChain(c, taskId, userId, aiConfig, 1);
-
-    return c.json({
-      success: true,
-      message: '章节生成任务已在后台启动',
-      taskId
-    }, 202);
-
-  } catch (error) {
-    console.error('Async single chapter generation failed:', error);
-    return c.json({ success: false, error: (error as Error).message }, 500);
-  }
-});
 
 // Generate chapters
 generationRoutes.post('/projects/:name/generate', async (c) => {
@@ -911,9 +841,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  const body = await c.req.json().catch(() => ({} as { chaptersToGenerate?: unknown }));
+  const body = await c.req.json().catch(() => ({} as any));
   const requestedCountRaw = Number.parseInt(String(body.chaptersToGenerate ?? '1'), 10);
   const requestedCount = Number.isInteger(requestedCountRaw) && requestedCountRaw > 0 ? requestedCountRaw : 1;
+  const targetIndex = body.index ? parseInt(body.index, 10) : undefined;
+  const regenerate = Boolean(body.regenerate);
 
   const project = await c.env.DB.prepare(`
     SELECT p.id, p.name, s.next_chapter_index, s.total_chapters
@@ -938,19 +870,35 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   `).bind(project.id).first() as { max_index: number | null } | null;
 
   const actualMaxChapter = maxChapterResult?.max_index || 0;
-  const expectedNextIndex = actualMaxChapter + 1;
-  if (project.next_chapter_index !== expectedNextIndex) {
-    project.next_chapter_index = expectedNextIndex;
-    await c.env.DB.prepare(`
-      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-    `).bind(expectedNextIndex, project.id).run();
-  }
 
-  const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
-  if (remaining <= 0) {
-    return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
+  let startingIndex = project.next_chapter_index;
+  let chaptersToGenerate = requestedCount;
+
+  if (targetIndex !== undefined) {
+    if (targetIndex > actualMaxChapter + 1) {
+      return c.json({ success: false, error: `无法跳过生成。当前最大章节为第 ${actualMaxChapter} 章，必须先生成第 ${actualMaxChapter + 1} 章。` }, 400);
+    }
+    if (targetIndex <= actualMaxChapter && !regenerate) {
+      return c.json({ success: false, error: `第 ${targetIndex} 章已存在。如需重写，请使用重新生成功能。` }, 409);
+    }
+    startingIndex = targetIndex;
+    chaptersToGenerate = 1; // When targeting a specific index, just generate 1
+  } else {
+    const expectedNextIndex = actualMaxChapter + 1;
+    if (project.next_chapter_index !== expectedNextIndex) {
+      project.next_chapter_index = expectedNextIndex;
+      startingIndex = expectedNextIndex;
+      await c.env.DB.prepare(`
+        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+      `).bind(expectedNextIndex, project.id).run();
+    }
+
+    const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
+    if (remaining <= 0) {
+      return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
+    }
+    chaptersToGenerate = Math.min(requestedCount, remaining);
   }
-  let chaptersToGenerate = Math.min(requestedCount, remaining);
 
   const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
 
@@ -1004,7 +952,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       project.id,
       userId,
       chaptersToGenerate,
-      project.next_chapter_index
+      startingIndex
     );
 
   // Always start/restart the chain — even on resume, the previous chain may have died silently

@@ -80,7 +80,7 @@ interface ProjectContextType {
 
   // Generation handlers
   handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
-  handleGenerateChapters: (count: string) => Promise<void>;
+  handleGenerateChapters: (count: string, index?: number, regenerate?: boolean) => Promise<void>;
   handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
   cancelingGeneration: boolean;
   handleResetProject: () => Promise<void>;
@@ -606,7 +606,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProject, isConfigured, loadProject]);
 
-  const handleGenerateChapters = useCallback(async (count: string) => {
+  const handleGenerateChapters = useCallback(async (count: string, index?: number, regenerate?: boolean) => {
     if (!selectedProject || !isConfigured) return;
 
     const requestedCount = Number.parseInt(count, 10);
@@ -620,16 +620,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
     const generated = Math.max(0, selectedProject.state.nextChapterIndex - 1);
     const remaining = Math.max(0, selectedProject.state.totalChapters - generated);
-    if (remaining <= 0) {
+    if (remaining <= 0 && index === undefined) {
       setError('已达到目标章节数，无需继续生成');
       return;
     }
-    const chapterCount = Math.min(requestedCount, remaining);
-    if (chapterCount < requestedCount) {
+    const chapterCount = index !== undefined ? 1 : Math.min(requestedCount, remaining);
+    if (chapterCount < requestedCount && index === undefined) {
       setError(`仅剩 ${remaining} 章可生成，已自动按 ${remaining} 章执行`);
     }
 
-    const startChapter = selectedProject.state.nextChapterIndex;
+    const startChapter = index ?? selectedProject.state.nextChapterIndex;
 
     setLoading(true);
     stopStreamMonitor();
@@ -643,11 +643,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           onStart: (total: number) => {
             setGenerationState(prev => ({ ...prev, total }));
           },
-          onTaskCreated: (event) => {
+          onTaskCreated: (event: any) => {
             if (typeof event.taskId !== 'number') return;
             setGenerationState(prev => ({ ...prev, taskId: event.taskId }));
           },
-          onTaskResumed: (event) => {
+          onTaskResumed: (event: any) => {
             const completed = event.completedChapters?.length || 0;
             setGenerationState(prev => ({
               ...prev,
@@ -659,7 +659,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
               message: event.currentMessage || prev.message,
             }));
           },
-          onProgress: (event) => {
+          onProgress: (event: any) => {
             setGenerationState(prev => ({
               ...prev,
               taskId: typeof event.taskId === 'number' ? event.taskId : prev.taskId,
@@ -696,7 +696,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           onChapterError: (chapterIndex: number, error: string) => {
             console.error(`Chapter ${chapterIndex} error:`, error);
           },
-          onDone: (results, failedChapters) => {
+          onDone: (results: any, failedChapters: any) => {
             completeGeneration();
             addTaskToHistory({
               type: 'chapters',
@@ -745,6 +745,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             });
           },
         },
+        undefined,
+        undefined,
+        { index, regenerate }
       );
       await loadProject(selectedProject.id);
     } catch (err) {

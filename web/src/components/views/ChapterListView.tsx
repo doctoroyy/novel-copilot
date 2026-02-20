@@ -13,7 +13,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
-import { generateSingleChapter } from '@/lib/api';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { ChapterEditor } from '@/components/ChapterEditor';
 
@@ -65,6 +64,7 @@ interface ChapterListViewProps {
   onBatchDeleteChapters?: (indices: number[]) => Promise<void>;
   onProjectRefresh?: () => Promise<void> | void;
   onGenerateNextChapter?: () => Promise<void>;
+  onRegenerateChapter?: (index: number) => Promise<void>;
   isProjectGenerating?: boolean;
 }
 
@@ -75,9 +75,10 @@ export function ChapterListView({
   onBatchDeleteChapters,
   onProjectRefresh,
   onGenerateNextChapter,
+  onRegenerateChapter,
   isProjectGenerating = false,
 }: ChapterListViewProps) {
-  const { startTask, activeTasks } = useGeneration();
+  const { activeTasks } = useGeneration();
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -219,9 +220,7 @@ export function ChapterListView({
       if (onGenerateNextChapter) {
         await onGenerateNextChapter();
       } else {
-        await generateSingleChapter(project.id, nextIndex, false);
-        startTask('chapters', `生成第 ${nextIndex} 章`, project.id, 1);
-        // We don't need to refresh immediately as the background task will be tracked in FloatingProgressButton
+        console.warn('onGenerateNextChapter not provided');
       }
     } catch (err) {
       console.error('Generation failed:', err);
@@ -238,8 +237,11 @@ export function ChapterListView({
     setActionError(null);
     setGeneratingChapter(index);
     try {
-      await generateSingleChapter(project.id, index, true);
-      startTask('chapters', `重写第 ${index} 章`, project.id, 1);
+      if (onRegenerateChapter) {
+        await onRegenerateChapter(index);
+      } else {
+        console.warn('onRegenerateChapter not provided');
+      }
     } catch (err) {
       console.error('Regeneration failed:', err);
       setActionError(`重写提交失败：${(err as Error).message}`);
