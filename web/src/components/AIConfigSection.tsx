@@ -1,7 +1,10 @@
 
 
-import { Bot } from 'lucide-react';
+import { useState } from 'react';
+import { Bot, Loader2, CheckCircle2, AlertCircle, Wifi } from 'lucide-react';
 import { useAIConfig, PROVIDER_MODELS, type AIProvider } from '@/hooks/useAIConfig';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -19,9 +22,43 @@ const PROVIDERS: { value: AIProvider; label: string }[] = [
 ];
 
 export function AIConfigSection() {
-  const { config, saveConfig, switchProvider } = useAIConfig();
-  
+  const { config, saveConfig, switchProvider, testConnection } = useAIConfig();
+  const { toast } = useToast();
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   const currentModels = PROVIDER_MODELS[config.provider] || [];
+
+  const handleTest = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testConnection();
+      setTestResult(result);
+      if (result.success) {
+        toast({
+          title: '连接成功',
+          description: result.message,
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: '连接失败',
+          description: result.message,
+        });
+      }
+    } catch (err) {
+      const message = (err as Error).message;
+      setTestResult({ success: false, message });
+      toast({
+        variant: 'destructive',
+        title: '连接异常',
+        description: message,
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   return (
     <div className="p-4 rounded-lg border bg-muted/30 space-y-4">
@@ -103,6 +140,38 @@ export function AIConfigSection() {
             value={config.apiKey || ''}
             onChange={(e) => saveConfig({ apiKey: e.target.value })}
           />
+        </div>
+
+        {/* Test Connection Button */}
+        <div className="pt-2 flex flex-col gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs h-9 gap-2"
+            onClick={handleTest}
+            disabled={isTesting || !config.apiKey}
+          >
+            {isTesting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Wifi className="h-3.5 w-3.5" />
+            )}
+            测试连接状态
+          </Button>
+
+          {testResult && (
+            <div className={`text-[11px] flex items-start gap-2 p-2 rounded border ${testResult.success
+                ? 'bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400'
+                : 'bg-destructive/10 border-destructive/20 text-destructive'
+              }`}>
+              {testResult.success ? (
+                <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+              ) : (
+                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+              )}
+              <span className="leading-tight">{testResult.message}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

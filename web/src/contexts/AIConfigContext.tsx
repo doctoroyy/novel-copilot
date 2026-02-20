@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { testAIConnection as apiTestConnection } from '@/lib/api';
 
 export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
 
@@ -74,6 +75,7 @@ interface AIConfigContextValue {
   saveConfig: (newConfig: Partial<AIConfig>) => AIConfig;
   switchProvider: (provider: AIProvider) => void;
   getProviderSettings: (provider: AIProvider) => ProviderSettings;
+  testConnection: (configOverride?: Partial<AIConfig>) => Promise<{ success: boolean; message: string }>;
   maskedApiKey: string;
   isConfigured: boolean;
 }
@@ -119,7 +121,7 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
         baseUrl: providerSettings.baseUrl || '',
         apiKey: providerSettings.apiKey || '', // Restore API key for this provider
       };
-      
+
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch (err) {
@@ -132,15 +134,15 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
   // Save to localStorage and update per-provider settings
   const saveConfig = useCallback((newConfig: Partial<AIConfig>) => {
     let finalConfig: AIConfig = config;
-    
+
     setConfig(prevConfig => {
       // Start with current config merged with new values
       const updated = { ...prevConfig, ...newConfig };
-      
+
       // If model, baseUrl, OR apiKey changed, save to per-provider settings
       const currentProvider = updated.provider; // Use updated provider
       const currentProviderSettings = prevConfig.providerSettings?.[currentProvider] || DEFAULT_PROVIDER_SETTINGS[currentProvider];
-      
+
       const updatedProviderSettings = {
         ...prevConfig.providerSettings,
         [currentProvider]: {
@@ -152,17 +154,17 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
       };
 
       updated.providerSettings = updatedProviderSettings;
-      
+
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch (err) {
         console.error('Failed to save AI config to localStorage:', err);
       }
-      
+
       finalConfig = updated;
       return updated;
     });
-    
+
     return finalConfig;
   }, [config]);
 
@@ -174,15 +176,27 @@ export function AIConfigProvider({ children }: { children: ReactNode }) {
   // AI config is now server-managed via Model Registry — always considered configured
   const isConfigured = true;
 
+  // Test current or modified connection
+  const testConnection = useCallback(async (configOverride?: Partial<AIConfig>) => {
+    const testConfig = {
+      provider: configOverride?.provider || config.provider,
+      model: configOverride?.model || config.model,
+      apiKey: configOverride?.apiKey || config.apiKey,
+      baseUrl: configOverride?.baseUrl || config.baseUrl,
+    };
+    return await apiTestConnection(testConfig);
+  }, [config]);
+
   return (
-    <AIConfigContext.Provider value={{ 
-      config, 
-      loaded, 
-      saveConfig, 
+    <AIConfigContext.Provider value={{
+      config,
+      loaded,
+      saveConfig,
       switchProvider,
       getProviderSettings,
-      maskedApiKey, 
-      isConfigured 
+      testConnection,
+      maskedApiKey,
+      isConfigured
     }}>
       {children}
     </AIConfigContext.Provider>
