@@ -64,22 +64,22 @@ app.route('/api/credit', creditRoutes);
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');
   const { verifyToken } = await import('./middleware/authMiddleware.js');
-  
+
   // Get token from query param (EventSource cannot send headers)
   const token = c.req.query('token');
   let userId: string | null = null;
-  
+
   if (token) {
     const payload = await verifyToken(token);
     if (payload) {
       userId = payload.userId;
     }
   }
-  
+
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
-      
+
       const send = (data: any) => {
         try {
           // Check if controller is still valid (best effort)
@@ -100,20 +100,20 @@ app.get('/api/events', async (c) => {
         try {
           // Consume events from the bus
           const events = eventBus.consume();
-          
+
           if (events.length > 0) {
-             for (const event of events) {
-               // TODO: In a multi-user environment, filter events by userId
-               // For now, broadcast all events to all connected clients
-               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-             }
+            for (const event of events) {
+              // TODO: In a multi-user environment, filter events by userId
+              // For now, broadcast all events to all connected clients
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+            }
           } else {
-             // Optional: keep alive ping every few ticks if no events
-             // But we can just use a separate ping or just rely on standard keepalive
-             // Let's explicitly ping every ~30 polls (30 * 500ms = 15s)
-             if (Math.random() < 0.05) { 
-               controller.enqueue(encoder.encode(': ping\n\n')); 
-             }
+            // Optional: keep alive ping every few ticks if no events
+            // But we can just use a separate ping or just rely on standard keepalive
+            // Let's explicitly ping every ~30 polls (30 * 500ms = 15s)
+            if (Math.random() < 0.05) {
+              controller.enqueue(encoder.encode(': ping\n\n'));
+            }
           }
         } catch (err) {
           console.warn('SSE polling failed:', (err as Error).message);
@@ -125,7 +125,7 @@ app.get('/api/events', async (c) => {
         clearInterval(pollInterval);
         try {
           // controller.close(); 
-        } catch {}
+        } catch { }
       });
 
 
@@ -157,21 +157,20 @@ export default {
   fetch: app.fetch,
   async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext) {
     const { runChapterGenerationTaskInBackground } = await import('./routes/generation.js');
-    
+
     for (const message of batch.messages) {
       try {
         const payload = message.body;
         console.log(`Processing queue message: Task ID ${payload.taskId}`);
-        
+
         await runChapterGenerationTaskInBackground({
           env,
           aiConfig: payload.aiConfig,
           userId: payload.userId,
           taskId: payload.taskId,
-          origin: payload.origin,
-          authHeader: payload.authHeader
+          chaptersToGenerate: payload.chaptersToGenerate
         });
-        
+
         message.ack(); // Acknowledge successful processing
       } catch (error) {
         console.error('Error processing queue message:', error);
