@@ -375,31 +375,7 @@ export type GenerationEvent = {
   totalFailed?: number;
 };
 
-/**
- * Generate a single chapter (async background task)
- * Returns the taskId to track progress
- */
-export async function generateSingleChapter(
-  name: string,
-  index: number,
-  regenerate: boolean = false,
-  aiHeaders?: Record<string, string>
-): Promise<{ taskId: number; message: string }> {
-  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}/generate`, {
-    method: 'POST',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ regenerate }),
-  });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  if (!data.success) throw new Error(data.error || 'Generation failed');
-
-  return {
-    taskId: data.taskId,
-    message: data.message
-  };
-}
 
 /**
  * Stream chapter generation with real-time updates
@@ -409,12 +385,13 @@ export async function* generateChaptersStream(
   name: string,
   chaptersToGenerate: number,
   aiHeaders?: Record<string, string>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { index?: number; regenerate?: boolean }
 ): AsyncGenerator<GenerationEvent, void, unknown> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate-stream`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ chaptersToGenerate }),
+    body: JSON.stringify({ chaptersToGenerate, index: options?.index, regenerate: options?.regenerate }),
     signal,
   });
 
@@ -487,11 +464,13 @@ export async function generateChaptersWithProgress(
   aiHeaders?: Record<string, string>,
   signal?: AbortSignal,
   options?: {
+    index?: number;
+    regenerate?: boolean;
     maxRetries?: number;
     retryDelayMs?: number;
   }
 ): Promise<{ chapter: number; title: string }[]> {
-  const { maxRetries = 5, retryDelayMs = 3000 } = options || {};
+  const { maxRetries = 5, retryDelayMs = 3000, index, regenerate } = options || {};
   const results: { chapter: number; title: string }[] = [];
   let retryCount = 0;
 
@@ -518,7 +497,7 @@ export async function generateChaptersWithProgress(
       // But actually, we just rely on calling generate-stream. 
       // If task is running, backend returns it.
 
-      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal)) {
+      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal, { index, regenerate })) {
         switch (event.type) {
           case 'start':
             if (retryCount === 0) {
