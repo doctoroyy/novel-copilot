@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 
-export type AIProvider = 'gemini' | 'openai' | 'deepseek' | 'custom';
+export type AIProvider = string;
 
 export interface AIConfig {
   provider: AIProvider;
@@ -11,7 +11,7 @@ export interface AIConfig {
 }
 
 // Provider base URLs
-const PROVIDER_BASE_URLS: Partial<Record<AIProvider, string>> = {
+const PROVIDER_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   deepseek: 'https://api.deepseek.com/v1',
 };
@@ -183,7 +183,7 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
   }
   
   return {
-    provider: provider as AIProvider,
+    provider,
     model,
     apiKey,
     baseUrl,
