@@ -12,7 +12,7 @@ export type ProviderPreset = {
 const PRESETS: ProviderPreset[] = [
   { id: 'openai', label: 'OpenAI', protocol: 'openai', defaultBaseUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', label: 'Anthropic', protocol: 'anthropic', defaultBaseUrl: 'https://api.anthropic.com' },
-  { id: 'gemini', label: 'Google Gemini', protocol: 'gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com' },
+  { id: 'gemini', label: 'Google Gemini', protocol: 'gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
   { id: 'deepseek', label: 'DeepSeek', protocol: 'openai', defaultBaseUrl: 'https://api.deepseek.com/v1' },
   { id: 'zai', label: 'Zhipu GLM (zAI)', protocol: 'openai', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', aliases: ['zhipu', 'glm', 'bigmodel', 'z-ai'] },
   { id: 'moonshot', label: 'Moonshot (Kimi)', protocol: 'openai', defaultBaseUrl: 'https://api.moonshot.cn/v1', aliases: ['kimi'] },
@@ -82,4 +82,26 @@ export function getProviderPreset(provider?: string): ProviderPreset | null {
 
 export function getProviderPresets(): ProviderPreset[] {
   return PRESETS.map((preset) => ({ ...preset }));
+}
+
+/**
+ * Normalize Gemini base URL to API root with version path.
+ * Accepts host-only/base paths and strips accidental /models suffix.
+ */
+export function normalizeGeminiBaseUrl(baseUrl?: string): string | undefined {
+  const raw = String(baseUrl || '').trim();
+  if (!raw) return undefined;
+
+  let normalized = raw.replace(/\/+$/, '');
+  normalized = normalized.replace(/\/models(?:\/.*)?$/i, '');
+
+  if (!/generativelanguage\.googleapis\.com/i.test(normalized)) {
+    return normalized;
+  }
+
+  if (/\/v\d+(?:beta|alpha)?$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return `${normalized}/v1beta`;
 }

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getProviderPreset, getProviderPresets, normalizeProviderId } from '../services/providerCatalog.js';
+import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normalizeProviderId } from '../services/providerCatalog.js';
 
 interface Bindings {
   DB: D1Database;
@@ -359,7 +359,10 @@ adminRoutes.post('/model-registry', async (c) => {
     const preset = getProviderPreset(normalizedProvider);
     const normalizedModelName = String(modelName).trim();
     const normalizedDisplayName = String(displayName || normalizedModelName).trim();
-    const resolvedBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl || null;
+    const initialBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl || null;
+    const resolvedBaseUrl = normalizedProvider === 'gemini'
+      ? (normalizeGeminiBaseUrl(initialBaseUrl || undefined) || null)
+      : initialBaseUrl;
 
     if (!normalizedModelName) {
       return c.json({ success: false, error: 'modelName 不能为空' }, 400);
@@ -394,16 +397,37 @@ adminRoutes.put('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
     const body = await c.req.json();
+    const existing = await c.env.DB.prepare(
+      'SELECT provider, base_url FROM model_registry WHERE id = ? LIMIT 1'
+    ).bind(id).first() as { provider?: string; base_url?: string | null } | null;
+
+    if (!existing) {
+      return c.json({ success: false, error: '模型不存在' }, 404);
+    }
 
     // Build dynamic update
     const updates: string[] = [];
     const values: any[] = [];
+    const nextProvider = body.provider !== undefined
+      ? normalizeProviderId(String(body.provider))
+      : String(existing.provider || '');
 
     if (body.displayName !== undefined) { updates.push('display_name = ?'); values.push(String(body.displayName || '').trim()); }
-    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(normalizeProviderId(String(body.provider))); }
+    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(nextProvider); }
     if (body.modelName !== undefined) { updates.push('model_name = ?'); values.push(body.modelName); }
     if (body.apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(body.apiKey || null); }
-    if (body.baseUrl !== undefined) { updates.push('base_url = ?'); values.push(body.baseUrl || null); }
+    if (body.baseUrl !== undefined) {
+      const rawBaseUrl = String(body.baseUrl || '').trim();
+      const normalizedBaseUrl = nextProvider === 'gemini'
+        ? (normalizeGeminiBaseUrl(rawBaseUrl || undefined) || null)
+        : (rawBaseUrl || null);
+      updates.push('base_url = ?');
+      values.push(normalizedBaseUrl);
+    } else if (body.provider !== undefined && nextProvider === 'gemini') {
+      const normalizedExistingBaseUrl = normalizeGeminiBaseUrl(String(existing.base_url || '')) || 'https://generativelanguage.googleapis.com/v1beta';
+      updates.push('base_url = ?');
+      values.push(normalizedExistingBaseUrl);
+    }
     if (body.creditMultiplier !== undefined) { updates.push('credit_multiplier = ?'); values.push(body.creditMultiplier); }
     if (body.capabilities !== undefined) { updates.push('capabilities = ?'); values.push(JSON.stringify(body.capabilities)); }
     if (body.isActive !== undefined) { updates.push('is_active = ?'); values.push(body.isActive ? 1 : 0); }
@@ -626,9 +650,10 @@ adminRoutes.post('/fetch-models', async (c) => {
     let models: { id: string; name: string; displayName: string }[] = [];
 
     if (providerType === 'gemini') {
-      // Gemini API: GET /v1beta/models?key=xxx
+      const geminiBaseUrl = normalizeGeminiBaseUrl(effectiveBaseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
+      // Gemini API: GET /models?key=xxx
       const res = await fetch(
-        `${effectiveBaseUrl}/v1beta/models?key=${apiKey}`,
+        `${geminiBaseUrl}/models?key=${apiKey}`,
         { headers: { 'Content-Type': 'application/json' } }
       );
 
@@ -705,7 +730,9 @@ adminRoutes.post('/fetch-models', async (c) => {
       success: true,
       provider: normalizedProvider,
       protocol: providerType,
-      baseUrl: effectiveBaseUrl,
+      baseUrl: providerType === 'gemini'
+        ? (normalizeGeminiBaseUrl(effectiveBaseUrl) || 'https://generativelanguage.googleapis.com/v1beta')
+        : effectiveBaseUrl,
       models,
       count: models.length,
     });
