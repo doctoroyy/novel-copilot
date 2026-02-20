@@ -14,6 +14,7 @@ export interface ActiveTask {
   message?: string;
   startTime: number;
   projectName?: string;
+  startChapter?: number;
 }
 
 export interface GenerationState {
@@ -76,14 +77,14 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
 
   // Update an existing task
   const updateTask = useCallback((taskId: string, updates: Partial<ActiveTask>) => {
-    setActiveTasks(prev => prev.map(task => 
+    setActiveTasks(prev => prev.map(task =>
       task.id === taskId ? { ...task, ...updates } : task
     ));
   }, []);
 
   // Complete and remove a task
   const completeTask = useCallback((taskId: string, success: boolean, details?: string) => {
-    setActiveTasks(prev => prev.map(task => 
+    setActiveTasks(prev => prev.map(task =>
       task.id === taskId ? { ...task, status: success ? 'done' : 'error', message: details } : task
     ));
     // Remove after a brief delay

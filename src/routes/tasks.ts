@@ -310,12 +310,48 @@ export async function createGenerationTask(
   targetCount: number,
   startChapter: number
 ): Promise<number> {
-  // First, stop any existing running tasks to avoid overlap
-  await db.prepare(`
-    UPDATE generation_tasks 
-    SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = (unixepoch() * 1000)
-    WHERE project_id = ? AND user_id = ? AND status = 'running'
-  `).bind(projectId, userId).run();
+  // First, check if there's an existing running task for this project
+  const existing = await db.prepare(`
+    SELECT id, target_count, start_chapter, status, cancel_requested, completed_chapters
+    FROM generation_tasks
+    WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(projectId, userId).first() as { id: number; target_count: number; start_chapter: number; completed_chapters: string } | null;
+
+  if (existing) {
+    const completedChapters = JSON.parse(existing.completed_chapters || '[]') as number[];
+    const maxAttempted = Math.max(existing.start_chapter + existing.target_count - 1, ...completedChapters);
+
+    // Case 1: The requested range is already covered by the existing task
+    if (startChapter >= existing.start_chapter && startChapter + targetCount - 1 <= maxAttempted) {
+      console.log(`Task ${existing.id} already covers requested range ${startChapter}-${startChapter + targetCount - 1}. Returning existing ID.`);
+      return existing.id;
+    }
+
+    // Case 2: The request is an extension of the current task (sequential)
+    // If the new startChapter is exactly after the currently planned range, we can just extend target_count
+    if (startChapter === maxAttempted + 1) {
+      const newTargetCount = existing.target_count + targetCount;
+      console.log(`Extending task ${existing.id} target_count to ${newTargetCount}`);
+      await db.prepare(`
+        UPDATE generation_tasks 
+        SET target_count = ?, updated_at = (unixepoch() * 1000)
+        WHERE id = ?
+      `).bind(newTargetCount, existing.id).run();
+      return existing.id;
+    }
+
+    // Case 3: Non-contiguous or conflicting request. 
+    // To maintain serial integrity, we terminate the old one and start new, 
+    // OR we could queue it. For now, following the original "replace" logic but with logic check.
+    console.log(`New task request ${startChapter} is not a simple extension of current task ${existing.start_chapter}-${maxAttempted}. Replacing.`);
+    await db.prepare(`
+      UPDATE generation_tasks 
+      SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = (unixepoch() * 1000)
+      WHERE id = ?
+    `).bind(existing.id).run();
+  }
 
   // Create new task
   const result = await db.prepare(`
