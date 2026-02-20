@@ -583,16 +583,14 @@ export async function runChapterGenerationTaskInBackground(params: {
     if (runtime.shouldStop) return;
 
     // 4. Determine Scope
-    const totalProcessed = completedCount + failedCount;
-
-    if (totalProcessed >= task.targetCount || (chaptersToGenerate !== undefined && (completedCount + failedCount) >= chaptersToGenerate)) {
+    if (completedCount >= task.targetCount || (chaptersToGenerate !== undefined && completedCount >= chaptersToGenerate)) {
       // Task Complete!
       await completeTask(env.DB, taskId, true, undefined);
       await emitProgressEvent({
         projectName: project.name,
-        current: totalProcessed,
+        current: completedCount,
         total: task.targetCount,
-        chapterIndex: task.startChapter + totalProcessed - 1,
+        chapterIndex: task.startChapter + completedCount - 1,
         status: 'done',
         message: `生成完成：成功 ${completedCount} 章，失败 ${failedCount} 章`,
       });
@@ -600,14 +598,14 @@ export async function runChapterGenerationTaskInBackground(params: {
     }
 
     // 5. Identify Next Chapter
-    const currentStepIndex = totalProcessed;
+    const currentStepIndex = completedCount;
     const chapterIndex = task.startChapter + currentStepIndex;
 
     if (chapterIndex > project.total_chapters) {
       await completeTask(env.DB, taskId, true, '已达到项目总章节数');
       await emitProgressEvent({
         projectName: project.name,
-        current: totalProcessed,
+        current: completedCount,
         total: task.targetCount,
         chapterIndex: chapterIndex - 1,
         status: 'done',
@@ -627,7 +625,6 @@ export async function runChapterGenerationTaskInBackground(params: {
     });
 
     // 6. Generate ONE Chapter
-    let isSuccess = false;
     try {
       // 6.0 Consume Credit
       try {
@@ -764,19 +761,20 @@ export async function runChapterGenerationTaskInBackground(params: {
         message: `第 ${chapterIndex} 章已完成`,
       });
 
-      isSuccess = true;
-
     } catch (chapterError) {
       console.error(`Chapter ${chapterIndex} failed:`, chapterError);
-      await updateTaskProgress(env.DB, taskId, chapterIndex, true, (chapterError as Error).message);
+      const chapterErrorMessage = (chapterError as Error).message || '未知错误';
+      await updateTaskProgress(env.DB, taskId, chapterIndex, true, chapterErrorMessage);
       await emitProgressEvent({
         projectName: project.name,
-        current: completedCount + failedCount + 1,
+        current: completedCount,
         total: task.targetCount,
         chapterIndex,
         status: 'error',
-        message: `第 ${chapterIndex} 章失败: ${(chapterError as Error).message}`,
+        message: `第 ${chapterIndex} 章失败: ${chapterErrorMessage}`,
       });
+      await completeTask(env.DB, taskId, false, `第 ${chapterIndex} 章生成失败: ${chapterErrorMessage}`);
+      return;
     }
 
     // 7. Check Completion & Relay to Next Step
@@ -784,12 +782,12 @@ export async function runChapterGenerationTaskInBackground(params: {
     const newCompletedCount = freshTask?.completedChapters.length || 0;
     const newFailedCount = freshTask?.failedChapters.length || 0;
 
-    if (newCompletedCount + newFailedCount >= task.targetCount || (chaptersToGenerate !== undefined && (newCompletedCount + newFailedCount) >= chaptersToGenerate)) {
+    if (newCompletedCount >= task.targetCount || (chaptersToGenerate !== undefined && newCompletedCount >= chaptersToGenerate)) {
       // Done
       await completeTask(env.DB, taskId, true, undefined);
       await emitProgressEvent({
         projectName: project.name,
-        current: newCompletedCount + newFailedCount,
+        current: newCompletedCount,
         total: task.targetCount,
         chapterIndex,
         status: 'done',
