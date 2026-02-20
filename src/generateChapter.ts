@@ -271,18 +271,29 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     params.onProgress?.('正在更新剧情摘要...', 'updating_summary');
     const summaryStartedAt = Date.now();
 
-    // 生成更新后的摘要和伏笔
-    const summaryResult = await generateSummaryUpdate(
-      summaryAiConfig || aiConfig,
-      params.bible,
-      params.rollingSummary,
-      params.openLoops,
-      chapterText
-    );
-    updatedSummary = summaryResult.updatedSummary;
-    updatedOpenLoops = summaryResult.updatedOpenLoops;
-    skippedSummary = false;
-    summaryDurationMs = Date.now() - summaryStartedAt;
+    try {
+      // 生成更新后的摘要和伏笔
+      const summaryResult = await generateSummaryUpdate(
+        summaryAiConfig || aiConfig,
+        params.bible,
+        params.rollingSummary,
+        params.openLoops,
+        chapterText
+      );
+      updatedSummary = summaryResult.updatedSummary;
+      updatedOpenLoops = summaryResult.updatedOpenLoops;
+      skippedSummary = false;
+    } catch (summaryError) {
+      // 摘要更新失败不应导致整章失败：保留上一版记忆并继续保存章节正文
+      console.warn(
+        `[SummaryUpdate] 第 ${chapterIndex} 章摘要更新失败，已保留上一版摘要:`,
+        (summaryError as Error).message
+      );
+      params.onProgress?.('剧情摘要更新失败，已保留上一版摘要', 'updating_summary');
+      skippedSummary = true;
+    } finally {
+      summaryDurationMs = Date.now() - summaryStartedAt;
+    }
   }
 
   const totalDurationMs = Date.now() - startedAt;
@@ -341,7 +352,7 @@ ${chapterText}
 
   const raw = await generateTextWithRetry(
     aiConfig,
-    { system, prompt, temperature: 0.2, maxTokens: 1000 },
+    { system, prompt, temperature: 0.2, maxTokens: 1800 },
     2
   );
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
