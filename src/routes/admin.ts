@@ -6,6 +6,9 @@ interface Bindings {
 }
 
 const adminRoutes = new Hono<{ Bindings: Bindings }>();
+const SUMMARY_INTERVAL_SETTING_KEY = 'summary_update_interval';
+const MIN_SUMMARY_UPDATE_INTERVAL = 1;
+const MAX_SUMMARY_UPDATE_INTERVAL = 20;
 
 // Admin middleware - check if user is admin
 const requireAdmin = async (c: any, next: () => Promise<void>) => {
@@ -507,6 +510,76 @@ adminRoutes.post('/users/:id/credit', async (c) => {
     ]);
 
     return c.json({ success: true, balanceAfter });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
+// Generation settings
+// ==========================================
+
+adminRoutes.get('/generation-settings', async (c) => {
+  try {
+    const row = await c.env.DB.prepare(`
+      SELECT setting_value
+      FROM system_settings
+      WHERE setting_key = ?
+      LIMIT 1
+    `).bind(SUMMARY_INTERVAL_SETTING_KEY).first() as { setting_value?: string } | null;
+
+    const parsed = Number.parseInt(String(row?.setting_value ?? ''), 10);
+    const summaryUpdateInterval = Number.isInteger(parsed)
+      && parsed >= MIN_SUMMARY_UPDATE_INTERVAL
+      && parsed <= MAX_SUMMARY_UPDATE_INTERVAL
+      ? parsed
+      : 2;
+
+    return c.json({
+      success: true,
+      settings: {
+        summaryUpdateInterval,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+adminRoutes.put('/generation-settings', async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = Number.parseInt(String(body?.summaryUpdateInterval ?? ''), 10);
+
+    if (!Number.isInteger(parsed)) {
+      return c.json({ success: false, error: 'summaryUpdateInterval 必须是整数' }, 400);
+    }
+    if (parsed < MIN_SUMMARY_UPDATE_INTERVAL || parsed > MAX_SUMMARY_UPDATE_INTERVAL) {
+      return c.json({
+        success: false,
+        error: `summaryUpdateInterval 取值范围为 ${MIN_SUMMARY_UPDATE_INTERVAL}~${MAX_SUMMARY_UPDATE_INTERVAL}`,
+      }, 400);
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO system_settings (setting_key, setting_value, description, updated_at)
+      VALUES (?, ?, ?, (unixepoch() * 1000))
+      ON CONFLICT(setting_key) DO UPDATE SET
+        setting_value = excluded.setting_value,
+        description = excluded.description,
+        updated_at = (unixepoch() * 1000)
+    `).bind(
+      SUMMARY_INTERVAL_SETTING_KEY,
+      String(parsed),
+      '批量生成时摘要更新间隔（章）'
+    ).run();
+
+    return c.json({
+      success: true,
+      settings: {
+        summaryUpdateInterval: parsed,
+      },
+    });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
