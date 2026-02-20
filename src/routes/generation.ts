@@ -49,6 +49,37 @@ async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise
   return getAIConfigFromRegistry(db, featureKey || 'generate_chapter');
 }
 
+async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Promise<AIConfig | null> {
+  try {
+    const mapping = await db.prepare(`
+      SELECT m.provider, m.model_name, m.api_key_encrypted, m.base_url
+      FROM feature_model_mappings fmm
+      JOIN model_registry m ON fmm.model_id = m.id
+      WHERE fmm.feature_key = ? AND m.is_active = 1
+      LIMIT 1
+    `).bind(featureKey).first() as {
+      provider: string;
+      model_name: string;
+      api_key_encrypted: string | null;
+      base_url: string | null;
+    } | null;
+
+    if (!mapping || !mapping.api_key_encrypted) {
+      return null;
+    }
+
+    return {
+      provider: mapping.provider as any,
+      model: mapping.model_name,
+      apiKey: mapping.api_key_encrypted,
+      baseUrl: mapping.base_url || undefined,
+    };
+  } catch (error) {
+    console.warn(`Failed to load feature-mapped model for ${featureKey}:`, (error as Error).message);
+    return null;
+  }
+}
+
 // Normalize chapter data from LLM output to consistent structure
 function normalizeChapter(ch: any, fallbackIndex: number): { index: number; title: string; goal: string; hook: string } {
   return {
@@ -497,6 +528,81 @@ async function handleTaskCancellationIfNeeded(params: {
   return { shouldStop: true, cancelled: true };
 }
 
+const DEFAULT_SUMMARY_UPDATE_INTERVAL = 5;
+
+type SummaryUpdatePlan = {
+  shouldUpdate: boolean;
+  reason: 'last_batch' | 'volume_end' | 'interval' | 'deferred';
+  nextPlannedChapter: number;
+};
+
+function getSummaryUpdateInterval(env: Env): number {
+  const raw = (env as any).SUMMARY_UPDATE_INTERVAL;
+  const parsed = Number.parseInt(String(raw ?? ''), 10);
+  if (Number.isInteger(parsed) && parsed >= 1) {
+    return parsed;
+  }
+  return DEFAULT_SUMMARY_UPDATE_INTERVAL;
+}
+
+function planSummaryUpdate(params: {
+  chapterIndex: number;
+  currentStepIndex: number;
+  targetCount: number;
+  summaryUpdateInterval: number;
+  outline?: any;
+}): SummaryUpdatePlan {
+  const {
+    chapterIndex,
+    currentStepIndex,
+    targetCount,
+    summaryUpdateInterval,
+    outline,
+  } = params;
+
+  const isLastOfBatch = currentStepIndex >= targetCount - 1;
+  if (isLastOfBatch) {
+    return {
+      shouldUpdate: true,
+      reason: 'last_batch',
+      nextPlannedChapter: chapterIndex,
+    };
+  }
+
+  const isVolumeEnd = Boolean(
+    outline?.volumes?.some((vol: any) => Number(vol?.endChapter) === chapterIndex)
+  );
+  if (isVolumeEnd) {
+    return {
+      shouldUpdate: true,
+      reason: 'volume_end',
+      nextPlannedChapter: chapterIndex,
+    };
+  }
+
+  if (summaryUpdateInterval > 0 && chapterIndex % summaryUpdateInterval === 0) {
+    return {
+      shouldUpdate: true,
+      reason: 'interval',
+      nextPlannedChapter: chapterIndex,
+    };
+  }
+
+  const nextPlannedChapter = chapterIndex + (summaryUpdateInterval - (chapterIndex % summaryUpdateInterval));
+  return {
+    shouldUpdate: false,
+    reason: 'deferred',
+    nextPlannedChapter,
+  };
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return '0.0s';
+  }
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 // Helper to trigger background generation (now uses Cloudflare Queue)
 async function startGenerationChain(
   c: any,
@@ -664,6 +770,25 @@ export async function runChapterGenerationTaskInBackground(params: {
         }
       }
 
+      const summaryUpdateInterval = getSummaryUpdateInterval(env);
+      const summaryUpdatePlan = planSummaryUpdate({
+        chapterIndex,
+        currentStepIndex,
+        targetCount: task.targetCount,
+        summaryUpdateInterval,
+        outline,
+      });
+      const summaryModelConfig = summaryUpdatePlan.shouldUpdate
+        ? await getFeatureMappedAIConfig(env.DB, 'generate_summary_update')
+        : null;
+      const effectiveSummaryAiConfig = summaryModelConfig || aiConfig;
+
+      if (summaryUpdatePlan.shouldUpdate && summaryModelConfig) {
+        console.log(
+          `[SummaryModel] 第 ${chapterIndex} 章使用 ${summaryModelConfig.provider}/${summaryModelConfig.model} 更新剧情摘要`
+        );
+      }
+
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
       const CHAPTER_MAX_RETRIES = 3;
       let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
@@ -704,6 +829,8 @@ export async function runChapterGenerationTaskInBackground(params: {
             chapterGoalHint,
             chapterTitle: outlineTitle,
             characters,
+            summaryAiConfig: effectiveSummaryAiConfig,
+            skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
             onProgress: (message, status) => {
               const attemptProgressMessage = `[尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}] ${message}`;
               updateTaskMessage(env.DB, taskId, attemptProgressMessage, chapterIndex).catch(console.warn);
@@ -750,6 +877,11 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       // 6.2 Save Result
       const chapterText = result.chapterText;
+      console.log(
+        `[Perf][Task ${taskId}] 第 ${chapterIndex} 章: 正文 ${formatDurationMs(result.generationDurationMs)}, ` +
+        `摘要 ${formatDurationMs(result.summaryDurationMs)}, 总计 ${formatDurationMs(result.totalDurationMs)}, ` +
+        `摘要${result.skippedSummary ? `延后到第 ${summaryUpdatePlan.nextPlannedChapter} 章` : '已更新'}`
+      );
       await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
@@ -775,7 +907,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         total: task.targetCount,
         chapterIndex,
         status: 'saving',
-        message: `第 ${chapterIndex} 章已完成`,
+        message: `第 ${chapterIndex} 章已完成（正文 ${formatDurationMs(result.generationDurationMs)}，摘要 ${formatDurationMs(result.summaryDurationMs)}）`,
       });
 
     } catch (chapterError) {
