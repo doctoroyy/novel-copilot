@@ -5,4 +5,4 @@ config.json
 # 保留示例项目，忽略实际生成的章节
 projects/*/chapters/*.md
 !projects/demo-book/
-.wrangler
+.wrangler*.log
