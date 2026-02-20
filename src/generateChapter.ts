@@ -352,7 +352,7 @@ ${chapterText}
 
   const raw = await generateTextWithRetry(
     aiConfig,
-    { system, prompt, temperature: 0.2, maxTokens: 1000 },
+    { system, prompt, temperature: 0.2, maxTokens: 1800 },
     2
   );
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);

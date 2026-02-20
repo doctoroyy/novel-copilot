@@ -677,7 +677,7 @@ ${chapterText}
 请按“越近越详细、越远越压缩”的原则输出更新后的 JSON。
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2, maxTokens: 1000 }, 2);
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2, maxTokens: 1800 }, 2);
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
 }
 

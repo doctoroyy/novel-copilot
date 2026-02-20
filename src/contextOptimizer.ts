@@ -53,15 +53,15 @@ export type ContextBudget = {
  * 这里预算设置较为保守，可根据实际模型能力调整
  */
 export const DEFAULT_BUDGET: ContextBudget = {
-  totalTokens: 16000, // 总上下文预算，给输出留足空间
+  totalTokens: 24000, // 总上下文预算（放宽），兼顾连贯性与输出空间
   allocation: {
-    bible: 0.18,           // ~2880 tokens - 核心设定
-    characterState: 0.12,  // ~1920 tokens - 人物状态
-    plotContext: 0.10,     // ~1600 tokens - 剧情图谱
-    timeline: 0.10,        // ~1600 tokens - 时间线（防重复）
-    rollingSummary: 0.15,  // ~2400 tokens - 剧情摘要
-    lastChapters: 0.25,    // ~4000 tokens - 近章原文
-    narrativeGuide: 0.10,  // ~1600 tokens - 叙事指导
+    bible: 0.18,           // ~4320 tokens - 核心设定
+    characterState: 0.12,  // ~2880 tokens - 人物状态
+    plotContext: 0.10,     // ~2400 tokens - 剧情图谱
+    timeline: 0.10,        // ~2400 tokens - 时间线（防重复）
+    rollingSummary: 0.15,  // ~3600 tokens - 剧情摘要
+    lastChapters: 0.25,    // ~6000 tokens - 近章原文
+    narrativeGuide: 0.10,  // ~2400 tokens - 叙事指导
   },
 };
 
