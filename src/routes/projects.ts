@@ -3,6 +3,18 @@ import type { Env } from '../worker.js';
 
 export const projectsRoutes = new Hono<{ Bindings: Env }>();
 
+const DEFAULT_MIN_CHAPTER_WORDS = 2500;
+const MIN_CHAPTER_WORDS_LIMIT = 500;
+const MAX_CHAPTER_WORDS_LIMIT = 20000;
+
+function normalizeMinChapterWords(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < MIN_CHAPTER_WORDS_LIMIT || parsed > MAX_CHAPTER_WORDS_LIMIT) return null;
+  return parsed;
+}
+
 async function getProjectIdentityByRef(
   db: D1Database,
   projectRef: string,
@@ -29,7 +41,7 @@ projectsRoutes.get('/', async (c) => {
     const { results } = await c.env.DB.prepare(`
       SELECT 
         p.id, p.name, p.created_at,
-        s.book_title, s.total_chapters, s.next_chapter_index, 
+        s.book_title, s.total_chapters, s.min_chapter_words, s.next_chapter_index, 
         s.rolling_summary, s.open_loops, s.need_human, s.need_human_reason,
         o.outline_json IS NOT NULL as has_outline
       FROM projects p
@@ -46,6 +58,7 @@ projectsRoutes.get('/', async (c) => {
       state: {
         bookTitle: row.book_title || row.name,
         totalChapters: row.total_chapters || 100,
+        minChapterWords: row.min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
         nextChapterIndex: row.next_chapter_index || 1,
         rollingSummary: row.rolling_summary || '',
         openLoops: JSON.parse(row.open_loops || '[]'),
@@ -95,6 +108,7 @@ projectsRoutes.get('/:name', async (c) => {
       state: {
         bookTitle: (project as any).book_title || (project as any).name,
         totalChapters: (project as any).total_chapters || 100,
+        minChapterWords: (project as any).min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
         nextChapterIndex: (project as any).next_chapter_index || 1,
         rollingSummary: (project as any).rolling_summary || '',
         openLoops: JSON.parse((project as any).open_loops || '[]'),
@@ -119,16 +133,26 @@ projectsRoutes.post('/', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const { name, bible, totalChapters = 100 } = await c.req.json();
+    const { name, bible, totalChapters = 100, minChapterWords } = await c.req.json();
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     const trimmedBible = typeof bible === 'string' ? bible.trim() : '';
     const parsedTotalChapters = Number.parseInt(String(totalChapters), 10);
+    const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords) ?? DEFAULT_MIN_CHAPTER_WORDS;
 
     if (!trimmedName || !trimmedBible) {
       return c.json({ success: false, error: 'Name and bible are required' }, 400);
     }
     if (!Number.isInteger(parsedTotalChapters) || parsedTotalChapters <= 0) {
       return c.json({ success: false, error: 'totalChapters must be a positive integer' }, 400);
+    }
+    if (
+      minChapterWords !== undefined
+      && normalizeMinChapterWords(minChapterWords) === null
+    ) {
+      return c.json({
+        success: false,
+        error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+      }, 400);
     }
 
     const id = crypto.randomUUID();
@@ -138,8 +162,8 @@ projectsRoutes.post('/', async (c) => {
     `).bind(id, trimmedName, trimmedBible, userId).run();
 
     await c.env.DB.prepare(`
-      INSERT INTO states (project_id, book_title, total_chapters) VALUES (?, ?, ?)
-    `).bind(id, trimmedName, parsedTotalChapters).run();
+      INSERT INTO states (project_id, book_title, total_chapters, min_chapter_words) VALUES (?, ?, ?, ?)
+    `).bind(id, trimmedName, parsedTotalChapters, parsedMinChapterWords).run();
 
     return c.json({ success: true, project: { id, name: trimmedName } });
   } catch (error) {

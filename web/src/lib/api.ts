@@ -21,6 +21,7 @@ export type ProjectSummary = {
 export type BookState = {
   bookTitle: string;
   totalChapters: number;
+  minChapterWords: number;
   nextChapterIndex: number;
   rollingSummary: string;
   openLoops: string[];
@@ -106,11 +107,16 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
   } as ProjectDetail;
 }
 
-export async function createProject(name: string, bible: string, totalChapters: number): Promise<{ id: string; name: string }> {
+export async function createProject(
+  name: string,
+  bible: string,
+  totalChapters: number,
+  minChapterWords?: number
+): Promise<{ id: string; name: string }> {
   const res = await fetch(`${API_BASE}/projects`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ name, bible, totalChapters }),
+    body: JSON.stringify({ name, bible, totalChapters, minChapterWords }),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
@@ -131,6 +137,7 @@ export async function generateOutline(
   name: string,
   targetChapters: number,
   targetWordCount: number,
+  minChapterWords?: number,
   customPrompt?: string,
   aiHeaders?: Record<string, string>,
   onProgress?: (message: string) => void
@@ -138,7 +145,7 @@ export async function generateOutline(
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt }),
+    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt, minChapterWords }),
   });
 
   if (!res.ok) {
@@ -317,12 +324,13 @@ export async function updateOutline(name: string, outline: NovelOutline): Promis
 export async function generateChapters(
   name: string,
   chaptersToGenerate: number,
+  minChapterWords?: number,
   aiHeaders?: Record<string, string>
 ): Promise<{ taskId: number; message: string }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ chaptersToGenerate }),
+    body: JSON.stringify({ chaptersToGenerate, minChapterWords }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -386,12 +394,17 @@ export async function* generateChaptersStream(
   chaptersToGenerate: number,
   aiHeaders?: Record<string, string>,
   signal?: AbortSignal,
-  options?: { index?: number; regenerate?: boolean }
+  options?: { index?: number; regenerate?: boolean; minChapterWords?: number }
 ): AsyncGenerator<GenerationEvent, void, unknown> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/generate-stream`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ chaptersToGenerate, index: options?.index, regenerate: options?.regenerate }),
+    body: JSON.stringify({
+      chaptersToGenerate,
+      index: options?.index,
+      regenerate: options?.regenerate,
+      minChapterWords: options?.minChapterWords,
+    }),
     signal,
   });
 
@@ -466,11 +479,12 @@ export async function generateChaptersWithProgress(
   options?: {
     index?: number;
     regenerate?: boolean;
+    minChapterWords?: number;
     maxRetries?: number;
     retryDelayMs?: number;
   }
 ): Promise<{ chapter: number; title: string }[]> {
-  const { maxRetries = 5, retryDelayMs = 3000, index, regenerate } = options || {};
+  const { maxRetries = 5, retryDelayMs = 3000, index, regenerate, minChapterWords } = options || {};
   const results: { chapter: number; title: string }[] = [];
   let retryCount = 0;
 
@@ -497,7 +511,11 @@ export async function generateChaptersWithProgress(
       // But actually, we just rely on calling generate-stream. 
       // If task is running, backend returns it.
 
-      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal, { index, regenerate })) {
+      for await (const event of generateChaptersStream(name, chaptersToGenerate, aiHeaders, signal, {
+        index,
+        regenerate,
+        minChapterWords,
+      })) {
         switch (event.type) {
           case 'start':
             if (retryCount === 0) {
@@ -839,7 +857,7 @@ export async function createChapter(
 
 export async function updateProject(
   name: string,
-  data: { bible?: string; background?: string; role_settings?: string }
+  data: { bible?: string; background?: string; role_settings?: string; minChapterWords?: number }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
     method: 'PUT',

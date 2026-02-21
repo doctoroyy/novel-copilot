@@ -251,6 +251,7 @@ export function WebMCPProvider() {
             name,
             targetChapters,
             targetWordCount,
+            undefined,
             customPrompt,
             aiHeaders,
           );
@@ -275,7 +276,7 @@ export function WebMCPProvider() {
           const input = asObject(rawInput);
           const name = requireString(input, 'name');
           const chaptersToGenerate = requirePositiveInteger(input, 'chaptersToGenerate');
-          const generated = await generateChapters(name, chaptersToGenerate, aiHeaders);
+          const generated = await generateChapters(name, chaptersToGenerate, undefined, aiHeaders);
           return { generated };
         },
       }),

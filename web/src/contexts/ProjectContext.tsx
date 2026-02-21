@@ -79,8 +79,8 @@ interface ProjectContextType {
   handleRefresh: () => Promise<void>;
 
   // Generation handlers
-  handleGenerateOutline: (chapters: string, wordCount: string, customPrompt: string) => Promise<void>;
-  handleGenerateChapters: (count: string, index?: number, regenerate?: boolean) => Promise<void>;
+  handleGenerateOutline: (chapters: string, wordCount: string, minChapterWords: string, customPrompt: string) => Promise<void>;
+  handleGenerateChapters: (count: string, index?: number, regenerate?: boolean, minChapterWords?: string) => Promise<void>;
   handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
   cancelingGeneration: boolean;
   handleResetProject: () => Promise<void>;
@@ -582,10 +582,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [loadProjects, loadProject, selectedProject]);
 
   // Generation handlers
-  const handleGenerateOutline = useCallback(async (chapters: string, wordCount: string, customPrompt: string) => {
+  const handleGenerateOutline = useCallback(async (
+    chapters: string,
+    wordCount: string,
+    minChapterWords: string,
+    customPrompt: string
+  ) => {
     if (!selectedProject || !isConfigured) return;
     const targetChapters = Number.parseInt(chapters, 10);
     const targetWordCount = Number.parseInt(wordCount, 10);
+    const parsedMinChapterWords = Number.parseInt(minChapterWords, 10);
     if (!Number.isInteger(targetChapters) || targetChapters <= 0) {
       setError('目标章节数必须是大于 0 的整数');
       return;
@@ -594,10 +600,20 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setError('目标字数必须是大于 0 的整数');
       return;
     }
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
+      return;
+    }
 
     setGeneratingOutline(true);
     try {
-      await generateOutline(selectedProject.id, targetChapters, targetWordCount, customPrompt);
+      await generateOutline(
+        selectedProject.id,
+        targetChapters,
+        targetWordCount,
+        parsedMinChapterWords,
+        customPrompt
+      );
       await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
@@ -606,12 +622,25 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProject, isConfigured, loadProject]);
 
-  const handleGenerateChapters = useCallback(async (count: string, index?: number, regenerate?: boolean) => {
+  const handleGenerateChapters = useCallback(async (
+    count: string,
+    index?: number,
+    regenerate?: boolean,
+    minChapterWords?: string
+  ) => {
     if (!selectedProject || !isConfigured) return;
 
     const requestedCount = Number.parseInt(count, 10);
+    const parsedMinChapterWords = Number.parseInt(
+      String(minChapterWords ?? selectedProject.state.minChapterWords ?? 2500),
+      10
+    );
     if (!Number.isInteger(requestedCount) || requestedCount <= 0) {
       setError('生成章数必须是大于 0 的整数');
+      return;
+    }
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
       return;
     }
     if (generationState.isGenerating && generationState.projectName === selectedProject.name) {
@@ -747,7 +776,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         },
         undefined,
         undefined,
-        { index, regenerate }
+        { index, regenerate, minChapterWords: parsedMinChapterWords }
       );
       await loadProject(selectedProject.id);
     } catch (err) {
