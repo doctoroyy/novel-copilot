@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -38,6 +41,7 @@ export function ProjectsHomeScreen() {
   const [newName, setNewName] = useState('');
   const [newBible, setNewBible] = useState('');
   const [newChapters, setNewChapters] = useState('120');
+  const [newMinChapterWords, setNewMinChapterWords] = useState('2500');
   const [creating, setCreating] = useState(false);
 
   // AI Bible Generation State
@@ -93,18 +97,26 @@ export function ProjectsHomeScreen() {
     if (!token) return;
     if (!newName.trim() || !newBible.trim()) return;
 
+    const parsedMinChapterWords = parseInt(newMinChapterWords, 10);
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
+      return;
+    }
+
     setCreating(true);
     try {
       await createProject(config.apiBaseUrl, token, {
         name: newName.trim(),
         bible: newBible.trim(),
         totalChapters: Math.max(1, parseInt(newChapters, 10) || 120),
+        minChapterWords: parsedMinChapterWords,
       });
 
       setShowCreateModal(false);
       setNewName('');
       setNewBible('');
       setNewChapters('120');
+      setNewMinChapterWords('2500');
       await loadProjects();
     } catch (err) {
       setError((err as Error).message);
@@ -149,6 +161,7 @@ export function ProjectsHomeScreen() {
         <FlatList
           data={projects}
           keyExtractor={(item) => item.id}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 122 }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadProjects(true)} tintColor={ui.colors.primary} />}
           ListHeaderComponent={
@@ -276,110 +289,140 @@ export function ProjectsHomeScreen() {
       </LinearGradient>
 
       <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
-        <View style={styles.modalMask}>
+        <KeyboardAvoidingView
+          style={styles.modalMask}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 8}
+        >
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.modalTitle}>新建项目</Text>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              contentContainerStyle={styles.modalScrollContent}
+            >
+              <View style={styles.sheetHandle} />
+              <Text style={styles.modalTitle}>新建项目</Text>
 
-            <Text style={styles.inputLabel}>项目名称</Text>
-            <TextInput
-              value={newName}
-              onChangeText={setNewName}
-              style={styles.input}
-              placeholder="例如：苍穹之下"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>项目名称</Text>
+              <TextInput
+                value={newName}
+                onChangeText={setNewName}
+                style={styles.input}
+                placeholder="例如：苍穹之下"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <Text style={styles.inputLabel}>目标章节数</Text>
-            <TextInput
-              value={newChapters}
-              onChangeText={setNewChapters}
-              style={styles.input}
-              keyboardType="number-pad"
-              placeholder="120"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>目标章节数</Text>
+              <TextInput
+                value={newChapters}
+                onChangeText={setNewChapters}
+                style={styles.input}
+                keyboardType="number-pad"
+                placeholder="120"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <View style={styles.labelRow}>
-              <Text style={styles.inputLabel}>故事设定 (Bible)</Text>
-              <Pressable 
-                style={({ pressed }) => [styles.aiBtn, pressed && styles.pressed]} 
-                onPress={() => setShowAiModal(true)}
-              >
-                <Ionicons name="sparkles" size={12} color={ui.colors.primary} />
-                <Text style={styles.aiBtnText}>AI 帮你想象</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              value={newBible}
-              onChangeText={setNewBible}
-              style={[styles.input, styles.textArea]}
-              multiline
-              textAlignVertical="top"
-              placeholder="世界观、主角设定、核心冲突..."
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>每章最少字数</Text>
+              <TextInput
+                value={newMinChapterWords}
+                onChangeText={setNewMinChapterWords}
+                style={styles.input}
+                keyboardType="number-pad"
+                placeholder="2500"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <View style={styles.modalActions}>
-              <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={() => setShowCreateModal(false)}>
-                <Text style={styles.ghostBtnText}>取消</Text>
-              </Pressable>
-              <Pressable style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} onPress={() => void handleCreate()} disabled={creating}>
-                {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>创建</Text>}
-              </Pressable>
-            </View>
+              <View style={styles.labelRow}>
+                <Text style={styles.inputLabel}>故事设定 (Bible)</Text>
+                <Pressable 
+                  style={({ pressed }) => [styles.aiBtn, pressed && styles.pressed]} 
+                  onPress={() => setShowAiModal(true)}
+                >
+                  <Ionicons name="sparkles" size={12} color={ui.colors.primary} />
+                  <Text style={styles.aiBtnText}>AI 帮你想象</Text>
+                </Pressable>
+              </View>
+              <TextInput
+                value={newBible}
+                onChangeText={setNewBible}
+                style={[styles.input, styles.textArea]}
+                multiline
+                textAlignVertical="top"
+                placeholder="世界观、主角设定、核心冲突..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+
+              <View style={styles.modalActions}>
+                <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={() => setShowCreateModal(false)}>
+                  <Text style={styles.ghostBtnText}>取消</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} onPress={() => void handleCreate()} disabled={creating}>
+                  {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>创建</Text>}
+                </Pressable>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={showAiModal} animationType="slide" transparent onRequestClose={() => setShowAiModal(false)}>
-        <View style={styles.modalMask}>
+        <KeyboardAvoidingView
+          style={styles.modalMask}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 8}
+        >
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.modalTitle}>AI 辅助设定</Text>
-            <Text style={styles.modalSubtitle}>输入关键词，AI 帮你生成完整世界观</Text>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              contentContainerStyle={styles.modalScrollContent}
+            >
+              <View style={styles.sheetHandle} />
+              <Text style={styles.modalTitle}>AI 辅助设定</Text>
+              <Text style={styles.modalSubtitle}>输入关键词，AI 帮你生成完整世界观</Text>
 
-            <Text style={styles.inputLabel}>类型 (必填)</Text>
-            <TextInput
-              value={aiGenre}
-              onChangeText={setAiGenre}
-              style={styles.input}
-              placeholder="例如：玄幻、赛博朋克、都市重生..."
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>类型 (必填)</Text>
+              <TextInput
+                value={aiGenre}
+                onChangeText={setAiGenre}
+                style={styles.input}
+                placeholder="例如：玄幻、赛博朋克、都市重生..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <Text style={styles.inputLabel}>核心主题</Text>
-            <TextInput
-              value={aiTheme}
-              onChangeText={setAiTheme}
-              style={styles.input}
-              placeholder="例如：复仇、成长、探索..."
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>核心主题</Text>
+              <TextInput
+                value={aiTheme}
+                onChangeText={setAiTheme}
+                style={styles.input}
+                placeholder="例如：复仇、成长、探索..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <Text style={styles.inputLabel}>关键词</Text>
-            <TextInput
-              value={aiKeywords}
-              onChangeText={setAiKeywords}
-              style={styles.input}
-              placeholder="例如：系统、剑道、无敌..."
-              placeholderTextColor={ui.colors.textTertiary}
-            />
+              <Text style={styles.inputLabel}>关键词</Text>
+              <TextInput
+                value={aiKeywords}
+                onChangeText={setAiKeywords}
+                style={styles.input}
+                placeholder="例如：系统、剑道、无敌..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
 
-            <View style={styles.modalActions}>
-              <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={() => setShowAiModal(false)}>
-                <Text style={styles.ghostBtnText}>取消</Text>
-              </Pressable>
-              <Pressable 
-                style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} 
-                onPress={() => void handleGenerateBible()} 
-                disabled={generatingBible}
-              >
-                {generatingBible ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>生成设定</Text>}
-              </Pressable>
-            </View>
+              <View style={styles.modalActions}>
+                <Pressable style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]} onPress={() => setShowAiModal(false)}>
+                  <Text style={styles.ghostBtnText}>取消</Text>
+                </Pressable>
+                <Pressable 
+                  style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]} 
+                  onPress={() => void handleGenerateBible()} 
+                  disabled={generatingBible}
+                >
+                  {generatingBible ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>生成设定</Text>}
+                </Pressable>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -767,6 +810,9 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: ui.colors.border,
+  },
+  modalScrollContent: {
+    gap: 8,
   },
   sheetHandle: {
     width: 46,
