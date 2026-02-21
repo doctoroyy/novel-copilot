@@ -89,7 +89,10 @@ export function quickEndingHeuristic(chapterText: string): {
  * 章节基础结构检测
  * 仅要求：有标题 + 有正文
  */
-export function quickChapterFormatHeuristic(chapterText: string): {
+export function quickChapterFormatHeuristic(
+  chapterText: string,
+  options?: { minBodyChars?: number }
+): {
   hit: boolean;
   reasons: string[];
 } {
@@ -114,10 +117,12 @@ export function quickChapterFormatHeuristic(chapterText: string): {
   }
 
   const body = lines.slice(firstNonEmptyIdx + 1).join('\n').trim();
+  const minBodyChars = Math.max(200, Number(options?.minBodyChars) || 200);
+
   if (!body) {
     reasons.push('缺少章节正文');
-  } else if (body.length < 200) {
-    reasons.push(`正文过短（仅 ${body.length} 字）`);
+  } else if (body.length < minBodyChars) {
+    reasons.push(`正文过短（仅 ${body.length} 字，至少 ${minBodyChars} 字）`);
   }
 
   return {
@@ -134,8 +139,9 @@ export function buildRewriteInstruction(args: {
   totalChapters: number;
   reasons: string[];
   isFinalChapter?: boolean;
+  minChapterWords?: number;
 }): string {
-  const { chapterIndex, totalChapters, reasons, isFinalChapter = false } = args;
+  const { chapterIndex, totalChapters, reasons, isFinalChapter = false, minChapterWords = 200 } = args;
 
   return `
 【重写要求】
@@ -150,6 +156,7 @@ ${reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 3. ${isFinalChapter ? '这是最终章，可以收束主线，但正文仍需完整。' : '这不是最终章，严禁出现：完结/终章/尾声/后记/感谢读者/全书完/总结一生 等收尾语气。'}
 4. 结尾必须是完整句，不能输出到一半戛然而止。
 5. 只输出章节文本：标题 + 正文；不要 JSON、不要代码块、不要解释说明。
+6. 正文字数不少于 ${minChapterWords} 字。
 `.trim();
 }
 

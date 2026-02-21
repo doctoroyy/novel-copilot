@@ -383,6 +383,7 @@ app.post('/api/projects/:name/generate', async (req: Request, res: Response) => 
         lastChapters,
         chapterIndex,
         totalChapters: state.totalChapters,
+        minChapterWords: state.minChapterWords,
         chapterGoalHint,
 
         skipSummaryUpdate: !shouldUpdateSummary,

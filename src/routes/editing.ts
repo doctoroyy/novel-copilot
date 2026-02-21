@@ -408,9 +408,26 @@ ${context ? context.substring(0, 3000) : '（无上下文）'}
 editingRoutes.put('/projects/:name', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId');
+  const MIN_CHAPTER_WORDS_LIMIT = 500;
+  const MAX_CHAPTER_WORDS_LIMIT = 20000;
   
   try {
-    const { bible, background, role_settings, outline } = await c.req.json();
+    const { bible, background, role_settings, outline, minChapterWords } = await c.req.json();
+    const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
+    const parsedMinChapterWordsRaw = hasMinChapterWords ? Number.parseInt(String(minChapterWords), 10) : undefined;
+    const parsedMinChapterWords = Number.isInteger(parsedMinChapterWordsRaw) ? parsedMinChapterWordsRaw : undefined;
+
+    if (
+      hasMinChapterWords
+      && (parsedMinChapterWords === undefined
+        || parsedMinChapterWords < MIN_CHAPTER_WORDS_LIMIT
+        || parsedMinChapterWords > MAX_CHAPTER_WORDS_LIMIT)
+    ) {
+      return c.json({
+        success: false,
+        error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+      }, 400);
+    }
     
     // Get project
     const project = await c.env.DB.prepare(`
@@ -439,6 +456,14 @@ editingRoutes.put('/projects/:name', async (c) => {
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(bible, background, role_settings, (project as any).id).run();
+
+    if (hasMinChapterWords && parsedMinChapterWords !== undefined) {
+      await c.env.DB.prepare(`
+        UPDATE states
+        SET min_chapter_words = ?
+        WHERE project_id = ?
+      `).bind(parsedMinChapterWords, (project as any).id).run();
+    }
 
     return c.json({ success: true });
   } catch (error) {

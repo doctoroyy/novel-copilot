@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS states (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   book_title TEXT DEFAULT '',
   total_chapters INTEGER DEFAULT 100,
+  min_chapter_words INTEGER DEFAULT 2500,
   next_chapter_index INTEGER DEFAULT 1,
   rolling_summary TEXT DEFAULT '',
   open_loops TEXT DEFAULT '[]',
