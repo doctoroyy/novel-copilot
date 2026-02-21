@@ -110,7 +110,7 @@ export async function fetchProject(
 export async function createProject(
   apiBaseUrl: string,
   token: string,
-  payload: { name: string; bible: string; totalChapters: number },
+  payload: { name: string; bible: string; totalChapters: number; minChapterWords?: number },
 ): Promise<void> {
   const res = await fetch(buildApiUrl(apiBaseUrl, '/projects'), {
     method: 'POST',
@@ -270,6 +270,7 @@ export async function generateOutlineStream(
   payload: {
     targetChapters: number;
     targetWordCount: number;
+    minChapterWords?: number;
     customPrompt?: string;
   },
   onEvent: (event: OutlineStreamEvent) => void,
@@ -311,7 +312,7 @@ export async function generateChaptersStream(
   apiBaseUrl: string,
   token: string,
   projectRef: string,
-  payload: { chaptersToGenerate: number },
+  payload: { chaptersToGenerate: number; minChapterWords?: number },
   onEvent: (event: GenerationStreamEvent) => void,
   aiConfig?: AppConfig['ai'],
 ): Promise<{ generated: { chapter: number; title: string }[]; failedChapters: number[] }> {
