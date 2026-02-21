@@ -15,6 +15,24 @@ import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTas
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
+const DEFAULT_MIN_CHAPTER_WORDS = 2500;
+const MIN_CHAPTER_WORDS_LIMIT = 500;
+const MAX_CHAPTER_WORDS_LIMIT = 20000;
+
+function normalizeMinChapterWords(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed)) {
+    return null;
+  }
+  if (parsed < MIN_CHAPTER_WORDS_LIMIT || parsed > MAX_CHAPTER_WORDS_LIMIT) {
+    return null;
+  }
+  return parsed;
+}
+
 // Helper to get AI config from Model Registry (server-side)
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
@@ -195,14 +213,25 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
       }, 5000);
 
       try {
-        const { targetChapters = 400, targetWordCount = 100, customPrompt } = await c.req.json();
+        const { targetChapters = 400, targetWordCount = 100, customPrompt, minChapterWords } = await c.req.json();
+        const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
+        const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords);
+        if (hasMinChapterWords && parsedMinChapterWords === null) {
+          sendEvent('error', {
+            error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+          });
+          controller.close();
+          clearInterval(heartbeatInterval);
+          return;
+        }
 
         sendEvent('start', { targetChapters, targetWordCount });
 
         // Get project (user-scoped)
         const project = await c.env.DB.prepare(`
-          SELECT p.id, p.bible, p.name
+          SELECT p.id, p.bible, p.name, s.min_chapter_words
           FROM projects p
+          LEFT JOIN states s ON p.id = s.project_id
           WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
           ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
           LIMIT 1
@@ -214,6 +243,12 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
           clearInterval(heartbeatInterval);
           return;
         }
+
+        const effectiveMinChapterWords =
+          parsedMinChapterWords
+          ?? (Number.isFinite(Number((project as any).min_chapter_words))
+            ? Number((project as any).min_chapter_words)
+            : DEFAULT_MIN_CHAPTER_WORDS);
 
         let bible = (project as any).bible;
         if (customPrompt) {
@@ -242,7 +277,13 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         }
 
         // 1. Generate Outline (传入 characters 以获得更好的大局观)
-        const masterOutline = await generateMasterOutline(aiConfig, { bible, targetChapters, targetWordCount, characters });
+        const masterOutline = await generateMasterOutline(aiConfig, {
+          bible,
+          targetChapters,
+          targetWordCount,
+          characters,
+          minChapterWords: effectiveMinChapterWords,
+        });
         const totalVolumes = masterOutline.volumes?.length || 0;
         console.log(`Master outline generated: ${totalVolumes} volumes`);
         sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
@@ -265,7 +306,13 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
           });
           console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
 
-          const chapters = await generateVolumeChapters(aiConfig, { bible, masterOutline, volume: vol, previousVolumeSummary: previousVolumeEndState || undefined });
+          const chapters = await generateVolumeChapters(aiConfig, {
+            bible,
+            masterOutline,
+            volume: vol,
+            previousVolumeSummary: previousVolumeEndState || undefined,
+            minChapterWords: effectiveMinChapterWords,
+          });
           const normalizedVolume = normalizeVolume(vol, i, chapters);
           volumes.push(normalizedVolume);
 
@@ -300,8 +347,8 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
 
         // Update state
         await c.env.DB.prepare(`
-          UPDATE states SET total_chapters = ? WHERE project_id = ?
-        `).bind(targetChapters, (project as any).id).run();
+          UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
+        `).bind(targetChapters, effectiveMinChapterWords, (project as any).id).run();
 
         console.log(`Outline generation complete for ${name}!`);
 
@@ -345,7 +392,15 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
   }
 
   try {
-    const { chaptersToGenerate = 1 } = await c.req.json();
+    const { chaptersToGenerate = 1, minChapterWords } = await c.req.json();
+    const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
+    const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords);
+    if (hasMinChapterWords && parsedMinChapterWords === null) {
+      return c.json({
+        success: false,
+        error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+      }, 400);
+    }
 
     // Get project with state and outline
     const project = await c.env.DB.prepare(`
@@ -361,6 +416,15 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    if (hasMinChapterWords && parsedMinChapterWords !== null) {
+      await c.env.DB.prepare(`
+        UPDATE states
+        SET min_chapter_words = ?
+        WHERE project_id = ?
+      `).bind(parsedMinChapterWords, project.id).run();
+      project.min_chapter_words = parsedMinChapterWords;
     }
 
     // Validate state: check if nextChapterIndex matches actual chapter data
@@ -939,6 +1003,7 @@ export async function runChapterGenerationTaskInBackground(params: {
             lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
             chapterIndex,
             totalChapters: project.total_chapters,
+            minChapterWords: Number(project.min_chapter_words) || DEFAULT_MIN_CHAPTER_WORDS,
             chapterGoalHint,
             chapterTitle: outlineTitle,
             characters,
@@ -1123,6 +1188,15 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const requestedCount = Number.isInteger(requestedCountRaw) && requestedCountRaw > 0 ? requestedCountRaw : 1;
   const targetIndex = body.index ? parseInt(body.index, 10) : undefined;
   const regenerate = Boolean(body.regenerate);
+  const hasMinChapterWords = body.minChapterWords !== undefined && body.minChapterWords !== null && body.minChapterWords !== '';
+  const parsedMinChapterWords = normalizeMinChapterWords(body.minChapterWords);
+
+  if (hasMinChapterWords && parsedMinChapterWords === null) {
+    return c.json({
+      success: false,
+      error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+    }, 400);
+  }
 
   const project = await c.env.DB.prepare(`
     SELECT p.id, p.name, s.next_chapter_index, s.total_chapters
@@ -1140,6 +1214,15 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
   if (!project) {
     return c.json({ success: false, error: 'Project not found' }, 404);
+  }
+
+  if (hasMinChapterWords && parsedMinChapterWords !== null) {
+    await c.env.DB.prepare(`
+      UPDATE states
+      SET min_chapter_words = ?
+      WHERE project_id = ?
+    `).bind(parsedMinChapterWords, project.id).run();
+    (project as any).min_chapter_words = parsedMinChapterWords;
   }
 
   const maxChapterResult = await c.env.DB.prepare(`

@@ -34,9 +34,11 @@ interface GenerateViewProps {
   // Outline generation
   outlineChapters: string;
   outlineWordCount: string;
+  outlineMinChapterWords: string;
   outlineCustomPrompt: string;
   onOutlineChaptersChange: (value: string) => void;
   onOutlineWordCountChange: (value: string) => void;
+  onOutlineMinChapterWordsChange: (value: string) => void;
   onOutlineCustomPromptChange: (value: string) => void;
   onGenerateOutline: () => void;
   // Chapter generation
@@ -55,9 +57,11 @@ export function GenerateView({
   generationState,
   outlineChapters,
   outlineWordCount,
+  outlineMinChapterWords,
   outlineCustomPrompt,
   onOutlineChaptersChange,
   onOutlineWordCountChange,
+  onOutlineMinChapterWordsChange,
   onOutlineCustomPromptChange,
   onGenerateOutline,
   generateCount,
@@ -124,7 +128,7 @@ export function GenerateView({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-4">
             <div className="space-y-2">
               <Label className="text-xs lg:text-sm">目标章数</Label>
               <Input
@@ -140,6 +144,18 @@ export function GenerateView({
                 type="number"
                 value={outlineWordCount}
                 onChange={(e) => onOutlineWordCountChange(e.target.value)}
+                className="bg-muted/50 text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs lg:text-sm">每章最少字数</Label>
+              <Input
+                type="number"
+                min={500}
+                max={20000}
+                step={100}
+                value={outlineMinChapterWords}
+                onChange={(e) => onOutlineMinChapterWordsChange(e.target.value)}
                 className="bg-muted/50 text-sm"
               />
             </div>
@@ -172,6 +188,7 @@ export function GenerateView({
                 <p>
                   {project.outline.volumes.length} 卷 / {project.outline.totalChapters} 章 / {project.outline.targetWordCount} 万字
                 </p>
+                <p>当前每章最少字数: {project.state.minChapterWords} 字</p>
               </div>
             </div>
           )}

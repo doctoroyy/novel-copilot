@@ -49,6 +49,22 @@ import {
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 
+const DEFAULT_MIN_CHAPTER_WORDS = 2500;
+const MIN_CHAPTER_WORDS_LIMIT = 500;
+const MAX_CHAPTER_WORDS_LIMIT = 20000;
+
+function normalizeMinChapterWords(value: number | undefined): number {
+  const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
+  if (!Number.isInteger(parsed)) return DEFAULT_MIN_CHAPTER_WORDS;
+  if (parsed < MIN_CHAPTER_WORDS_LIMIT) return MIN_CHAPTER_WORDS_LIMIT;
+  if (parsed > MAX_CHAPTER_WORDS_LIMIT) return MAX_CHAPTER_WORDS_LIMIT;
+  return parsed;
+}
+
+function buildRecommendedMaxChapterWords(minChapterWords: number): number {
+  return Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
+}
+
 /**
  * 增强版章节生成参数
  */
@@ -67,6 +83,8 @@ export type EnhancedWriteChapterParams = {
   chapterIndex: number;
   /** 计划总章数 */
   totalChapters: number;
+  /** 每章最少字数（正文，不含标题） */
+  minChapterWords?: number;
   /** 本章写作目标提示 */
   chapterGoalHint?: string;
   /** 本章标题 */
@@ -150,6 +168,7 @@ export async function writeEnhancedChapter(
     bible,
     chapterIndex,
     totalChapters,
+    minChapterWords,
     characterStates,
     plotGraph,
     timeline,
@@ -167,6 +186,7 @@ export async function writeEnhancedChapter(
   } = params;
 
   const isFinal = chapterIndex === totalChapters;
+  const normalizedMinChapterWords = normalizeMinChapterWords(minChapterWords);
 
   // 1. 生成叙事指导
   params.onProgress?.('正在设计叙事节奏...', 'planning');
@@ -221,7 +241,13 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   }
 
   // 3. 构建 System Prompt
-  const system = buildEnhancedSystemPrompt(isFinal, chapterIndex, chapterTitle, narrativeGuide);
+  const system = buildEnhancedSystemPrompt(
+    isFinal,
+    chapterIndex,
+    normalizedMinChapterWords,
+    chapterTitle,
+    narrativeGuide
+  );
 
   // 4. 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
@@ -240,7 +266,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   // 5. 快速 QC 检测（结构 + 非最终章提前完结）
   for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
     params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
-    const formatQc = quickChapterFormatHeuristic(chapterText);
+    const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
     const endingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
     const reasons = [...formatQc.reasons, ...endingQc.reasons];
 
@@ -255,6 +281,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
       totalChapters,
       reasons,
       isFinalChapter: isFinal,
+      minChapterWords: normalizedMinChapterWords,
     });
 
     const rewritePrompt = `${userPrompt}\n\n${rewriteInstruction}`;
@@ -271,7 +298,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
     rewriteCount++;
   }
 
-  const finalFormatQc = quickChapterFormatHeuristic(chapterText);
+  const finalFormatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
   const finalEndingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
   const finalReasons = [...finalFormatQc.reasons, ...finalEndingQc.reasons];
   if (finalReasons.length > 0) {
@@ -292,6 +319,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
       characterStates,
       narrativeGuide,
       chapterOutline: enhancedOutline,
+      minChapterWords: normalizedMinChapterWords,
       useAI: true,
     });
 
@@ -448,9 +476,11 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 function buildEnhancedSystemPrompt(
   isFinal: boolean,
   chapterIndex: number,
+  minChapterWords: number,
   chapterTitle?: string,
   guide?: NarrativeGuide
 ): string {
+  const recommendedMaxWords = buildRecommendedMaxChapterWords(minChapterWords);
   const titleText = chapterTitle
     ? `第${chapterIndex}章 ${chapterTitle}`
     : `第${chapterIndex}章 [你需要起一个创意标题]`;
@@ -519,7 +549,7 @@ ${pacingInstructions}
 ═══════ 硬性规则 ═══════
 - 只有当 is_final_chapter=true 才允许收束主线
 - 若 is_final_chapter=false：严禁出现任何"完结/终章/尾声/后记/感谢读者"等收尾表达
-- 每章字数 ${guide?.wordCountRange?.[0] || 2500}~${guide?.wordCountRange?.[1] || 3500} 汉字
+- 每章正文字数不少于 ${minChapterWords} 字，建议控制在 ${minChapterWords}~${recommendedMaxWords} 字
 - 禁止说教式总结（如"他知道这只是开始"/"从此走上了xxx之路"）
 - 禁止上帝视角旁白（如"命运的齿轮开始转动"/"历史的车轮滚滚向前"）
 - 结尾不要用总结句，直接用钩子场景收尾
@@ -581,6 +611,7 @@ function buildTraditionalPrompt(
     lastChapters,
     chapterIndex,
     totalChapters,
+    minChapterWords,
     chapterGoalHint,
     characters,
   } = params;
@@ -621,6 +652,7 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
 5. 如果本章有战斗/冲突，必须有具体的招式/策略描写，不能概述
 6. 章节结尾的最后一段必须是钩子场景，不能是总结或感悟
 7. 展开具体场景而非概述，让读者"看到"而非"被告知"
+8. 本章正文字数至少 ${normalizeMinChapterWords(minChapterWords)} 字
 
 请写出本章内容：
 `.trim();

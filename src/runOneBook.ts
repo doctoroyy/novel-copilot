@@ -106,6 +106,7 @@ export async function runOneBook(options: RunOptions): Promise<void> {
         lastChapters,
         chapterIndex,
         totalChapters: state.totalChapters,
+        minChapterWords: state.minChapterWords,
         chapterGoalHint,
       });
 

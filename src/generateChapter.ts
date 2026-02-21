@@ -7,6 +7,22 @@ import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruct
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 
+const DEFAULT_MIN_CHAPTER_WORDS = 2500;
+const MIN_CHAPTER_WORDS_LIMIT = 500;
+const MAX_CHAPTER_WORDS_LIMIT = 20000;
+
+function normalizeMinChapterWords(value: number | undefined): number {
+  const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
+  if (!Number.isInteger(parsed)) return DEFAULT_MIN_CHAPTER_WORDS;
+  if (parsed < MIN_CHAPTER_WORDS_LIMIT) return MIN_CHAPTER_WORDS_LIMIT;
+  if (parsed > MAX_CHAPTER_WORDS_LIMIT) return MAX_CHAPTER_WORDS_LIMIT;
+  return parsed;
+}
+
+function buildRecommendedMaxChapterWords(minChapterWords: number): number {
+  return Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
+}
+
 /**
  * 章节生成参数
  */
@@ -27,6 +43,8 @@ export type WriteChapterParams = {
   chapterIndex: number;
   /** 计划总章数 */
   totalChapters: number;
+  /** 每章最少字数（正文，不含标题） */
+  minChapterWords?: number;
   /** 本章写作目标提示 (可选) */
   chapterGoalHint?: string;
   /** 本章标题 (来自大纲) */
@@ -71,7 +89,13 @@ export type WriteChapterResult = {
 /**
  * 构建 System Prompt
  */
-function buildSystemPrompt(isFinal: boolean, chapterIndex: number, chapterTitle?: string): string {
+function buildSystemPrompt(
+  isFinal: boolean,
+  chapterIndex: number,
+  minChapterWords: number,
+  chapterTitle?: string
+): string {
+  const recommendedMaxWords = buildRecommendedMaxChapterWords(minChapterWords);
   const titleText = chapterTitle 
     ? `第${chapterIndex}章 ${chapterTitle}` 
     : `第${chapterIndex}章 [你需要起一个创意标题]`;
@@ -121,7 +145,7 @@ function buildSystemPrompt(isFinal: boolean, chapterIndex: number, chapterTitle?
 ═══════ 硬性规则 ═══════
 - 只有当 is_final_chapter=true 才允许收束主线
 - 若 is_final_chapter=false：严禁出现任何"完结/终章/尾声/后记/感谢读者/全书完"等收尾表达
-- 每章字数 2500~3500 汉字
+- 每章正文字数不少于 ${minChapterWords} 字，建议控制在 ${minChapterWords}~${recommendedMaxWords} 字
 - 禁止说教式总结（如"他知道这只是开始"/"从此走上了xxx之路"）
 - 禁止上帝视角旁白（如"命运的齿轮开始转动"/"历史的车轮滚滚向前"）
 - 结尾不要用总结句，直接用钩子场景收尾
@@ -147,6 +171,7 @@ function buildUserPrompt(params: Omit<WriteChapterParams, 'aiConfig'>): string {
     lastChapters,
     chapterIndex,
     totalChapters,
+    minChapterWords,
     chapterGoalHint,
     characters,
     characterStates,
@@ -191,6 +216,7 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
 5. 如果本章有战斗/冲突，必须有具体的招式/策略描写，不能概述
 6. 章节结尾的最后一段必须是钩子场景，不能是总结或感悟
 7. 展开具体场景而非概述，让读者"看到"而非"被告知"
+8. 本章正文字数必须至少 ${normalizeMinChapterWords(minChapterWords)} 字
 
 请写出本章内容：
 `.trim();
@@ -208,10 +234,20 @@ function isSameAiConfig(a: AIConfig, b: AIConfig): boolean {
  */
 export async function writeOneChapter(params: WriteChapterParams): Promise<WriteChapterResult> {
   const startedAt = Date.now();
-  const { aiConfig, summaryAiConfig, chapterIndex, totalChapters, maxRewriteAttempts = 2, skipSummaryUpdate = false, chapterTitle } = params;
+  const {
+    aiConfig,
+    summaryAiConfig,
+    chapterIndex,
+    totalChapters,
+    minChapterWords,
+    maxRewriteAttempts = 2,
+    skipSummaryUpdate = false,
+    chapterTitle,
+  } = params;
   const isFinal = chapterIndex === totalChapters;
+  const normalizedMinChapterWords = normalizeMinChapterWords(minChapterWords);
 
-  const system = buildSystemPrompt(isFinal, chapterIndex, chapterTitle);
+  const system = buildSystemPrompt(isFinal, chapterIndex, normalizedMinChapterWords, chapterTitle);
   const prompt = buildUserPrompt(params);
   const generationStartedAt = Date.now();
 
@@ -227,7 +263,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   // QC 检测：结构（标题+正文）+ 非最终章提前完结检测
   for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
     params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
-    const formatQc = quickChapterFormatHeuristic(chapterText);
+    const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
     const endingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
     const reasons = [...formatQc.reasons, ...endingQc.reasons];
 
@@ -246,6 +282,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
       totalChapters,
       reasons,
       isFinalChapter: isFinal,
+      minChapterWords: normalizedMinChapterWords,
     });
 
     const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
@@ -256,7 +293,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   }
 
   // 最终检查
-  const finalFormatQc = quickChapterFormatHeuristic(chapterText);
+  const finalFormatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
   const finalEndingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
   const finalReasons = [...finalFormatQc.reasons, ...finalEndingQc.reasons];
   if (finalReasons.length > 0) {

@@ -98,6 +98,9 @@ export type QCParams = {
   /** 总章数 */
   totalChapters: number;
 
+  /** 每章最少字数（正文，不含标题） */
+  minChapterWords?: number;
+
   /** 角色状态注册表 (可选) */
   characterStates?: CharacterStateRegistry;
 
@@ -120,6 +123,7 @@ export async function runMultiDimensionalQC(params: QCParams): Promise<QCResult>
     chapterText,
     chapterIndex,
     totalChapters,
+    minChapterWords,
     characterStates,
     narrativeGuide,
     chapterOutline,
@@ -141,7 +145,7 @@ export async function runMultiDimensionalQC(params: QCParams): Promise<QCResult>
   dimensionScores.ending = endingResult.score;
 
   // 2. 结构完整性检测 (基于规则，快速)
-  const structureResult = checkStructuralIntegrity(chapterText, chapterIndex);
+  const structureResult = checkStructuralIntegrity(chapterText, chapterIndex, minChapterWords);
   allIssues.push(...structureResult.issues);
   dimensionScores.structure = structureResult.score;
 
@@ -259,10 +263,12 @@ function checkPrematureEnding(
  */
 function checkStructuralIntegrity(
   chapterText: string,
-  chapterIndex: number
+  chapterIndex: number,
+  minChapterWords: number = 1500
 ): { score: number; issues: QCIssue[] } {
   const issues: QCIssue[] = [];
   let score = 100;
+  const normalizedMinWords = Math.max(500, Number.parseInt(String(minChapterWords || 1500), 10) || 1500);
 
   const trimmed = chapterText.trim();
   const looksLikeJsonPayload = (
@@ -281,11 +287,11 @@ function checkStructuralIntegrity(
 
   // 检查字数
   const charCount = chapterText.length;
-  if (charCount < 1500) {
+  if (charCount < normalizedMinWords) {
     issues.push({
       type: 'structure',
       severity: 'major',
-      description: `章节字数过少 (${charCount}字)，建议 2500-3500 字`,
+      description: `章节字数过少 (${charCount}字)，最低要求 ${normalizedMinWords} 字`,
       suggestion: '请扩充章节内容，增加场景描写或角色互动',
     });
     score -= 30;
