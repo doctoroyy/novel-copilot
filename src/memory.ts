@@ -11,6 +11,8 @@ export type BookState = {
   bookTitle: string;
   /** 计划总章数 */
   totalChapters: number;
+  /** 每章最少字数（正文，不含标题） */
+  minChapterWords?: number;
   /** 下一章索引 (从 1 开始) */
   nextChapterIndex: number;
   /** 滚动剧情摘要 (800~1500 字) */
@@ -44,6 +46,7 @@ export async function ensureBook(
     const init: BookState = {
       bookTitle: defaults?.bookTitle ?? path.basename(projectDir),
       totalChapters: defaults?.totalChapters ?? 80,
+      minChapterWords: defaults?.minChapterWords ?? 2500,
       nextChapterIndex: defaults?.nextChapterIndex ?? 1,
       rollingSummary: defaults?.rollingSummary ?? '',
       openLoops: defaults?.openLoops ?? [],

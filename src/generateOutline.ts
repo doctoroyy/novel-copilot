@@ -58,10 +58,11 @@ export async function generateMasterOutline(
     bible: string;
     targetChapters: number;
     targetWordCount: number;
+    minChapterWords?: number;
     characters?: any; // 可选：CharacterRelationGraph，先建人物再写大纲时传入
   }
 ): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] }> {
-  const { bible, targetChapters, targetWordCount, characters } = args;
+  const { bible, targetChapters, targetWordCount, minChapterWords = 2500, characters } = args;
 
   // 估算分卷数 (通常每 50-100 章一卷)
   const volumeCount = Math.ceil(targetChapters / 80);
@@ -76,7 +77,8 @@ export async function generateMasterOutline(
 4. 悬念管理：每卷结尾必须留大悬念，牵引读者进入下一卷
 5. 三幕结构：每卷遵循「铺垫(25%) → 发展(50%) → 高潮收尾(25%)」
 6. 禁止水卷：每卷都要有明确的核心矛盾和高潮，不能有"过渡卷"
-${characters ? '7. 人物驱动：大纲必须围绕人物关系冲突展开，每卷的核心冲突应与人物关系变化绑定' : ''}
+7. 篇幅规划：章节推进要匹配字数预算，默认每章不少于 ${minChapterWords} 字
+${characters ? '8. 人物驱动：大纲必须围绕人物关系冲突展开，每卷的核心冲突应与人物关系变化绑定' : ''}
 
 输出严格的 JSON 格式，不要有其他文字。
 
@@ -132,6 +134,7 @@ ${bible}
 【目标规模】
 - 总章数: ${targetChapters} 章
 - 总字数: ${targetWordCount} 万字
+- 每章最低字数: ${minChapterWords} 字
 - 预计分卷数: ${volumeCount} 卷
 ${charactersSummary}
 
@@ -158,9 +161,10 @@ export async function generateVolumeChapters(
     masterOutline: { mainGoal: string; milestones: string[] };
     volume: Omit<VolumeOutline, 'chapters'>;
     previousVolumeSummary?: string;
+    minChapterWords?: number;
   }
 ): Promise<ChapterOutline[]> {
-  const { bible, masterOutline, volume, previousVolumeSummary } = args;
+  const { bible, masterOutline, volume, previousVolumeSummary, minChapterWords = 2500 } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
 
@@ -174,6 +178,7 @@ export async function generateVolumeChapters(
 4. 冲突升级：核心冲突要逐步升级，不能一下子解决
 5. 人物登场：新角色要安排合理的登场方式和动机
 6. 禁止水章：每章都要推动剧情，不能有纯日常的章节
+7. 篇幅意识：章节设计要支撑单章不少于 ${minChapterWords} 字，避免目标过散导致注水或空章
 
 输出严格的 JSON 数组格式，不要有其他文字。
 
@@ -198,6 +203,7 @@ ${bible.slice(0, 2000)}...
 - 本卷目标: ${volume.goal}
 - 本卷冲突: ${volume.conflict}
 - 本卷高潮: ${volume.climax}
+- 每章最低字数: ${minChapterWords} 字
 
 ${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
 
