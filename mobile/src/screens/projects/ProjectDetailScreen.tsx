@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -105,6 +107,7 @@ export function ProjectDetailScreen() {
   const [outlineModal, setOutlineModal] = useState(false);
   const [outlineChapters, setOutlineChapters] = useState('120');
   const [outlineWordCount, setOutlineWordCount] = useState('30');
+  const [outlineMinChapterWords, setOutlineMinChapterWords] = useState('2500');
   const [outlinePrompt, setOutlinePrompt] = useState('');
 
   const [chapterCount, setChapterCount] = useState('1');
@@ -135,6 +138,7 @@ export function ProjectDetailScreen() {
       const detail = await fetchProject(config.apiBaseUrl, token, projectId);
       setProject(detail);
       setOutlineChapters(String(detail.state.totalChapters || 120));
+      setOutlineMinChapterWords(String(Math.max(500, detail.state.minChapterWords || 2500)));
       navigation.setOptions({ title: detail.name });
       setError(null);
     } catch (err) {
@@ -249,6 +253,12 @@ export function ProjectDetailScreen() {
       return;
     }
 
+    const parsedMinChapterWords = parseInt(outlineMinChapterWords, 10);
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
+      return;
+    }
+
     setRunningAction('outline');
     setLiveMessage('开始生成大纲...');
 
@@ -260,6 +270,7 @@ export function ProjectDetailScreen() {
         {
           targetChapters: Math.max(1, parseInt(outlineChapters, 10) || project.state.totalChapters || 120),
           targetWordCount: Math.max(1, parseInt(outlineWordCount, 10) || 30),
+          minChapterWords: parsedMinChapterWords,
           customPrompt: outlinePrompt.trim() || undefined,
         },
         (event) => {
@@ -300,7 +311,10 @@ export function ProjectDetailScreen() {
         config.apiBaseUrl,
         token,
         project.id,
-        { chaptersToGenerate: count },
+        {
+          chaptersToGenerate: count,
+          minChapterWords: Math.max(500, project.state.minChapterWords || 2500),
+        },
         (event) => {
           if (event.type === 'progress' && event.message) {
             setLiveMessage(event.message);
@@ -911,56 +925,71 @@ export function ProjectDetailScreen() {
         </ScrollView>
 
         <Modal visible={outlineModal} animationType="slide" transparent onRequestClose={() => setOutlineModal(false)}>
-          <View style={styles.modalMask}>
-            <View style={styles.modalSheet}>
-              <Text style={styles.modalTitle}>大纲参数</Text>
-              <Text style={styles.inputLabel}>目标章节数</Text>
-              <TextInput
-                value={outlineChapters}
-                onChangeText={setOutlineChapters}
-                style={styles.input}
-                keyboardType="number-pad"
-                placeholderTextColor={ui.colors.textTertiary}
-              />
+          <KeyboardAvoidingView
+            style={styles.modalMask}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={insets.top + 8}
+          >
+            <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 20 }]}>
+              <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.modalScrollContent}>
+                <Text style={styles.modalTitle}>大纲参数</Text>
+                <Text style={styles.inputLabel}>目标章节数</Text>
+                <TextInput
+                  value={outlineChapters}
+                  onChangeText={setOutlineChapters}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
 
-              <Text style={styles.inputLabel}>目标字数（万字）</Text>
-              <TextInput
-                value={outlineWordCount}
-                onChangeText={setOutlineWordCount}
-                style={styles.input}
-                keyboardType="number-pad"
-                placeholderTextColor={ui.colors.textTertiary}
-              />
+                <Text style={styles.inputLabel}>每章最少字数</Text>
+                <TextInput
+                  value={outlineMinChapterWords}
+                  onChangeText={setOutlineMinChapterWords}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
 
-              <Text style={styles.inputLabel}>额外要求（可选）</Text>
-              <TextInput
-                value={outlinePrompt}
-                onChangeText={setOutlinePrompt}
-                style={[styles.input, styles.inputArea]}
-                multiline
-                textAlignVertical="top"
-                placeholder="如：增加群像线、提高悬疑感"
-                placeholderTextColor={ui.colors.textTertiary}
-              />
+                <Text style={styles.inputLabel}>目标字数（万字）</Text>
+                <TextInput
+                  value={outlineWordCount}
+                  onChangeText={setOutlineWordCount}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
 
-              <View style={styles.inlineRow}>
-                <Pressable style={styles.ghostButton} onPress={() => setOutlineModal(false)}>
-                  <Text style={styles.ghostButtonText}>取消</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.primaryButtonCompact}
-                  onPress={() => void handleGenerateOutline()}
-                  disabled={runningAction !== null}
-                >
-                  {runningAction === 'outline' ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>开始生成</Text>
-                  )}
-                </Pressable>
-              </View>
+                <Text style={styles.inputLabel}>额外要求（可选）</Text>
+                <TextInput
+                  value={outlinePrompt}
+                  onChangeText={setOutlinePrompt}
+                  style={[styles.input, styles.inputArea]}
+                  multiline
+                  textAlignVertical="top"
+                  placeholder="如：增加群像线、提高悬疑感"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+
+                <View style={styles.inlineRow}>
+                  <Pressable style={styles.ghostButton} onPress={() => setOutlineModal(false)}>
+                    <Text style={styles.ghostButtonText}>取消</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.primaryButtonCompact}
+                    onPress={() => void handleGenerateOutline()}
+                    disabled={runningAction !== null}
+                  >
+                    {runningAction === 'outline' ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>开始生成</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </ScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal
@@ -1682,6 +1711,9 @@ const styles = StyleSheet.create({
     gap: 8,
     borderWidth: 1,
     borderColor: ui.colors.border,
+  },
+  modalScrollContent: {
+    gap: 8,
   },
   modalTitle: {
     color: ui.colors.text,

@@ -74,7 +74,7 @@ interface ProjectContextType {
   setShowNewProjectDialog: (val: boolean) => void;
 
   // Project handlers
-  handleCreateProject: (name: string, bible: string, chapters: string) => Promise<void>;
+  handleCreateProject: (name: string, bible: string, chapters: string, minChapterWords?: string) => Promise<void>;
   handleDeleteProject: () => Promise<void>;
   handleRefresh: () => Promise<void>;
 
@@ -526,10 +526,19 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, [navigate, projectId, selectedProject?.id]);
 
   // Project handlers
-  const handleCreateProject = useCallback(async (name: string, bible: string, chapters: string) => {
+  const handleCreateProject = useCallback(async (
+    name: string,
+    bible: string,
+    chapters: string,
+    minChapterWords?: string
+  ) => {
     const trimmedName = name.trim();
     const trimmedBible = bible.trim();
     const totalChapters = Number.parseInt(chapters, 10);
+    const parsedMinChapterWords = Number.parseInt(
+      String(minChapterWords ?? '2500'),
+      10
+    );
 
     if (!trimmedName) {
       setError('请输入项目名称');
@@ -543,10 +552,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setError('目标章节数必须是大于 0 的整数');
       throw new Error('invalid_project_chapters');
     }
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
+      throw new Error('invalid_project_min_chapter_words');
+    }
 
     setLoading(true);
     try {
-      const created = await createProject(trimmedName, trimmedBible, totalChapters);
+      const created = await createProject(trimmedName, trimmedBible, totalChapters, parsedMinChapterWords);
       setShowNewProjectDialog(false);
       await loadProjects();
       navigate(`/project/${encodeURIComponent(created.id)}/dashboard`);
