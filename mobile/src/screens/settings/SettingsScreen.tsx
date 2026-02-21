@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -63,120 +65,130 @@ export function SettingsScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 112 }]}>
-          <View style={styles.headerWrap}>
-            <Text style={styles.pageTitle}>设置</Text>
-            <Text style={styles.pageSubtitle}>管理账号与服务连接</Text>
-          </View>
-
-          <View style={styles.statusStrip}>
-            <View style={styles.statusChip}>
-              <Ionicons name="flash" size={14} color={ui.colors.accent} />
-              <Text style={styles.statusChipText}>
-                剩余积分：{user?.credit_balance !== undefined ? user.credit_balance : '...'}
-              </Text>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 8}
+        >
+          <ScrollView
+            contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 112 }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View style={styles.headerWrap}>
+              <Text style={styles.pageTitle}>设置</Text>
+              <Text style={styles.pageSubtitle}>管理账号与服务连接</Text>
             </View>
-            <Text style={styles.statusHost} numberOfLines={1}>{apiBaseUrl.replace(/^https?:\/\//, '')}</Text>
-          </View>
 
-          <View style={[styles.card, styles.accountCard]}>
-            <View style={styles.sectionTitleRow}>
-              <Ionicons name="person-circle-outline" size={18} color={ui.colors.primaryStrong} />
-              <Text style={styles.cardTitle}>账号</Text>
+            <View style={styles.statusStrip}>
+              <View style={styles.statusChip}>
+                <Ionicons name="flash" size={14} color={ui.colors.accent} />
+                <Text style={styles.statusChipText}>
+                  剩余积分：{user?.credit_balance !== undefined ? user.credit_balance : '...'}
+                </Text>
+              </View>
+              <Text style={styles.statusHost} numberOfLines={1}>{apiBaseUrl.replace(/^https?:\/\//, '')}</Text>
             </View>
-            <Text style={styles.accountText}>当前用户：{user?.username || '未知'}</Text>
-            <Text style={styles.accountRole}>用户ID：{user?.id || '...'}</Text>
-            <Text style={styles.accountRole}>权限组：{user?.role || 'user'}</Text>
-            
-            {user?.role === 'admin' && (
-              <Pressable style={({ pressed }) => [styles.adminButton, pressed && styles.pressed]} onPress={openAdminPanel}>
-                <Ionicons name="settings-outline" size={16} color={ui.colors.primaryStrong} />
-                <Text style={styles.adminButtonText}>打开管理后台</Text>
+
+            <View style={[styles.card, styles.accountCard]}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="person-circle-outline" size={18} color={ui.colors.primaryStrong} />
+                <Text style={styles.cardTitle}>账号</Text>
+              </View>
+              <Text style={styles.accountText}>当前用户：{user?.username || '未知'}</Text>
+              <Text style={styles.accountRole}>用户ID：{user?.id || '...'}</Text>
+              <Text style={styles.accountRole}>权限组：{user?.role || 'user'}</Text>
+              
+              {user?.role === 'admin' && (
+                <Pressable style={({ pressed }) => [styles.adminButton, pressed && styles.pressed]} onPress={openAdminPanel}>
+                  <Ionicons name="settings-outline" size={16} color={ui.colors.primaryStrong} />
+                  <Text style={styles.adminButtonText}>打开管理后台</Text>
+                </Pressable>
+              )}
+
+              <Pressable style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]} onPress={handleLogout}>
+                <Ionicons name="log-out-outline" size={16} color="#fff" />
+                <Text style={styles.logoutButtonText}>退出登录</Text>
               </Pressable>
-            )}
-
-            <Pressable style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={16} color="#fff" />
-              <Text style={styles.logoutButtonText}>退出登录</Text>
-            </Pressable>
-          </View>
-
-          <View style={[styles.card, styles.serviceCard]}>
-            <View style={styles.sectionTitleRow}>
-              <Ionicons name="cloud-outline" size={18} color={ui.colors.primaryStrong} />
-              <Text style={styles.cardTitle}>服务地址</Text>
             </View>
-            <Text style={styles.label}>后端地址</Text>
-            <TextInput
-              value={apiBaseUrl}
-              onChangeText={setApiBaseUrl}
-              autoCapitalize="none"
-              style={styles.input}
-              placeholder="https://novel-copilot.doctoroyy.workers.dev"
-              placeholderTextColor={ui.colors.textTertiary}
-            />
-            <Text style={styles.hintText}>
-              无需配置 API Key，AI 模型由服务端统一管理。
-            </Text>
-          </View>
 
-          {user?.allow_custom_provider && (
             <View style={[styles.card, styles.serviceCard]}>
               <View style={styles.sectionTitleRow}>
-                <Ionicons name="options-outline" size={18} color={ui.colors.primaryStrong} />
-                <Text style={styles.cardTitle}>自定义模型配置</Text>
+                <Ionicons name="cloud-outline" size={18} color={ui.colors.primaryStrong} />
+                <Text style={styles.cardTitle}>服务地址</Text>
               </View>
+              <Text style={styles.label}>后端地址</Text>
+              <TextInput
+                value={apiBaseUrl}
+                onChangeText={setApiBaseUrl}
+                autoCapitalize="none"
+                style={styles.input}
+                placeholder="https://novel-copilot.doctoroyy.workers.dev"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
               <Text style={styles.hintText}>
-                您拥有自定义模型权限，设置后将覆盖默认模型。
+                无需配置 API Key，AI 模型由服务端统一管理。
               </Text>
-              
-              <Text style={styles.label}>提供商 (Provider)</Text>
-              <TextInput
-                value={config.ai?.provider || ''}
-                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, provider: v } as any })}
-                autoCapitalize="none"
-                style={styles.input}
-                placeholder="openai, anthropic, etc."
-                placeholderTextColor={ui.colors.textTertiary}
-              />
-
-              <Text style={styles.label}>模型名称 (Model)</Text>
-              <TextInput
-                value={config.ai?.model || ''}
-                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, model: v } as any })}
-                autoCapitalize="none"
-                style={styles.input}
-                placeholder="gpt-4o, claude-3-5-sonnet..."
-                placeholderTextColor={ui.colors.textTertiary}
-              />
-
-              <Text style={styles.label}>API Base URL</Text>
-              <TextInput
-                value={config.ai?.baseUrl || ''}
-                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, baseUrl: v } as any })}
-                autoCapitalize="none"
-                style={styles.input}
-                placeholder="https://api.openai.com/v1"
-                placeholderTextColor={ui.colors.textTertiary}
-              />
-
-              <Text style={styles.label}>API Key</Text>
-              <TextInput
-                value={config.ai?.apiKey || ''}
-                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, apiKey: v } as any })}
-                autoCapitalize="none"
-                secureTextEntry
-                style={styles.input}
-                placeholder="sk-..."
-                placeholderTextColor={ui.colors.textTertiary}
-              />
             </View>
-          )}
 
-          <Pressable style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]} onPress={() => void handleSave()} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>保存设置</Text>}
-          </Pressable>
-        </ScrollView>
+            {user?.allow_custom_provider && (
+              <View style={[styles.card, styles.serviceCard]}>
+                <View style={styles.sectionTitleRow}>
+                  <Ionicons name="options-outline" size={18} color={ui.colors.primaryStrong} />
+                  <Text style={styles.cardTitle}>自定义模型配置</Text>
+                </View>
+                <Text style={styles.hintText}>
+                  您拥有自定义模型权限，设置后将覆盖默认模型。
+                </Text>
+                
+                <Text style={styles.label}>提供商 (Provider)</Text>
+                <TextInput
+                  value={config.ai?.provider || ''}
+                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, provider: v } as any })}
+                  autoCapitalize="none"
+                  style={styles.input}
+                  placeholder="openai, anthropic, etc."
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+
+                <Text style={styles.label}>模型名称 (Model)</Text>
+                <TextInput
+                  value={config.ai?.model || ''}
+                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, model: v } as any })}
+                  autoCapitalize="none"
+                  style={styles.input}
+                  placeholder="gpt-4o, claude-3-5-sonnet..."
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+
+                <Text style={styles.label}>API Base URL</Text>
+                <TextInput
+                  value={config.ai?.baseUrl || ''}
+                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, baseUrl: v } as any })}
+                  autoCapitalize="none"
+                  style={styles.input}
+                  placeholder="https://api.openai.com/v1"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+
+                <Text style={styles.label}>API Key</Text>
+                <TextInput
+                  value={config.ai?.apiKey || ''}
+                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, apiKey: v } as any })}
+                  autoCapitalize="none"
+                  secureTextEntry
+                  style={styles.input}
+                  placeholder="sk-..."
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+              </View>
+            )}
+
+            <Pressable style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]} onPress={() => void handleSave()} disabled={saving}>
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>保存设置</Text>}
+            </Pressable>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </LinearGradient>
     </SafeAreaView>
   );
@@ -188,6 +200,9 @@ const styles = StyleSheet.create({
     backgroundColor: ui.colors.bg,
   },
   bgGradient: {
+    flex: 1,
+  },
+  flex: {
     flex: 1,
   },
   content: {

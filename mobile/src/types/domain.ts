@@ -11,6 +11,7 @@ export type User = {
 export type BookState = {
   bookTitle: string;
   totalChapters: number;
+  minChapterWords?: number;
   nextChapterIndex: number;
   rollingSummary: string;
   openLoops: string[];

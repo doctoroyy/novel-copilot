@@ -55,6 +55,7 @@ function ProjectLayoutInner() {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectBible, setNewProjectBible] = useState('');
   const [newProjectChapters, setNewProjectChapters] = useState('400');
+  const [newProjectMinChapterWords, setNewProjectMinChapterWords] = useState('2500');
   const [aiGenre, setAiGenre] = useState('');
   const [aiTheme, setAiTheme] = useState('');
   const [aiKeywords, setAiKeywords] = useState('');
@@ -80,6 +81,7 @@ function ProjectLayoutInner() {
     const trimmedName = newProjectName.trim();
     const trimmedBible = newProjectBible.trim();
     const parsedChapters = Number.parseInt(newProjectChapters, 10);
+    const parsedMinChapterWords = Number.parseInt(newProjectMinChapterWords, 10);
 
     if (!trimmedName) {
       setError('请输入项目名称');
@@ -93,12 +95,17 @@ function ProjectLayoutInner() {
       setError('目标章节数必须是大于 0 的整数');
       return;
     }
+    if (!Number.isInteger(parsedMinChapterWords) || parsedMinChapterWords < 500 || parsedMinChapterWords > 20000) {
+      setError('每章最少字数必须是 500~20000 的整数');
+      return;
+    }
 
     try {
-      await handleCreateProject(trimmedName, trimmedBible, String(parsedChapters));
+      await handleCreateProject(trimmedName, trimmedBible, String(parsedChapters), String(parsedMinChapterWords));
       setNewProjectName('');
       setNewProjectBible('');
       setNewProjectChapters('400');
+      setNewProjectMinChapterWords('2500');
       setAiGenre('');
       setAiTheme('');
       setAiKeywords('');
@@ -243,6 +250,20 @@ function ProjectLayoutInner() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="minChapterWords">每章最少字数</Label>
+              <Input
+                id="minChapterWords"
+                type="number"
+                min={500}
+                max={20000}
+                step={100}
+                value={newProjectMinChapterWords}
+                onChange={(e) => setNewProjectMinChapterWords(e.target.value)}
+                placeholder="2500"
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label>AI 辅助生成设定 (可选)</Label>
               <div className="grid grid-cols-2 gap-2">
                 <Input
@@ -296,6 +317,9 @@ function ProjectLayoutInner() {
                 !newProjectBible.trim() ||
                 !Number.isInteger(Number.parseInt(newProjectChapters, 10)) ||
                 Number.parseInt(newProjectChapters, 10) <= 0 ||
+                !Number.isInteger(Number.parseInt(newProjectMinChapterWords, 10)) ||
+                Number.parseInt(newProjectMinChapterWords, 10) < 500 ||
+                Number.parseInt(newProjectMinChapterWords, 10) > 20000 ||
                 loading
               }
             >

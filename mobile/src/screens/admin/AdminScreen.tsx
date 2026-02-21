@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  KeyboardAvoidingView,
   Modal,
   TextInput,
   Alert,
@@ -13,7 +14,7 @@ import {
   Switch,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { ui } from '../../theme/tokens';
@@ -26,6 +27,7 @@ type Tab = 'models' | 'credit';
 
 export function AdminScreen() {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { token } = useAuth();
   const { config } = useAppConfig();
   const [activeTab, setActiveTab] = useState<Tab>('models');
@@ -274,7 +276,11 @@ export function AdminScreen() {
       transparent={true}
       onRequestClose={() => setModelModalVisible(false)}
     >
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={insets.top + 8}
+      >
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{editingModel?.id ? '编辑模型' : '添加模型'}</Text>
@@ -282,7 +288,7 @@ export function AdminScreen() {
               <Ionicons name="close" size={24} color={ui.colors.text} />
             </TouchableOpacity>
           </View>
-          <ScrollView>
+          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             <Text style={styles.label}>显示名称</Text>
             <TextInput
               style={styles.input}
@@ -336,7 +342,7 @@ export function AdminScreen() {
             <Text style={styles.saveButtonText}>保存</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 
@@ -347,7 +353,11 @@ export function AdminScreen() {
       transparent={true}
       onRequestClose={() => setCreditModalVisible(false)}
     >
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={insets.top + 8}
+      >
          <View style={[styles.modalContent, { height: 'auto', maxHeight: 300 }]}>
             <Text style={styles.modalTitle}>修改定价: {editingFeature?.name}</Text>
             <Text style={styles.label}>基础消耗</Text>
@@ -373,7 +383,7 @@ export function AdminScreen() {
                </TouchableOpacity>
             </View>
          </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 

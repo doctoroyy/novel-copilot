@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -225,148 +227,156 @@ export function AnimeStudioScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadAll(true)} tintColor={ui.colors.primary} />}
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 8}
         >
-          <View style={styles.headerWrap}>
-            <View style={styles.headerBadge}>
-              <Ionicons name="film-outline" size={12} color={ui.colors.primaryStrong} />
-              <Text style={styles.headerBadgeText}>漫剧工位</Text>
+          <ScrollView
+            contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadAll(true)} tintColor={ui.colors.primary} />}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            <View style={styles.headerWrap}>
+              <View style={styles.headerBadge}>
+                <Ionicons name="film-outline" size={12} color={ui.colors.primaryStrong} />
+                <Text style={styles.headerBadgeText}>漫剧工位</Text>
+              </View>
+              <Text style={styles.pageTitle}>AI漫剧</Text>
+              <Text style={styles.pageSubtitle}>将章节快速转换为分集脚本与分镜视频</Text>
             </View>
-            <Text style={styles.pageTitle}>AI漫剧</Text>
-            <Text style={styles.pageSubtitle}>将章节快速转换为分集脚本与分镜视频</Text>
-          </View>
 
-          <View style={styles.workflowRail}>
-            <View style={styles.workflowItem}>
-              <View style={[styles.workflowDot, styles.workflowDotPrimary]} />
-              <Text style={styles.workflowText}>选择项目</Text>
+            <View style={styles.workflowRail}>
+              <View style={styles.workflowItem}>
+                <View style={[styles.workflowDot, styles.workflowDotPrimary]} />
+                <Text style={styles.workflowText}>选择项目</Text>
+              </View>
+              <View style={styles.workflowLine} />
+              <View style={styles.workflowItem}>
+                <View style={[styles.workflowDot, styles.workflowDotAccent]} />
+                <Text style={styles.workflowText}>创建分集</Text>
+              </View>
+              <View style={styles.workflowLine} />
+              <View style={styles.workflowItem}>
+                <View style={[styles.workflowDot, styles.workflowDotDone]} />
+                <Text style={styles.workflowText}>生成视频</Text>
+              </View>
             </View>
-            <View style={styles.workflowLine} />
-            <View style={styles.workflowItem}>
-              <View style={[styles.workflowDot, styles.workflowDotAccent]} />
-              <Text style={styles.workflowText}>创建分集</Text>
-            </View>
-            <View style={styles.workflowLine} />
-            <View style={styles.workflowItem}>
-              <View style={[styles.workflowDot, styles.workflowDotDone]} />
-              <Text style={styles.workflowText}>生成视频</Text>
-            </View>
-          </View>
 
-          <View style={[styles.card, styles.selectorCard]}>
-            <Text style={styles.cardTitle}>选择小说项目</Text>
-            {novelProjects.length === 0 ? (
-              <Text style={styles.mutedText}>当前没有可用小说项目</Text>
+            <View style={[styles.card, styles.selectorCard]}>
+              <Text style={styles.cardTitle}>选择小说项目</Text>
+              {novelProjects.length === 0 ? (
+                <Text style={styles.mutedText}>当前没有可用小说项目</Text>
+              ) : (
+                <View style={styles.projectChipWrap}>
+                  {novelProjects.map((item) => {
+                    const active = item.name === selectedProjectName;
+                    return (
+                      <Pressable
+                        key={item.name}
+                        style={({ pressed }) => [
+                          styles.projectChip,
+                          active && styles.projectChipActive,
+                          pressed && styles.pressed,
+                        ]}
+                        onPress={() => setSelectedProjectName(item.name)}
+                      >
+                        <Text style={[styles.projectChipText, active && styles.projectChipTextActive]} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {!animeProject ? (
+              <View style={[styles.card, styles.createCard]}>
+                <Text style={styles.cardTitle}>创建漫剧项目</Text>
+                <Text style={styles.mutedText}>
+                  当前项目：{selectedProjectName || '未选择'}。创建后会按章节内容切分为分集任务。
+                </Text>
+
+                <Text style={styles.inputLabel}>分集数量</Text>
+                <TextInput
+                  value={episodesInput}
+                  onChangeText={setEpisodesInput}
+                  keyboardType="number-pad"
+                  style={styles.input}
+                  placeholder="60"
+                  placeholderTextColor={ui.colors.textTertiary}
+                />
+
+                <Pressable
+                  style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+                  onPress={() => void handleCreateAnimeProject()}
+                  disabled={creating || !selectedProjectName}
+                >
+                  {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>创建并初始化</Text>}
+                </Pressable>
+              </View>
             ) : (
-              <View style={styles.projectChipWrap}>
-                {novelProjects.map((item) => {
-                  const active = item.name === selectedProjectName;
-                  return (
+              <>
+                <View style={[styles.card, styles.progressCard]}>
+                  <View style={styles.rowBetween}>
+                    <View>
+                      <Text style={styles.cardTitle}>项目状态</Text>
+                      <Text style={styles.mutedText}>{animeProjectName}</Text>
+                    </View>
                     <Pressable
-                      key={item.name}
-                      style={({ pressed }) => [
-                        styles.projectChip,
-                        active && styles.projectChipActive,
-                        pressed && styles.pressed,
-                      ]}
-                      onPress={() => setSelectedProjectName(item.name)}
+                      style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
+                      onPress={() => void handleGenerateAll()}
+                      disabled={generatingAll}
                     >
-                      <Text style={[styles.projectChipText, active && styles.projectChipTextActive]} numberOfLines={1}>
-                        {item.name}
-                      </Text>
+                      {generatingAll ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>全部生成</Text>}
                     </Pressable>
-                  );
-                })}
-              </View>
-            )}
-          </View>
-
-          {!animeProject ? (
-            <View style={[styles.card, styles.createCard]}>
-              <Text style={styles.cardTitle}>创建漫剧项目</Text>
-              <Text style={styles.mutedText}>
-                当前项目：{selectedProjectName || '未选择'}。创建后会按章节内容切分为分集任务。
-              </Text>
-
-              <Text style={styles.inputLabel}>分集数量</Text>
-              <TextInput
-                value={episodesInput}
-                onChangeText={setEpisodesInput}
-                keyboardType="number-pad"
-                style={styles.input}
-                placeholder="60"
-                placeholderTextColor={ui.colors.textTertiary}
-              />
-
-              <Pressable
-                style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
-                onPress={() => void handleCreateAnimeProject()}
-                disabled={creating || !selectedProjectName}
-              >
-                {creating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>创建并初始化</Text>}
-              </Pressable>
-            </View>
-          ) : (
-            <>
-              <View style={[styles.card, styles.progressCard]}>
-                <View style={styles.rowBetween}>
-                  <View>
-                    <Text style={styles.cardTitle}>项目状态</Text>
-                    <Text style={styles.mutedText}>{animeProjectName}</Text>
                   </View>
-                  <Pressable
-                    style={({ pressed }) => [styles.primaryButtonCompact, pressed && styles.pressed]}
-                    onPress={() => void handleGenerateAll()}
-                    disabled={generatingAll}
-                  >
-                    {generatingAll ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>全部生成</Text>}
-                  </Pressable>
+
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+                  </View>
+                  <Text style={styles.progressText}>{doneCount}/{episodes.length} 集完成（{progressPct}%）</Text>
                 </View>
 
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
-                </View>
-                <Text style={styles.progressText}>{doneCount}/{episodes.length} 集完成（{progressPct}%）</Text>
-              </View>
-
-              <View style={[styles.card, styles.episodesCard]}>
-                <Text style={styles.cardTitle}>分集列表</Text>
-                {episodes.length === 0 ? (
-                  <Text style={styles.mutedText}>还没有分集数据，请先初始化项目。</Text>
-                ) : (
-                  <View style={styles.episodeList}>
-                    {episodes.map((episode) => (
-                      <View key={episode.id} style={styles.episodeRow}>
-                        <View style={styles.episodeLeft}>
-                          <View style={[styles.episodeIndexBubble, statusStyle(episode.status)]}>
-                            <Text style={styles.episodeIndexText}>{episode.episode_num}</Text>
+                <View style={[styles.card, styles.episodesCard]}>
+                  <Text style={styles.cardTitle}>分集列表</Text>
+                  {episodes.length === 0 ? (
+                    <Text style={styles.mutedText}>还没有分集数据，请先初始化项目。</Text>
+                  ) : (
+                    <View style={styles.episodeList}>
+                      {episodes.map((episode) => (
+                        <View key={episode.id} style={styles.episodeRow}>
+                          <View style={styles.episodeLeft}>
+                            <View style={[styles.episodeIndexBubble, statusStyle(episode.status)]}>
+                              <Text style={styles.episodeIndexText}>{episode.episode_num}</Text>
+                            </View>
+                            <Text style={styles.episodeTitle}>第 {episode.episode_num} 集</Text>
+                            <View style={[styles.statusBadge, statusStyle(episode.status)]}>
+                              <Text style={styles.statusText}>{statusText(episode.status)}</Text>
+                            </View>
                           </View>
-                          <Text style={styles.episodeTitle}>第 {episode.episode_num} 集</Text>
-                          <View style={[styles.statusBadge, statusStyle(episode.status)]}>
-                            <Text style={styles.statusText}>{statusText(episode.status)}</Text>
-                          </View>
+                          <Pressable
+                            style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                            onPress={() => void handleGenerateEpisode(episode.episode_num)}
+                            disabled={generatingEpisode === episode.episode_num}
+                          >
+                            {generatingEpisode === episode.episode_num ? (
+                              <ActivityIndicator color={ui.colors.primaryStrong} />
+                            ) : (
+                              <Text style={styles.ghostButtonText}>生成本集</Text>
+                            )}
+                          </Pressable>
                         </View>
-                        <Pressable
-                          style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
-                          onPress={() => void handleGenerateEpisode(episode.episode_num)}
-                          disabled={generatingEpisode === episode.episode_num}
-                        >
-                          {generatingEpisode === episode.episode_num ? (
-                            <ActivityIndicator color={ui.colors.primaryStrong} />
-                          ) : (
-                            <Text style={styles.ghostButtonText}>生成本集</Text>
-                          )}
-                        </Pressable>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            </>
-          )}
-        </ScrollView>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              </>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
 
         {error ? <Text style={[styles.errorBar, { bottom: insets.bottom + 86 }]}>{error}</Text> : null}
       </LinearGradient>
@@ -380,6 +390,9 @@ const styles = StyleSheet.create({
     backgroundColor: ui.colors.bg,
   },
   bgGradient: {
+    flex: 1,
+  },
+  flex: {
     flex: 1,
   },
   content: {
