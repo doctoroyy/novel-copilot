@@ -222,6 +222,50 @@ export async function fetchBibleTemplates(
   };
 }
 
+export type BibleTemplateRefreshResult = {
+  success: boolean;
+  snapshotDate: string;
+  templateCount: number;
+  hotCount: number;
+  skipped: boolean;
+  status: 'ready' | 'error';
+  errorMessage?: string;
+};
+
+export async function refreshBibleTemplates(
+  apiBaseUrl: string,
+  token: string,
+  snapshotDate?: string,
+  force: boolean = true,
+): Promise<BibleTemplateRefreshResult> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/bible-templates/refresh'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({
+      ...(snapshotDate ? { snapshotDate } : {}),
+      force,
+    }),
+  });
+
+  const json = await parseJsonResponse<BibleTemplateRefreshResult>(res);
+  if (!json.success && (json as any).status !== 'error') {
+    throw new Error(json.error || 'Failed to refresh bible templates');
+  }
+
+  return {
+    success: Boolean(json.success),
+    snapshotDate: String((json as any).snapshotDate || ''),
+    templateCount: Number((json as any).templateCount || 0),
+    hotCount: Number((json as any).hotCount || 0),
+    skipped: Boolean((json as any).skipped),
+    status: (json as any).status === 'error' ? 'error' : 'ready',
+    errorMessage: (json as any).errorMessage || undefined,
+  };
+}
+
 async function parseSSE(
   response: Response,
   onEvent: (event: any) => void,
@@ -655,4 +699,68 @@ export async function updateCreditFeature(
   });
   const json = await parseJsonResponse<Record<string, never>>(res);
   if (!json.success) throw new Error(json.error || 'Failed to update credit feature');
+}
+
+export type AdminBibleTemplateSummary = {
+  snapshotDate: string | null;
+  templateCount: number;
+  hotCount: number;
+  status: 'ready' | 'error' | null;
+  errorMessage: string | null;
+  availableSnapshots: BibleTemplateSnapshotResponse['availableSnapshots'];
+};
+
+export async function fetchAdminBibleTemplateSummary(
+  apiBaseUrl: string,
+  token: string,
+  snapshotDate?: string,
+): Promise<AdminBibleTemplateSummary> {
+  const suffix = snapshotDate ? `?snapshotDate=${encodeURIComponent(snapshotDate)}` : '';
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/admin/bible-templates${suffix}`), {
+    headers: authHeaders(token),
+  });
+  const json = await parseJsonResponse<AdminBibleTemplateSummary>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch admin bible template summary');
+  return {
+    snapshotDate: (json as any).snapshotDate ?? null,
+    templateCount: Number((json as any).templateCount || 0),
+    hotCount: Number((json as any).hotCount || 0),
+    status: (json as any).status ?? null,
+    errorMessage: (json as any).errorMessage ?? null,
+    availableSnapshots: Array.isArray((json as any).availableSnapshots) ? (json as any).availableSnapshots : [],
+  };
+}
+
+export async function refreshAdminBibleTemplates(
+  apiBaseUrl: string,
+  token: string,
+  snapshotDate?: string,
+  force: boolean = true,
+): Promise<BibleTemplateRefreshResult> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/admin/bible-templates/refresh'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({
+      ...(snapshotDate ? { snapshotDate } : {}),
+      force,
+    }),
+  });
+
+  const json = await parseJsonResponse<BibleTemplateRefreshResult>(res);
+  if (!json.success && (json as any).status !== 'error') {
+    throw new Error(json.error || 'Failed to refresh admin bible templates');
+  }
+
+  return {
+    success: Boolean(json.success),
+    snapshotDate: String((json as any).snapshotDate || ''),
+    templateCount: Number((json as any).templateCount || 0),
+    hotCount: Number((json as any).hotCount || 0),
+    skipped: Boolean((json as any).skipped),
+    status: (json as any).status === 'error' ? 'error' : 'ready',
+    errorMessage: (json as any).errorMessage || undefined,
+  };
 }

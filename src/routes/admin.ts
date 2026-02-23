@@ -1,8 +1,14 @@
 import { Hono } from 'hono';
 import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normalizeProviderId } from '../services/providerCatalog.js';
+import {
+  getImagineTemplateSnapshot,
+  listImagineTemplateSnapshotDates,
+  refreshImagineTemplatesForDate,
+} from '../services/imagineTemplateService.js';
 
 interface Bindings {
   DB: D1Database;
+  FANQIE_BROWSER?: Fetcher;
 }
 
 const adminRoutes = new Hono<{ Bindings: Bindings }>();
@@ -157,6 +163,46 @@ adminRoutes.patch('/invitation-codes/:code', async (c) => {
     `).bind(isActive ? 1 : 0, code).run();
 
     return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Get AI imagine template snapshot summary (admin)
+adminRoutes.get('/bible-templates', async (c) => {
+  try {
+    const snapshotDate = c.req.query('snapshotDate') || undefined;
+    const snapshot = await getImagineTemplateSnapshot(c.env.DB, snapshotDate);
+    const availableSnapshots = await listImagineTemplateSnapshotDates(c.env.DB, 60);
+
+    return c.json({
+      success: true,
+      snapshotDate: snapshot?.snapshotDate || null,
+      templateCount: snapshot?.templates.length || 0,
+      hotCount: snapshot?.ranking.length || 0,
+      status: snapshot?.status || null,
+      errorMessage: snapshot?.errorMessage || null,
+      availableSnapshots,
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Manually refresh AI imagine templates (admin)
+adminRoutes.post('/bible-templates/refresh', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({} as any));
+    const result = await refreshImagineTemplatesForDate(c.env, {
+      snapshotDate: typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined,
+      // Manual trigger should force refresh by default.
+      force: body.force === undefined ? true : Boolean(body.force),
+    });
+
+    return c.json({
+      success: result.status === 'ready',
+      ...result,
+    });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }

@@ -27,6 +27,7 @@ import {
 import { useEffect, useState } from 'react';
 import {
   fetchBibleTemplates,
+  refreshBibleTemplates,
   generateBible as apiBible,
   type BibleImagineTemplate,
 } from '@/lib/api';
@@ -76,6 +77,8 @@ function ProjectLayoutInner() {
   const [templateDates, setTemplateDates] = useState<string[]>([]);
   const [templateOptions, setTemplateOptions] = useState<BibleImagineTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateRefreshing, setTemplateRefreshing] = useState(false);
+  const [templateHint, setTemplateHint] = useState<string | null>(null);
 
   const loadTemplates = async (snapshotDate?: string) => {
     setTemplateLoading(true);
@@ -113,6 +116,28 @@ function ProjectLayoutInner() {
     if (!aiGenre.trim()) setAiGenre(selected.genre);
     if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
     if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
+  };
+
+  const handleRefreshTemplates = async () => {
+    setTemplateRefreshing(true);
+    setTemplateHint('正在生成热点模板，请稍候...');
+    try {
+      const result = await refreshBibleTemplates(undefined, true);
+      if (result.status === 'error') {
+        throw new Error(result.errorMessage || '模板生成失败');
+      }
+      setTemplateHint(
+        result.skipped
+          ? `模板已是最新（${result.snapshotDate}）`
+          : `模板已更新：${result.templateCount} 个（${result.snapshotDate}）`
+      );
+      await loadTemplates(templateSnapshotDate === 'latest' ? undefined : templateSnapshotDate);
+    } catch (err) {
+      setTemplateHint(null);
+      setError(`刷新模板失败：${(err as Error).message}`);
+    } finally {
+      setTemplateRefreshing(false);
+    }
   };
 
   // AI Bible generation for new project
@@ -190,6 +215,7 @@ function ProjectLayoutInner() {
 
   useEffect(() => {
     if (!showNewProjectDialog) return;
+    setTemplateHint(null);
     void loadTemplates();
   }, [showNewProjectDialog]);
 
@@ -359,6 +385,17 @@ function ProjectLayoutInner() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefreshTemplates}
+                  disabled={templateRefreshing}
+                >
+                  {templateRefreshing ? '生成中...' : '拉取/刷新模板'}
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
                 <Select
                   value={selectedTemplateId || 'none'}
                   onValueChange={(value) => applyTemplate(value === 'none' ? '' : value)}
@@ -377,6 +414,16 @@ function ProjectLayoutInner() {
                   </SelectContent>
                 </Select>
               </div>
+              {templateHint && (
+                <div className="rounded-md border border-border bg-muted/20 p-2 text-xs text-muted-foreground">
+                  {templateHint}
+                </div>
+              )}
+              {!templateLoading && templateOptions.length === 0 && (
+                <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-2 text-xs text-amber-800">
+                  当前还没有可用模板。点击“拉取/刷新模板”可立即生成当天热点模板。
+                </div>
+              )}
               {selectedTemplateId && (
                 <div className="rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
                   {(() => {

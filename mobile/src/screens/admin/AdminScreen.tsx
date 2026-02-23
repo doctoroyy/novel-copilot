@@ -21,9 +21,9 @@ import { ui } from '../../theme/tokens';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import * as api from '../../lib/api';
-import type { ModelRegistry, CreditFeature } from '../../types/domain';
+import type { ModelRegistry, CreditFeature, BibleTemplateSnapshotSummary } from '../../types/domain';
 
-type Tab = 'models' | 'credit';
+type Tab = 'models' | 'credit' | 'templates';
 
 export function AdminScreen() {
   const navigation = useNavigation();
@@ -36,6 +36,15 @@ export function AdminScreen() {
   // Data State
   const [models, setModels] = useState<ModelRegistry[]>([]);
   const [creditFeatures, setCreditFeatures] = useState<CreditFeature[]>([]);
+  const [templateSummary, setTemplateSummary] = useState<{
+    snapshotDate: string | null;
+    templateCount: number;
+    hotCount: number;
+    status: 'ready' | 'error' | null;
+    errorMessage: string | null;
+    availableSnapshots: BibleTemplateSnapshotSummary[];
+  } | null>(null);
+  const [templateRefreshing, setTemplateRefreshing] = useState(false);
 
   // Modal State
   const [modelModalVisible, setModelModalVisible] = useState(false);
@@ -52,9 +61,12 @@ export function AdminScreen() {
       if (activeTab === 'models') {
         const data = await api.fetchModelRegistry(config.apiBaseUrl, token);
         setModels(data);
-      } else {
+      } else if (activeTab === 'credit') {
         const data = await api.fetchAdminCreditFeatures(config.apiBaseUrl, token);
         setCreditFeatures(data);
+      } else {
+        const data = await api.fetchAdminBibleTemplateSummary(config.apiBaseUrl, token);
+        setTemplateSummary(data);
       }
     } catch (e) {
       Alert.alert('加载失败', (e as Error).message);
@@ -152,6 +164,24 @@ export function AdminScreen() {
     }
   };
 
+  const handleManualTemplateRefresh = async () => {
+    if (!token) return;
+    setTemplateRefreshing(true);
+    try {
+      const result = await api.refreshAdminBibleTemplates(config.apiBaseUrl, token, undefined, true);
+      if (result.status === 'error') {
+        throw new Error(result.errorMessage || '模板生成失败');
+      }
+      const summary = await api.fetchAdminBibleTemplateSummary(config.apiBaseUrl, token);
+      setTemplateSummary(summary);
+      Alert.alert('已完成', `模板已更新：${result.templateCount} 个`);
+    } catch (e) {
+      Alert.alert('操作失败', (e as Error).message);
+    } finally {
+      setTemplateRefreshing(false);
+    }
+  };
+
   // Render Helpers
   const renderHeader = () => (
     <View style={styles.header}>
@@ -176,6 +206,12 @@ export function AdminScreen() {
         onPress={() => setActiveTab('credit')}
       >
         <Text style={[styles.tabText, activeTab === 'credit' && styles.activeTabText]}>能量定价</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.tab, activeTab === 'templates' && styles.activeTab]}
+        onPress={() => setActiveTab('templates')}
+      >
+        <Text style={[styles.tabText, activeTab === 'templates' && styles.activeTabText]}>模板任务</Text>
       </TouchableOpacity>
     </View>
   );
@@ -266,6 +302,49 @@ export function AdminScreen() {
           </View>
         </View>
       ))}
+    </ScrollView>
+  );
+
+  const renderTemplatePanel = () => (
+    <ScrollView style={styles.content}>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>AI 热点模板生成</Text>
+        <Text style={styles.cardSubtitle}>创建项目时若看不到模板，可在这里手动触发生成。</Text>
+        <TouchableOpacity
+          style={[styles.addButton, templateRefreshing && { opacity: 0.7 }]}
+          onPress={handleManualTemplateRefresh}
+          disabled={templateRefreshing}
+        >
+          {templateRefreshing ? (
+            <ActivityIndicator color={ui.colors.primary} />
+          ) : (
+            <Ionicons name="refresh" size={18} color={ui.colors.primary} />
+          )}
+          <Text style={styles.addButtonText}>{templateRefreshing ? '生成中...' : '立即生成模板'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.cardDetail}>
+          最近快照：{templateSummary?.snapshotDate || '暂无'} ｜ 模板数：{templateSummary?.templateCount ?? 0} ｜ 热榜：{templateSummary?.hotCount ?? 0}
+        </Text>
+        {templateSummary?.status === 'error' ? (
+          <Text style={[styles.cardDetail, { color: ui.colors.danger, marginTop: 6 }]}>
+            最近错误：{templateSummary.errorMessage || '未知错误'}
+          </Text>
+        ) : null}
+      </View>
+      {templateSummary?.availableSnapshots?.length ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>历史快照</Text>
+          {templateSummary.availableSnapshots.slice(0, 10).map((item) => (
+            <View key={item.snapshotDate} style={styles.snapshotRow}>
+              <Text style={styles.snapshotDate}>{item.snapshotDate}</Text>
+              <Text style={styles.snapshotMeta}>
+                {item.templateCount} 模板 · {item.status === 'ready' ? '可用' : '失败'}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ height: 40 }} />
     </ScrollView>
   );
 
@@ -401,7 +480,11 @@ export function AdminScreen() {
           <ActivityIndicator size="large" color={ui.colors.primary} />
         </View>
       ) : (
-        activeTab === 'models' ? renderModelList() : renderCreditList()
+        activeTab === 'models'
+          ? renderModelList()
+          : activeTab === 'credit'
+            ? renderCreditList()
+            : renderTemplatePanel()
       )}
 
       {renderModelModal()}
@@ -551,6 +634,23 @@ const styles = StyleSheet.create({
      fontWeight: 'bold',
      color: ui.colors.primaryStrong,
      marginLeft: 4,
+  },
+  snapshotRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: ui.colors.border,
+  },
+  snapshotDate: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  snapshotMeta: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
   },
   // Modal styles
   modalOverlay: {
