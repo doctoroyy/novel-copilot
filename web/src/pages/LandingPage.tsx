@@ -9,11 +9,12 @@ import {
   Clapperboard, 
   ArrowRight,
   ChevronRight,
-  Download,
   Zap,
   Brain,
   FileText,
-  Bot
+  Bot,
+  Apple,
+  Smartphone
 } from 'lucide-react';
 
 const ANDROID_DIRECT_DOWNLOAD_URL =
@@ -89,21 +90,55 @@ export function LandingPage() {
             </Button>
           </div>
 
-          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Button asChild variant="secondary" size="sm" className="h-10">
-              <a href={ANDROID_ACCELERATED_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
-                <Download className="h-4 w-4 mr-2" />
-                Android 下载（国内加速）
-              </a>
-            </Button>
-            <a
-              href={ANDROID_DIRECT_DOWNLOAD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
-            >
-              GitHub 直链
-            </a>
+          <div className="mt-12 flex flex-col items-center gap-6 animate-slide-up">
+            <div className="flex flex-col sm:flex-row items-center gap-4 p-2 rounded-2xl bg-muted/50 border border-border/50 backdrop-blur-sm">
+              {/* Android Download Button */}
+              <div className="flex flex-col items-center sm:items-start gap-1 p-1">
+                <Button asChild className="gradient-bg h-14 px-6 rounded-xl group hover-glow">
+                  <a href={ANDROID_ACCELERATED_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+                    <Smartphone className="h-6 w-6 mr-3 group-hover:scale-110 transition-transform" />
+                    <div className="text-left">
+                      <div className="text-[10px] opacity-80 leading-none mb-0.5">下载推荐</div>
+                      <div className="text-base font-bold leading-none">Android 下载</div>
+                    </div>
+                  </a>
+                </Button>
+                <div className="flex items-center gap-3 px-2 mt-1">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">加速通道已开启</span>
+                  <a
+                    href={ANDROID_DIRECT_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline font-medium"
+                  >
+                    GitHub 直链
+                  </a>
+                </div>
+              </div>
+
+              <div className="hidden sm:block w-px h-12 bg-border/50" />
+
+              {/* iOS Coming Soon Button */}
+              <div className="p-1">
+                <div className="relative group cursor-not-allowed">
+                  <Button disabled variant="outline" className="h-14 px-6 rounded-xl border-dashed opacity-60">
+                    <Apple className="h-6 w-6 mr-3" />
+                    <div className="text-left">
+                      <div className="text-[10px] opacity-80 leading-none mb-0.5">即将推出</div>
+                      <div className="text-base font-bold leading-none text-muted-foreground">iOS 版本</div>
+                    </div>
+                  </Button>
+                  <div className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-amber-500 text-[10px] font-bold text-white shadow-lg shadow-amber-500/20 transform rotate-12">
+                    敬请期待
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5 opacity-70">
+              <Sparkles className="h-3 w-3 text-primary" />
+              全平台编辑器，随时随地开启创作灵感
+            </p>
           </div>
 
           <div className="mt-12 max-w-5xl mx-auto">
