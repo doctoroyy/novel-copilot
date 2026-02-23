@@ -18,7 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { createProject, fetchBibleTemplates, fetchProjects, generateBible } from '../../lib/api';
+import { createProject, fetchBibleTemplates, fetchProjects, generateBible, refreshBibleTemplates } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import { gradients, ui } from '../../theme/tokens';
@@ -54,6 +54,8 @@ export function ProjectsHomeScreen() {
   const [templateDates, setTemplateDates] = useState<string[]>([]);
   const [templateOptions, setTemplateOptions] = useState<BibleImagineTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateRefreshing, setTemplateRefreshing] = useState(false);
+  const [templateHint, setTemplateHint] = useState<string | null>(null);
 
   const loadProjects = useCallback(async (isRefresh = false) => {
     if (!token) return;
@@ -195,8 +197,32 @@ export function ProjectsHomeScreen() {
     }
   }, [config.apiBaseUrl, token, templateSnapshotDate, selectedTemplateId]);
 
+  const handleRefreshTemplates = useCallback(async () => {
+    if (!token) return;
+    setTemplateRefreshing(true);
+    setTemplateHint('正在生成热点模板，请稍候...');
+    try {
+      const result = await refreshBibleTemplates(config.apiBaseUrl, token, undefined, true);
+      if (result.status === 'error') {
+        throw new Error(result.errorMessage || '模板生成失败');
+      }
+      setTemplateHint(
+        result.skipped
+          ? `模板已是最新（${result.snapshotDate}）`
+          : `模板已更新：${result.templateCount} 个（${result.snapshotDate}）`
+      );
+      await loadTemplateData(templateSnapshotDate === 'latest' ? undefined : templateSnapshotDate);
+    } catch (err) {
+      setTemplateHint(null);
+      setError((err as Error).message);
+    } finally {
+      setTemplateRefreshing(false);
+    }
+  }, [config.apiBaseUrl, token, loadTemplateData, templateSnapshotDate]);
+
   useEffect(() => {
     if (!showAiModal) return;
+    setTemplateHint(null);
     void loadTemplateData();
   }, [showAiModal, loadTemplateData]);
 
@@ -482,6 +508,37 @@ export function ProjectsHomeScreen() {
                   </Pressable>
                 ))}
               </ScrollView>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.refreshTemplateBtn,
+                  pressed && styles.pressed,
+                  templateRefreshing && styles.refreshTemplateBtnDisabled,
+                ]}
+                onPress={() => void handleRefreshTemplates()}
+                disabled={templateRefreshing}
+              >
+                {templateRefreshing ? (
+                  <ActivityIndicator color={ui.colors.primary} />
+                ) : (
+                  <Ionicons name="refresh" size={14} color={ui.colors.primaryStrong} />
+                )}
+                <Text style={styles.refreshTemplateBtnText}>
+                  {templateRefreshing ? '生成中...' : '拉取/刷新模板'}
+                </Text>
+              </Pressable>
+
+              {templateHint ? (
+                <View style={styles.templateHintBox}>
+                  <Text style={styles.templateHintText}>{templateHint}</Text>
+                </View>
+              ) : null}
+
+              {!templateLoading && templateOptions.length === 0 ? (
+                <View style={styles.templateEmptyBox}>
+                  <Text style={styles.templateEmptyText}>当前暂无可用模板，点击上方按钮可立即生成。</Text>
+                </View>
+              ) : null}
 
               <Text style={styles.inputLabel}>热点模板</Text>
               {templateLoading ? (
@@ -1005,6 +1062,51 @@ const styles = StyleSheet.create({
   },
   templateDateTextActive: {
     color: ui.colors.primaryStrong,
+  },
+  refreshTemplateBtn: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.primaryBorder,
+    backgroundColor: ui.colors.surfaceWarm,
+    minHeight: 38,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  refreshTemplateBtnDisabled: {
+    opacity: 0.7,
+  },
+  refreshTemplateBtnText: {
+    color: ui.colors.primaryStrong,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  templateHintBox: {
+    borderRadius: ui.radius.sm,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.surfaceSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  templateHintText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+  },
+  templateEmptyBox: {
+    borderRadius: ui.radius.sm,
+    borderWidth: 1,
+    borderColor: '#f59e0b66',
+    backgroundColor: '#f59e0b15',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  templateEmptyText: {
+    color: '#b45309',
+    fontSize: 12,
+    lineHeight: 16,
   },
   templateLoadingBox: {
     borderRadius: ui.radius.md,

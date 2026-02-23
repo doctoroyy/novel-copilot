@@ -12,10 +12,13 @@ import {
   fetchModelRegistry,
   fetchRemoteModels,
   fetchProviderPresets,
+  fetchAdminBibleTemplateSummary,
+  refreshAdminBibleTemplates,
   createModel,
   updateModel,
   deleteModel,
   rechargeUserCredit,
+  type AdminBibleTemplateSummary,
   type ProviderPreset,
 } from '@/lib/api';
 import { 
@@ -107,8 +110,15 @@ export function AdminPage() {
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [showFetchPanel, setShowFetchPanel] = useState(false);
   const [batchRegistering, setBatchRegistering] = useState(false);
+  const [templateSummary, setTemplateSummary] = useState<AdminBibleTemplateSummary | null>(null);
+  const [refreshingTemplates, setRefreshingTemplates] = useState(false);
 
   const findPreset = (providerId: string) => providerPresets.find(p => p.id === providerId);
+
+  const fetchTemplateSummary = async () => {
+    const summary = await fetchAdminBibleTemplateSummary();
+    setTemplateSummary(summary);
+  };
 
   const openManualAddForm = (prefill?: Partial<{
     provider: string;
@@ -161,6 +171,11 @@ export function AdminPage() {
       setCodes(codesData.codes);
       setStats(statsData.stats);
       setRecentProjects(statsData.recentProjects || []);
+      try {
+        await fetchTemplateSummary();
+      } catch (e) {
+        console.warn('Template summary fetch failed:', e);
+      }
 
       // Fetch credit features and models
       try {
@@ -257,6 +272,22 @@ export function AdminPage() {
       fetchData();
     } catch (err) {
       setError((err as Error).message);
+    }
+  };
+
+  const handleManualTemplateRefresh = async () => {
+    setRefreshingTemplates(true);
+    try {
+      const result = await refreshAdminBibleTemplates(undefined, true);
+      if (result.status === 'error') {
+        throw new Error(result.errorMessage || '模板生成失败');
+      }
+      await fetchTemplateSummary();
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRefreshingTemplates(false);
     }
   };
   
@@ -467,6 +498,31 @@ export function AdminPage() {
                 <CardDescription>创建和管理邀请码</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">AI 热点模板生成</p>
+                      <p className="text-xs text-muted-foreground">
+                        当创建项目页没有模板时，可在这里手动触发当天模板生成。
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={handleManualTemplateRefresh}
+                      disabled={refreshingTemplates}
+                    >
+                      {refreshingTemplates ? '生成中...' : '立即生成'}
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    最近快照：{templateSummary?.snapshotDate || '暂无'}，模板数：{templateSummary?.templateCount ?? 0}，热榜条目：{templateSummary?.hotCount ?? 0}
+                  </div>
+                  {templateSummary?.status === 'error' && (
+                    <div className="text-xs text-destructive">
+                      最近一次生成失败：{templateSummary.errorMessage || '未知错误'}
+                    </div>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <Input
                     placeholder="新邀请码..."

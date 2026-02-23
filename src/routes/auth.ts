@@ -8,13 +8,16 @@ export const authRoutes = new Hono<{ Bindings: Env }>();
 authRoutes.post('/register', async (c) => {
   try {
     const { username, password, invitationCode } = await c.req.json();
+    const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+    const normalizedInvitationCode = typeof invitationCode === 'string' ? invitationCode.trim() : '';
+    const now = Date.now();
 
     // Validate input
-    if (!username || !password || !invitationCode) {
+    if (!normalizedUsername || !password || !normalizedInvitationCode) {
       return c.json({ success: false, error: '请填写完整信息' }, 400);
     }
 
-    if (username.length < 2 || username.length > 20) {
+    if (normalizedUsername.length < 2 || normalizedUsername.length > 20) {
       return c.json({ success: false, error: '用户名长度需要 2-20 个字符' }, 400);
     }
 
@@ -24,25 +27,35 @@ authRoutes.post('/register', async (c) => {
 
     // Check invitation code
     const code = await c.env.DB.prepare(`
-      SELECT code, used_by, expires_at FROM invitation_codes WHERE code = ?
-    `).bind(invitationCode).first();
+      SELECT code, max_uses, used_count, is_active, expires_at
+      FROM invitation_codes
+      WHERE code = ?
+      LIMIT 1
+    `).bind(normalizedInvitationCode).first();
 
     if (!code) {
       return c.json({ success: false, error: '邀请码无效' }, 400);
     }
 
-    if ((code as any).used_by) {
-      return c.json({ success: false, error: '邀请码已被使用' }, 400);
+    if (Number((code as any).is_active ?? 1) !== 1) {
+      return c.json({ success: false, error: '邀请码已失效' }, 400);
     }
 
-    if ((code as any).expires_at && new Date((code as any).expires_at) < new Date()) {
+    const expiresAt = Number((code as any).expires_at || 0);
+    if (expiresAt > 0 && expiresAt <= now) {
       return c.json({ success: false, error: '邀请码已过期' }, 400);
+    }
+
+    const maxUses = Number((code as any).max_uses ?? 1);
+    const usedCount = Number((code as any).used_count ?? 0);
+    if (Number.isFinite(maxUses) && maxUses > 0 && Number.isFinite(usedCount) && usedCount >= maxUses) {
+      return c.json({ success: false, error: '邀请码已用完' }, 400);
     }
 
     // Check if username exists
     const existingUser = await c.env.DB.prepare(`
       SELECT id FROM users WHERE username = ?
-    `).bind(username).first();
+    `).bind(normalizedUsername).first();
 
     if (existingUser) {
       return c.json({ success: false, error: '用户名已存在' }, 400);
@@ -54,19 +67,39 @@ authRoutes.post('/register', async (c) => {
 
     await c.env.DB.prepare(`
       INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)
-    `).bind(userId, username, passwordHash).run();
+    `).bind(userId, normalizedUsername, passwordHash).run();
 
-    // Mark invitation code as used
-    await c.env.DB.prepare(`
-      UPDATE invitation_codes SET used_by = ?, used_at = (unixepoch() * 1000) WHERE code = ?
-    `).bind(userId, invitationCode).run();
+    // Consume invitation code usage with conditions (prevents race condition over max_uses)
+    const consumeResult = await c.env.DB.prepare(`
+      UPDATE invitation_codes
+      SET
+        used_count = COALESCE(used_count, 0) + 1,
+        used_at = ?,
+        used_by = CASE
+          WHEN used_by IS NULL OR used_by = '' THEN ?
+          ELSE used_by
+        END
+      WHERE code = ?
+        AND COALESCE(is_active, 1) = 1
+        AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?)
+        AND (
+          COALESCE(max_uses, 1) <= 0
+          OR COALESCE(used_count, 0) < COALESCE(max_uses, 1)
+        )
+    `).bind(now, userId, normalizedInvitationCode, now).run();
+
+    if (Number(consumeResult.meta?.changes || 0) < 1) {
+      // Roll back user creation if invitation becomes unavailable during concurrent register.
+      await c.env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId).run();
+      return c.json({ success: false, error: '邀请码已用完或失效，请更换邀请码' }, 400);
+    }
 
     // Generate token
-    const token = await signToken({ userId, username });
+    const token = await signToken({ userId, username: normalizedUsername });
 
     return c.json({
       success: true,
-      user: { id: userId, username },
+      user: { id: userId, username: normalizedUsername },
       token,
     });
   } catch (error) {
@@ -321,4 +354,3 @@ authRoutes.get('/google/callback', async (c) => {
     return c.redirect(`${state || ''}/login?error=oauth_failed`);
   }
 });
-
