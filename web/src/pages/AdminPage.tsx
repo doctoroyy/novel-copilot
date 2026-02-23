@@ -1274,7 +1274,7 @@ export function AdminPage() {
                         <div>
                           <p className="font-medium text-sm">
                             {m.display_name}
-                            {m.is_default && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
+                            {!!m.is_default && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
                             {!m.is_active && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-500">已禁用</span>}
                           </p>
                           <p className="text-xs text-muted-foreground">
