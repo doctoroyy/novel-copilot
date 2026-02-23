@@ -1,5 +1,5 @@
 import { launch } from '@cloudflare/playwright';
-import { generateText, getAIConfigFromRegistry, type AIConfig } from './aiClient.js';
+import { generateTextWithRetry, getAIConfigFromRegistry, type AIConfig } from './aiClient.js';
 
 export const FANQIE_DEFAULT_RANK_URLS = [
   'https://fanqienovel.com/rank',
@@ -633,15 +633,20 @@ export async function extractImagineTemplatesFromHotList(params: {
     .join('\n');
 
   const system = `你是顶级网文策划编辑，擅长把热点榜单抽象成可复用的创作模板。\n请严格输出 JSON，不要输出 Markdown，不要输出解释。`;
-
   const prompt = `请基于以下番茄小说热榜内容，生成 ${maxTemplates} 个“AI 自动想象模板”。\n\n要求：\n1) 模板必须覆盖多类型，不要都一样。\n2) 每个模板都要可直接用于生成 Story Bible。\n3) 强调“开篇钩子、冲突升级、爽点兑现、成长路线”。\n4) 不要照抄榜单情节，要抽象成可复用套路。\n\n榜单数据：\n${hotListText}\n\n返回 JSON 结构：\n{\n  "templates": [\n    {\n      "name": "模板名",\n      "genre": "类型",\n      "coreTheme": "核心主题",\n      "oneLineSellingPoint": "一句话卖点",\n      "keywords": ["关键词1", "关键词2"],\n      "protagonistSetup": "主角设定",\n      "hookDesign": "开篇钩子",\n      "conflictDesign": "冲突设计",\n      "growthRoute": "成长路线",\n      "fanqieSignals": ["平台信号1", "平台信号2"],\n      "recommendedOpening": "开篇建议",\n      "sourceBooks": ["来自哪些热门书名"]\n    }\n  ]\n}`;
 
-  const raw = await generateText(aiConfig, {
-    system,
-    prompt,
-    temperature: 0.65,
-    maxTokens: 3200,
-  });
+  let raw = '';
+  try {
+    raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.65,
+      maxTokens: 3200,
+    }, 4);
+  } catch (error) {
+    console.warn('[ImagineTemplates] model generation failed, using fallback templates:', (error as Error).message);
+    return fallbackTemplatesFromHotList(shortlist, snapshotDate).slice(0, maxTemplates);
+  }
 
   const jsonCandidate = extractFirstJsonObject(raw) || raw;
   let parsed: any;
