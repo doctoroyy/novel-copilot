@@ -2,6 +2,8 @@ import type {
   AnimeEpisode,
   AnimeProject,
   ApiSuccess,
+  BibleImagineTemplate,
+  BibleTemplateSnapshotResponse,
   CreditFeature,
   GenerationStreamEvent,
   GenerationTask,
@@ -156,9 +158,14 @@ export async function resetProject(
 export async function generateBible(
   apiBaseUrl: string,
   token: string,
-  genre: string,
-  theme: string,
-  keywords: string,
+  options?: {
+    genre?: string;
+    theme?: string;
+    keywords?: string;
+    templateId?: string;
+    templateSnapshotDate?: string;
+    template?: BibleImagineTemplate;
+  },
   aiConfig?: AppConfig['ai'],
 ): Promise<string> {
   const res = await fetch(buildApiUrl(apiBaseUrl, '/generate-bible'), {
@@ -167,12 +174,52 @@ export async function generateBible(
       'Content-Type': 'application/json',
       ...authHeaders(token, aiConfig),
     },
-    body: JSON.stringify({ genre, theme, keywords }),
+    body: JSON.stringify({
+      genre: options?.genre,
+      theme: options?.theme,
+      keywords: options?.keywords,
+      templateId: options?.templateId,
+      templateSnapshotDate: options?.templateSnapshotDate,
+      template: options?.template,
+    }),
   });
 
   const json = await parseJsonResponse<{ bible: string }>(res);
   if (!json.success || !json.bible) throw new Error(json.error || 'Failed to generate bible');
   return json.bible;
+}
+
+export async function fetchBibleTemplates(
+  apiBaseUrl: string,
+  token: string,
+  snapshotDate?: string,
+): Promise<BibleTemplateSnapshotResponse> {
+  const suffix = snapshotDate ? `?snapshotDate=${encodeURIComponent(snapshotDate)}` : '';
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/bible-templates${suffix}`), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{
+    snapshotDate: string | null;
+    templates: BibleImagineTemplate[];
+    ranking: BibleTemplateSnapshotResponse['ranking'];
+    status: BibleTemplateSnapshotResponse['status'];
+    errorMessage: string | null;
+    availableSnapshots: BibleTemplateSnapshotResponse['availableSnapshots'];
+  }>(res);
+
+  if (!json.success) {
+    throw new Error(json.error || 'Failed to fetch bible templates');
+  }
+
+  return {
+    snapshotDate: json.snapshotDate ?? null,
+    templates: Array.isArray(json.templates) ? json.templates : [],
+    ranking: Array.isArray(json.ranking) ? json.ranking : [],
+    status: json.status ?? null,
+    errorMessage: json.errorMessage ?? null,
+    availableSnapshots: Array.isArray(json.availableSnapshots) ? json.availableSnapshots : [],
+  };
 }
 
 async function parseSSE(

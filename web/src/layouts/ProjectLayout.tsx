@@ -9,6 +9,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Sparkles } from 'lucide-react';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +25,11 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { useEffect, useState } from 'react';
-import { generateBible as apiBible } from '@/lib/api';
+import {
+  fetchBibleTemplates,
+  generateBible as apiBible,
+  type BibleImagineTemplate,
+} from '@/lib/api';
 
 function ProjectLayoutInner() {
   const {
@@ -60,12 +71,66 @@ function ProjectLayoutInner() {
   const [aiTheme, setAiTheme] = useState('');
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSnapshotDate, setTemplateSnapshotDate] = useState('latest');
+  const [templateDates, setTemplateDates] = useState<string[]>([]);
+  const [templateOptions, setTemplateOptions] = useState<BibleImagineTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+
+  const loadTemplates = async (snapshotDate?: string) => {
+    setTemplateLoading(true);
+    try {
+      const data = await fetchBibleTemplates(snapshotDate);
+      setTemplateOptions(data.templates || []);
+      const snapshots = (data.availableSnapshots || [])
+        .filter((entry) => entry.status === 'ready')
+        .map((entry) => entry.snapshotDate);
+      setTemplateDates(snapshots);
+
+      if (snapshotDate) {
+        setTemplateSnapshotDate(snapshotDate);
+      } else if (templateSnapshotDate !== 'latest' && data.snapshotDate) {
+        setTemplateSnapshotDate(data.snapshotDate);
+      }
+
+      if (data.templates.length === 0) {
+        setSelectedTemplateId('');
+      } else if (!data.templates.some((item) => item.id === selectedTemplateId)) {
+        setSelectedTemplateId('');
+      }
+    } catch (err) {
+      setError(`加载模板失败：${(err as Error).message}`);
+    } finally {
+      setTemplateLoading(false);
+    }
+  };
+
+  const applyTemplate = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+    const selected = templateOptions.find((item) => item.id === templateId);
+    if (!selected) return;
+
+    if (!aiGenre.trim()) setAiGenre(selected.genre);
+    if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
+    if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
+  };
 
   // AI Bible generation for new project
   const handleGenerateBibleForNew = async () => {
     setGeneratingBible(true);
     try {
-      const result = await apiBible(aiGenre, aiTheme, aiKeywords);
+      const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId);
+      const result = await apiBible({
+        genre: aiGenre,
+        theme: aiTheme,
+        keywords: aiKeywords,
+        templateId: selectedTemplateId || undefined,
+        templateSnapshotDate:
+          templateSnapshotDate && templateSnapshotDate !== 'latest'
+            ? templateSnapshotDate
+            : undefined,
+        template: selectedTemplate,
+      });
       if (result) {
         setNewProjectBible(result);
       }
@@ -109,6 +174,8 @@ function ProjectLayoutInner() {
       setAiGenre('');
       setAiTheme('');
       setAiKeywords('');
+      setSelectedTemplateId('');
+      setTemplateSnapshotDate('latest');
     } catch {
       // Error is already surfaced by ProjectContext.
     }
@@ -121,8 +188,13 @@ function ProjectLayoutInner() {
     return () => clearTimeout(timer);
   }, [error, setError]);
 
+  useEffect(() => {
+    if (!showNewProjectDialog) return;
+    void loadTemplates();
+  }, [showNewProjectDialog]);
+
   return (
-    <div className="h-screen flex overflow-hidden bg-background text-foreground">
+    <div className="h-dvh flex overflow-hidden bg-background text-foreground">
       {/* Mobile Sidebar Overlay */}
       {isMobile && sidebarOpen && (
         <div 
@@ -265,6 +337,55 @@ function ProjectLayoutInner() {
 
             <div className="space-y-2">
               <Label>AI 辅助生成设定 (可选)</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Select
+                  value={templateSnapshotDate}
+                  onValueChange={(value) => {
+                    setTemplateSnapshotDate(value);
+                    setSelectedTemplateId('');
+                    void loadTemplates(value === 'latest' ? undefined : value);
+                  }}
+                  disabled={templateLoading}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="模板日期" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="latest">最新模板</SelectItem>
+                    {templateDates.map((date) => (
+                      <SelectItem key={date} value={date}>
+                        {date}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={selectedTemplateId || 'none'}
+                  onValueChange={(value) => applyTemplate(value === 'none' ? '' : value)}
+                  disabled={templateLoading || templateOptions.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={templateLoading ? '模板加载中...' : '选择热点模板'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">不使用模板</SelectItem>
+                    {templateOptions.map((template) => (
+                      <SelectItem key={template.id} value={template.id}>
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedTemplateId && (
+                <div className="rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+                  {(() => {
+                    const selected = templateOptions.find((item) => item.id === selectedTemplateId);
+                    if (!selected) return '模板未命中，请重新选择。';
+                    return `已选模板：${selected.name} ｜ 类型：${selected.genre} ｜ 卖点：${selected.oneLineSellingPoint}`;
+                  })()}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   value={aiGenre}

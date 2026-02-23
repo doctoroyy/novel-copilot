@@ -17,6 +17,7 @@ export interface Env {
   DB: D1Database;
   ANIME_VIDEOS: R2Bucket;
   GENERATION_QUEUE: Queue<any>;
+  FANQIE_BROWSER?: Fetcher;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -45,6 +46,7 @@ app.use('/api/admin/*', authMiddleware());
 app.use('/api/credit/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 app.use('/api/tasks/*', authMiddleware());
+app.use('/api/bible-templates/refresh', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
@@ -155,21 +157,55 @@ app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
 
 export default {
   fetch: app.fetch,
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    const runDate = new Date(controller.scheduledTime).toISOString();
+    console.log(`[CRON] imagine template refresh started at ${runDate}`);
+
+    const { refreshImagineTemplatesForDate } = await import('./services/imagineTemplateService.js');
+    const result = await refreshImagineTemplatesForDate(env, { force: false });
+
+    if (result.status === 'error') {
+      console.error('[CRON] imagine template refresh failed:', result.errorMessage);
+      return;
+    }
+
+    console.log(
+      `[CRON] imagine template refresh completed: date=${result.snapshotDate}, templates=${result.templateCount}, hot=${result.hotCount}, skipped=${result.skipped}`
+    );
+  },
   async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext) {
-    const { runChapterGenerationTaskInBackground } = await import('./routes/generation.js');
+    const {
+      runChapterGenerationTaskInBackground,
+      runOutlineGenerationTaskInBackground,
+    } = await import('./routes/generation.js');
 
     for (const message of batch.messages) {
       try {
         const payload = message.body;
-        console.log(`Processing queue message: Task ID ${payload.taskId}`);
+        const taskType = payload.taskType || 'chapters';
+        console.log(`Processing queue message: Task ID ${payload.taskId}, type=${taskType}`);
 
-        await runChapterGenerationTaskInBackground({
-          env,
-          aiConfig: payload.aiConfig,
-          userId: payload.userId,
-          taskId: payload.taskId,
-          chaptersToGenerate: payload.chaptersToGenerate
-        });
+        if (taskType === 'outline') {
+          await runOutlineGenerationTaskInBackground({
+            env,
+            aiConfig: payload.aiConfig,
+            userId: payload.userId,
+            taskId: payload.taskId,
+            projectId: payload.projectId,
+            targetChapters: payload.targetChapters,
+            targetWordCount: payload.targetWordCount,
+            customPrompt: payload.customPrompt,
+            minChapterWords: payload.minChapterWords,
+          });
+        } else {
+          await runChapterGenerationTaskInBackground({
+            env,
+            aiConfig: payload.aiConfig,
+            userId: payload.userId,
+            taskId: payload.taskId,
+            chaptersToGenerate: payload.chaptersToGenerate
+          });
+        }
 
         message.ack(); // Acknowledge successful processing
       } catch (error) {

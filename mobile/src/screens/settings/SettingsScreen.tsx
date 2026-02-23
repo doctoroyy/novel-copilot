@@ -68,12 +68,13 @@ export function SettingsScreen() {
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={insets.top + 8}
+          keyboardVerticalOffset={0}
         >
           <ScrollView
             contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 112 }]}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             <View style={styles.headerWrap}>
               <Text style={styles.pageTitle}>设置</Text>

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
@@ -27,6 +27,7 @@ import {
   MessageSquare,
   AlertTriangle,
 } from 'lucide-react';
+import { useVisualViewportHeight } from '@/hooks/useVisualViewportHeight';
 
 interface ChapterEditorProps {
   projectName: string;
@@ -78,6 +79,7 @@ export function ChapterEditor({
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false);
   const [wordCount, setWordCount] = useState(0);
   const [contentVersion, setContentVersion] = useState(0);
+  const viewportHeight = useVisualViewportHeight();
 
   // Debounce ref for ghost text
   const lastTypeTime = useRef<number>(Date.now());
@@ -106,7 +108,7 @@ export function ChapterEditor({
     content: toEditorHtml(initialContent),
     editorProps: {
       attributes: {
-        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[calc(100vh-200px)] p-4 pb-32',
+        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none p-4 pb-32',
       },
     },
     onUpdate: ({ editor }) => {
@@ -326,8 +328,14 @@ export function ChapterEditor({
     return null;
   }
 
+  const safeViewportHeight = viewportHeight > 0 ? viewportHeight : null;
+  const shellStyle = {
+    height: safeViewportHeight ? `${safeViewportHeight}px` : '100dvh',
+    ['--editor-shell-height' as any]: safeViewportHeight ? `${safeViewportHeight}px` : '100dvh',
+  } as CSSProperties;
+
   return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col">
+    <div className="fixed inset-x-0 top-0 z-50 bg-background flex flex-col" style={shellStyle}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-card shadow-sm shrink-0">
         <div className="flex items-center gap-3">
@@ -544,6 +552,7 @@ export function ChapterEditor({
         .ProseMirror {
           line-height: 1.8;
           font-size: 1rem;
+          min-height: calc(var(--editor-shell-height, 100dvh) - 220px);
         }
         
         .ProseMirror p {

@@ -7,7 +7,7 @@ import {
   fetchProjects,
   fetchProject,
   createProject,
-  generateOutline,
+  startOutlineGeneration,
   generateChaptersWithProgress,
   fetchChapter,
   deleteProject,
@@ -18,6 +18,7 @@ import {
   cancelAllActiveTasks,
   cancelTaskById,
   getActiveTask,
+  getTaskById,
   type ProjectSummary,
   type ProjectDetail,
   type GenerationTask,
@@ -133,7 +134,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const { config, isConfigured } = useAIConfig();
 
   // Generation state
-  const { generationState, setGenerationState, startGeneration, completeGeneration } = useGeneration();
+  const {
+    generationState,
+    setGenerationState,
+    startGeneration,
+    completeGeneration,
+    startTask,
+    updateTask,
+    completeTask,
+  } = useGeneration();
   const [generatingOutline, setGeneratingOutline] = useState(false);
   const [cancelingGeneration, setCancelingGeneration] = useState(false);
   const streamMonitorAbortRef = useRef<AbortController | null>(null);
@@ -618,22 +627,116 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const outlineStartAt = Date.now();
+    const localTaskId = startTask('outline', `${selectedProject.name}: 大纲生成`, selectedProject.name, 100);
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const isNetworkError = (err: unknown): boolean => {
+      if (err instanceof Error) {
+        const msg = err.message.toLowerCase();
+        return msg.includes('network')
+          || msg.includes('fetch')
+          || msg.includes('connection')
+          || msg.includes('net::err')
+          || msg.includes('failed to fetch');
+      }
+      return false;
+    };
+
     setGeneratingOutline(true);
     try {
-      await generateOutline(
+      const { taskId } = await startOutlineGeneration(
         selectedProject.id,
         targetChapters,
         targetWordCount,
         parsedMinChapterWords,
         customPrompt
       );
-      await loadProject(selectedProject.id);
+
+      updateTask(localTaskId, {
+        taskId,
+        status: 'preparing',
+        current: 5,
+        total: 100,
+        message: '任务已加入后台队列，等待执行...',
+      });
+
+      let networkRetryCount = 0;
+      const maxNetworkRetries = 80;
+      while (true) {
+        try {
+          const task = await getTaskById(taskId);
+          if (!task) {
+            throw new Error('后台任务不存在，可能已被清理');
+          }
+
+          const total = task.targetCount > 0 ? task.targetCount : 100;
+          const current = Math.max(0, Math.min(total, task.currentProgress || 0));
+          const status = task.status === 'running'
+            ? 'generating'
+            : task.status === 'paused'
+              ? 'preparing'
+              : task.status === 'completed'
+                ? 'done'
+                : 'error';
+
+          updateTask(localTaskId, {
+            taskId: task.id,
+            status,
+            current,
+            total,
+            message: task.currentMessage || undefined,
+            title: `${selectedProject.name}: ${task.currentMessage || '大纲生成中...'}`,
+          });
+
+          if (task.status === 'completed') {
+            completeTask(localTaskId, true);
+            addTaskToHistory({
+              type: 'outline',
+              title: `${selectedProject.name}: 大纲生成完成`,
+              status: 'success',
+              startTime: outlineStartAt,
+              endTime: Date.now(),
+              details: '后台任务执行完成',
+            });
+            await loadProject(selectedProject.id);
+            break;
+          }
+
+          if (task.status === 'failed') {
+            throw new Error(task.errorMessage || task.currentMessage || '大纲生成失败');
+          }
+
+          networkRetryCount = 0;
+          await sleep(1500);
+        } catch (pollError) {
+          if (isNetworkError(pollError) && networkRetryCount < maxNetworkRetries) {
+            networkRetryCount += 1;
+            updateTask(localTaskId, {
+              status: 'preparing',
+              message: `网络波动，后台继续执行，重连中（${networkRetryCount}/${maxNetworkRetries}）...`,
+            });
+            await sleep(Math.min(5000, 500 + networkRetryCount * 120));
+            continue;
+          }
+          throw pollError;
+        }
+      }
     } catch (err) {
-      setError((err as Error).message);
+      const message = (err as Error).message;
+      completeTask(localTaskId, false, message);
+      setError(message);
+      addTaskToHistory({
+        type: 'outline',
+        title: `${selectedProject.name}: 大纲生成失败`,
+        status: 'error',
+        startTime: outlineStartAt,
+        endTime: Date.now(),
+        details: message,
+      });
     } finally {
       setGeneratingOutline(false);
     }
-  }, [selectedProject, isConfigured, loadProject]);
+  }, [selectedProject, isConfigured, loadProject, startTask, updateTask, completeTask]);
 
   const handleGenerateChapters = useCallback(async (
     count: string,
@@ -938,8 +1041,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
     setLoading(true);
     try {
-      // generateBible API: (genre?, theme?, keywords?, aiHeaders?)
-      await generateBible(undefined, undefined, undefined);
+      await generateBible();
       await loadProject(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);

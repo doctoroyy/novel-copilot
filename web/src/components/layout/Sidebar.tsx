@@ -14,7 +14,7 @@ interface SidebarProps {
 
 export function Sidebar({ projects, selectedProjectId, onSelectProject, onNewProject, onToggle }: SidebarProps) {
   return (
-    <aside className="w-72 h-screen flex flex-col border-r border-border bg-sidebar">
+    <aside className="w-72 h-dvh flex flex-col border-r border-border bg-sidebar">
       {/* Logo */}
       <div className="p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">

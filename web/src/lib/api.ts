@@ -66,6 +66,48 @@ export type ProjectDetail = {
   chapters: string[];
 };
 
+export type BibleImagineTemplate = {
+  id: string;
+  name: string;
+  genre: string;
+  coreTheme: string;
+  oneLineSellingPoint: string;
+  keywords: string[];
+  protagonistSetup: string;
+  hookDesign: string;
+  conflictDesign: string;
+  growthRoute: string;
+  fanqieSignals: string[];
+  recommendedOpening: string;
+  sourceBooks: string[];
+};
+
+export type BibleTemplateSnapshotSummary = {
+  snapshotDate: string;
+  templateCount: number;
+  status: 'ready' | 'error';
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BibleTemplateSnapshotResponse = {
+  snapshotDate: string | null;
+  templates: BibleImagineTemplate[];
+  ranking: Array<{
+    rank: number;
+    title: string;
+    author?: string;
+    summary?: string;
+    status?: string;
+    category?: string;
+    url?: string;
+    sourceUrl?: string;
+  }>;
+  status: 'ready' | 'error' | null;
+  errorMessage: string | null;
+  availableSnapshots: BibleTemplateSnapshotSummary[];
+};
+
 // Helper to merge headers with auth
 function mergeHeaders(base: Record<string, string>, extra?: Record<string, string>): Record<string, string> {
   return { ...getAuthHeaders(), ...base, ...extra };
@@ -142,90 +184,79 @@ export async function generateOutline(
   aiHeaders?: Record<string, string>,
   onProgress?: (message: string) => void
 ): Promise<NovelOutline> {
+  const { taskId } = await startOutlineGeneration(
+    name,
+    targetChapters,
+    targetWordCount,
+    minChapterWords,
+    customPrompt,
+    aiHeaders
+  );
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  let networkRetry = 0;
+  const MAX_NETWORK_RETRY = 30;
+
+  while (true) {
+    try {
+      const task = await getTaskById(taskId);
+      if (!task) {
+        throw new Error('大纲任务不存在或已失效');
+      }
+
+      if (task.currentMessage && onProgress) {
+        onProgress(task.currentMessage);
+      }
+
+      if (task.status === 'completed') {
+        const latestProject = await fetchProject(name);
+        if (!latestProject.outline) {
+          throw new Error('任务已完成，但未读取到大纲数据');
+        }
+        return latestProject.outline;
+      }
+
+      if (task.status === 'failed') {
+        throw new Error(task.errorMessage || task.currentMessage || '大纲生成失败');
+      }
+
+      networkRetry = 0;
+      await sleep(1500);
+    } catch (error) {
+      if (isLikelyNetworkError(error) && networkRetry < MAX_NETWORK_RETRY) {
+        networkRetry += 1;
+        onProgress?.(`网络波动，后台仍在执行，重连中（${networkRetry}/${MAX_NETWORK_RETRY}）...`);
+        await sleep(Math.min(5000, 800 * networkRetry));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+export async function startOutlineGeneration(
+  name: string,
+  targetChapters: number,
+  targetWordCount: number,
+  minChapterWords?: number,
+  customPrompt?: string,
+  aiHeaders?: Record<string, string>,
+): Promise<{ taskId: number; message: string }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({ targetChapters, targetWordCount, customPrompt, minChapterWords }),
   });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  const data = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || `Request failed: ${res.status}`);
   }
 
-  if (!res.body) {
-    throw new Error('No response body');
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let outline: NovelOutline | null = null;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr) {
-            try {
-              const event = JSON.parse(jsonStr);
-
-              // Skip heartbeat events
-              if (event.type === 'heartbeat') continue;
-
-              // Handle progress events
-              if (event.type === 'progress' && event.message && onProgress) {
-                onProgress(event.message);
-              }
-
-              // Handle volume complete
-              if (event.type === 'volume_complete' && onProgress) {
-                onProgress(`第 ${event.volumeIndex}/${event.totalVolumes} 卷「${event.volumeTitle}」完成 (${event.chapterCount} 章)`);
-              }
-
-              // Handle master outline
-              if (event.type === 'master_outline' && onProgress) {
-                onProgress(`总体大纲生成完成: ${event.totalVolumes} 卷`);
-              }
-
-              // Handle done event
-              if (event.type === 'done') {
-                if (!event.success) {
-                  throw new Error(event.error || 'Generation failed');
-                }
-                reader.releaseLock();
-                return event.outline as NovelOutline;
-              }
-
-              // Handle error event
-              if (event.type === 'error') {
-                throw new Error(event.error || 'Unknown error');
-              }
-            } catch (e) {
-              if (e instanceof SyntaxError) continue; // Skip malformed JSON
-              throw e;
-            }
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (!outline) {
-    throw new Error('No outline received');
-  }
-
-  return outline;
+  return {
+    taskId: data.taskId,
+    message: data.message || 'Task started',
+  };
 }
 
 export async function refineOutline(
@@ -585,6 +616,7 @@ export async function generateChaptersWithProgress(
 // Generation Task type
 export type GenerationTask = {
   id: number;
+  taskType: 'chapters' | 'outline' | 'bible' | 'other';
   projectId: string;
   projectName: string;
   userId: string;
@@ -601,6 +633,31 @@ export type GenerationTask = {
   updatedAt: number;
   updatedAtMs: number;  // Unix timestamp in ms for reliable health check
 };
+
+function isLikelyNetworkError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('network')
+      || msg.includes('fetch')
+      || msg.includes('connection')
+      || msg.includes('net::err')
+      || msg.includes('aborted')
+      || msg.includes('failed to fetch');
+  }
+  return false;
+}
+
+export async function getTaskById(taskId: number): Promise<GenerationTask | null> {
+  const res = await fetch(`${API_BASE}/tasks/${encodeURIComponent(String(taskId))}`, {
+    headers: defaultHeaders(),
+    cache: 'no-store',
+  });
+  const data = await res.json().catch(() => ({ success: false }));
+  if (!res.ok || !data.success) {
+    return null;
+  }
+  return data.task;
+}
 
 // Get active generation task for a project
 // Get active generation task for a project
@@ -708,16 +765,45 @@ export async function batchDeleteChapters(name: string, indices: number[]): Prom
   return { deletedIndices: data.deletedIndices, newNextChapterIndex: data.newNextChapterIndex };
 }
 
+export async function fetchBibleTemplates(snapshotDate?: string): Promise<BibleTemplateSnapshotResponse> {
+  const suffix = snapshotDate ? `?snapshotDate=${encodeURIComponent(snapshotDate)}` : '';
+  const res = await fetch(`${API_BASE}/bible-templates${suffix}`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || 'Failed to fetch bible templates');
+  return {
+    snapshotDate: data.snapshotDate ?? null,
+    templates: Array.isArray(data.templates) ? data.templates : [],
+    ranking: Array.isArray(data.ranking) ? data.ranking : [],
+    status: data.status ?? null,
+    errorMessage: data.errorMessage ?? null,
+    availableSnapshots: Array.isArray(data.availableSnapshots) ? data.availableSnapshots : [],
+  };
+}
+
 export async function generateBible(
-  genre?: string,
-  theme?: string,
-  keywords?: string,
+  options?: {
+    genre?: string;
+    theme?: string;
+    keywords?: string;
+    templateId?: string;
+    templateSnapshotDate?: string;
+    template?: BibleImagineTemplate;
+  },
   aiHeaders?: Record<string, string>
 ): Promise<string> {
   const res = await fetch(`${API_BASE}/generate-bible`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ genre, theme, keywords }),
+    body: JSON.stringify({
+      genre: options?.genre,
+      theme: options?.theme,
+      keywords: options?.keywords,
+      templateId: options?.templateId,
+      templateSnapshotDate: options?.templateSnapshotDate,
+      template: options?.template,
+    }),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);

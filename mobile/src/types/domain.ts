@@ -70,6 +70,47 @@ export type ProjectDetail = {
   chapters: string[];
 };
 
+export type BibleImagineTemplate = {
+  id: string;
+  name: string;
+  genre: string;
+  coreTheme: string;
+  oneLineSellingPoint: string;
+  keywords: string[];
+  protagonistSetup: string;
+  hookDesign: string;
+  conflictDesign: string;
+  growthRoute: string;
+  fanqieSignals: string[];
+  recommendedOpening: string;
+  sourceBooks: string[];
+};
+
+export type BibleTemplateSnapshotSummary = {
+  snapshotDate: string;
+  templateCount: number;
+  status: 'ready' | 'error';
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BibleTemplateSnapshotResponse = {
+  snapshotDate: string | null;
+  templates: BibleImagineTemplate[];
+  ranking: Array<{
+    rank: number;
+    title: string;
+    author?: string;
+    summary?: string;
+    status?: string;
+    category?: string;
+    url?: string;
+  }>;
+  status: 'ready' | 'error' | null;
+  errorMessage: string | null;
+  availableSnapshots: BibleTemplateSnapshotSummary[];
+};
+
 export type GenerationTask = {
   id: number;
   projectId: string;
