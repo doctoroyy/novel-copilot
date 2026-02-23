@@ -163,6 +163,22 @@ export async function createImagineTemplateRefreshJob(
     dedupeActive?: boolean;
   }
 ): Promise<{ job: ImagineTemplateRefreshJob; created: boolean }> {
+  const now = Date.now();
+  const staleRunningBefore = now - 20 * 60 * 1000;
+
+  await db.prepare(`
+    UPDATE ai_imagine_template_jobs
+    SET
+      status = 'failed',
+      message = '任务执行超时，已自动结束',
+      error_message = COALESCE(error_message, '任务执行超时，请重试'),
+      finished_at = COALESCE(finished_at, ?),
+      updated_at = ?
+    WHERE status = 'running'
+    AND started_at IS NOT NULL
+    AND started_at < ?
+  `).bind(now, now, staleRunningBefore).run();
+
   const snapshotDate = normalizeSnapshotDate(options?.snapshotDate);
   const force = options?.force === undefined ? true : Boolean(options.force);
   const requestedByUserId = options?.requestedByUserId ? cleanText(options.requestedByUserId) : null;
@@ -190,7 +206,6 @@ export async function createImagineTemplateRefreshJob(
     }
   }
 
-  const now = Date.now();
   const id = crypto.randomUUID();
 
   await db.prepare(`
