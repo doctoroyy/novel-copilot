@@ -44,6 +44,7 @@ import {
   Download,
   CheckSquare,
   Square,
+  Sparkles,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -376,6 +377,9 @@ export function AdminPage() {
             <TabsTrigger value="codes" className="gap-1.5">
               <Ticket className="h-4 w-4" /> 邀请码
             </TabsTrigger>
+            <TabsTrigger value="templates" className="gap-1.5">
+              <Sparkles className="h-4 w-4" /> 模板中心
+            </TabsTrigger>
             <TabsTrigger value="credit" className="gap-1.5">
               <Zap className="h-4 w-4" /> 能量定价
             </TabsTrigger>
@@ -495,37 +499,6 @@ export function AdminPage() {
                 <CardDescription>创建和管理邀请码</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium">AI 热点模板生成</p>
-                      <p className="text-xs text-muted-foreground">
-                        当创建项目页没有模板时，可在这里手动触发任务，进度在任务中心查看。
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={handleManualTemplateRefresh}
-                      disabled={refreshingTemplates}
-                    >
-                      {refreshingTemplates ? '提交中...' : '触发任务'}
-                    </Button>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    最近快照：{templateSummary?.snapshotDate || '暂无'}，模板数：{templateSummary?.templateCount ?? 0}，热榜条目：{templateSummary?.hotCount ?? 0}
-                  </div>
-                  {templateSummary?.latestJob && (
-                    <div className="text-xs text-muted-foreground">
-                      最近任务：{templateSummary.latestJob.snapshotDate} · {templateSummary.latestJob.status}
-                      {templateSummary.latestJob.message ? ` · ${templateSummary.latestJob.message}` : ''}
-                    </div>
-                  )}
-                  {templateSummary?.status === 'error' && (
-                    <div className="text-xs text-destructive">
-                      最近一次生成失败：{templateSummary.errorMessage || '未知错误'}
-                    </div>
-                  )}
-                </div>
                 <div className="flex gap-2">
                   <Input
                     placeholder="新邀请码..."
@@ -585,6 +558,108 @@ export function AdminPage() {
                   {codes.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-4">暂无邀请码</p>
                   )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="templates">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-orange-500" />
+                  模板管理中心
+                </CardTitle>
+                <CardDescription>统一管理热点模板任务、失败原因和历史快照</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">手动触发模板刷新任务</p>
+                      <p className="text-xs text-muted-foreground">
+                        触发后会进入任务中心执行，避免页面停留时任务中断。
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={handleManualTemplateRefresh}
+                      disabled={refreshingTemplates}
+                    >
+                      {refreshingTemplates ? '提交中...' : '触发任务'}
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    最近快照：{templateSummary?.snapshotDate || '暂无'}，模板数：{templateSummary?.templateCount ?? 0}，热榜条目：{templateSummary?.hotCount ?? 0}
+                  </div>
+                  {templateSummary?.latestJob && (
+                    <div className="text-xs text-muted-foreground">
+                      最近任务：{templateSummary.latestJob.snapshotDate} · {templateSummary.latestJob.status}
+                      {templateSummary.latestJob.message ? ` · ${templateSummary.latestJob.message}` : ''}
+                    </div>
+                  )}
+                  {templateSummary?.latestJob?.errorMessage && (
+                    <div className="text-xs text-destructive">
+                      最近失败原因：{templateSummary.latestJob.errorMessage}
+                    </div>
+                  )}
+                  {templateSummary?.status === 'error' && (
+                    <div className="text-xs text-destructive">
+                      当前快照异常：{templateSummary.errorMessage || '未知错误'}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-lg border bg-muted/10 p-3 space-y-2">
+                    <p className="text-sm font-medium">最近任务</p>
+                    {!templateSummary?.latestJobs?.length ? (
+                      <p className="text-xs text-muted-foreground">暂无任务记录</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {templateSummary.latestJobs.map((job) => (
+                          <div key={job.id} className="rounded-md border bg-background/60 p-2 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium">{job.snapshotDate}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
+                                {job.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{job.message || '无状态描述'}</p>
+                            {job.errorMessage && (
+                              <p className="text-xs text-destructive">{job.errorMessage}</p>
+                            )}
+                            <p className="text-[11px] text-muted-foreground">
+                              {new Date(job.createdAt).toLocaleString('zh-CN')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/10 p-3 space-y-2">
+                    <p className="text-sm font-medium">历史快照</p>
+                    {!templateSummary?.availableSnapshots?.length ? (
+                      <p className="text-xs text-muted-foreground">暂无快照</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
+                        {templateSummary.availableSnapshots.map((snapshot) => (
+                          <div key={snapshot.snapshotDate} className="rounded-md border bg-background/60 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium">{snapshot.snapshotDate}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
+                                {snapshot.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              模板数：{snapshot.templateCount} · 更新时间：{new Date(snapshot.updatedAt).toLocaleString('zh-CN')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
