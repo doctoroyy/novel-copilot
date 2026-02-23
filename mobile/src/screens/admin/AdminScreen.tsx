@@ -21,7 +21,7 @@ import { ui } from '../../theme/tokens';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import * as api from '../../lib/api';
-import type { ModelRegistry, CreditFeature, BibleTemplateSnapshotSummary } from '../../types/domain';
+import type { ModelRegistry, CreditFeature } from '../../types/domain';
 
 type Tab = 'models' | 'credit' | 'templates';
 
@@ -36,14 +36,7 @@ export function AdminScreen() {
   // Data State
   const [models, setModels] = useState<ModelRegistry[]>([]);
   const [creditFeatures, setCreditFeatures] = useState<CreditFeature[]>([]);
-  const [templateSummary, setTemplateSummary] = useState<{
-    snapshotDate: string | null;
-    templateCount: number;
-    hotCount: number;
-    status: 'ready' | 'error' | null;
-    errorMessage: string | null;
-    availableSnapshots: BibleTemplateSnapshotSummary[];
-  } | null>(null);
+  const [templateSummary, setTemplateSummary] = useState<api.AdminBibleTemplateSummary | null>(null);
   const [templateRefreshing, setTemplateRefreshing] = useState(false);
 
   // Modal State
@@ -169,12 +162,14 @@ export function AdminScreen() {
     setTemplateRefreshing(true);
     try {
       const result = await api.refreshAdminBibleTemplates(config.apiBaseUrl, token, undefined, true);
-      if (result.status === 'error') {
-        throw new Error(result.errorMessage || '模板生成失败');
-      }
       const summary = await api.fetchAdminBibleTemplateSummary(config.apiBaseUrl, token);
       setTemplateSummary(summary);
-      Alert.alert('已完成', `模板已更新：${result.templateCount} 个`);
+      Alert.alert(
+        '任务已提交',
+        result.created
+          ? '模板刷新任务已加入任务中心，请在任务中心查看进度。'
+          : '已有模板刷新任务正在执行，请在任务中心查看进度。'
+      );
     } catch (e) {
       Alert.alert('操作失败', (e as Error).message);
     } finally {
@@ -309,7 +304,7 @@ export function AdminScreen() {
     <ScrollView style={styles.content}>
       <View style={styles.card}>
         <Text style={styles.cardTitle}>AI 热点模板生成</Text>
-        <Text style={styles.cardSubtitle}>创建项目时若看不到模板，可在这里手动触发生成。</Text>
+        <Text style={styles.cardSubtitle}>创建项目时若看不到模板，可在这里手动触发任务，进度在任务中心查看。</Text>
         <TouchableOpacity
           style={[styles.addButton, templateRefreshing && { opacity: 0.7 }]}
           onPress={handleManualTemplateRefresh}
@@ -320,11 +315,17 @@ export function AdminScreen() {
           ) : (
             <Ionicons name="refresh" size={18} color={ui.colors.primary} />
           )}
-          <Text style={styles.addButtonText}>{templateRefreshing ? '生成中...' : '立即生成模板'}</Text>
+          <Text style={styles.addButtonText}>{templateRefreshing ? '提交中...' : '触发任务'}</Text>
         </TouchableOpacity>
         <Text style={styles.cardDetail}>
           最近快照：{templateSummary?.snapshotDate || '暂无'} ｜ 模板数：{templateSummary?.templateCount ?? 0} ｜ 热榜：{templateSummary?.hotCount ?? 0}
         </Text>
+        {templateSummary?.latestJob ? (
+          <Text style={styles.cardDetail}>
+            最近任务：{templateSummary.latestJob.snapshotDate} · {templateSummary.latestJob.status}
+            {templateSummary.latestJob.message ? ` · ${templateSummary.latestJob.message}` : ''}
+          </Text>
+        ) : null}
         {templateSummary?.status === 'error' ? (
           <Text style={[styles.cardDetail, { color: ui.colors.danger, marginTop: 6 }]}>
             最近错误：{templateSummary.errorMessage || '未知错误'}

@@ -23,10 +23,15 @@ import {
 import {
   getImagineTemplateSnapshot,
   listImagineTemplateSnapshotDates,
-  refreshImagineTemplatesForDate,
   resolveImagineTemplateById,
   type ImagineTemplate,
 } from '../services/imagineTemplateService.js';
+import {
+  createImagineTemplateRefreshJob,
+  enqueueImagineTemplateRefreshJob,
+  getImagineTemplateRefreshJob,
+  listImagineTemplateRefreshJobs,
+} from '../services/imagineTemplateJobService.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -1743,14 +1748,59 @@ generationRoutes.get('/bible-templates', async (c) => {
 
 generationRoutes.post('/bible-templates/refresh', async (c) => {
   const body = await c.req.json().catch(() => ({} as any));
-  const result = await refreshImagineTemplatesForDate(c.env, {
-    snapshotDate: typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined,
-    force: Boolean(body.force),
+  const snapshotDate = typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined;
+  const force = body.force === undefined ? true : Boolean(body.force);
+  const userId = c.get('userId');
+
+  const { job, created } = await createImagineTemplateRefreshJob(c.env.DB, {
+    snapshotDate,
+    force,
+    requestedByUserId: userId || null,
+    requestedByRole: 'user',
+    source: 'manual',
+  });
+
+  await enqueueImagineTemplateRefreshJob({
+    env: c.env,
+    jobId: job.id,
+    executionCtx: c.executionCtx,
   });
 
   return c.json({
-    success: result.status === 'ready',
-    ...result,
+    success: true,
+    queued: true,
+    created,
+    job,
+  });
+});
+
+generationRoutes.get('/bible-templates/refresh-jobs/:id', async (c) => {
+  const jobId = c.req.param('id');
+  const job = await getImagineTemplateRefreshJob(c.env.DB, jobId);
+
+  if (!job) {
+    return c.json({ success: false, error: 'Template refresh job not found' }, 404);
+  }
+
+  return c.json({
+    success: true,
+    job,
+  });
+});
+
+generationRoutes.get('/bible-templates/refresh-jobs', async (c) => {
+  const userId = c.get('userId');
+  const limitRaw = Number.parseInt(c.req.query('limit') || '10', 10);
+  const limit = Number.isFinite(limitRaw) ? limitRaw : 10;
+
+  const jobs = await listImagineTemplateRefreshJobs(c.env.DB, {
+    requestedByUserId: userId || undefined,
+    limit,
+  });
+
+  return c.json({
+    success: true,
+    jobs,
   });
 });
 

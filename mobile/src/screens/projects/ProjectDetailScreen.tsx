@@ -378,7 +378,7 @@ export function ProjectDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            if (activeTask?.id) {
+            if (typeof activeTask?.id === 'number') {
               await cancelTaskById(config.apiBaseUrl, token, activeTask.id);
             } else {
               await cancelAllActiveTasks(config.apiBaseUrl, token, project.id);

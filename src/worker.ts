@@ -47,6 +47,8 @@ app.use('/api/credit/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 app.use('/api/tasks/*', authMiddleware());
 app.use('/api/bible-templates/refresh', authMiddleware());
+app.use('/api/bible-templates/refresh-jobs', authMiddleware());
+app.use('/api/bible-templates/refresh-jobs/*', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
@@ -161,31 +163,50 @@ export default {
     const runDate = new Date(controller.scheduledTime).toISOString();
     console.log(`[CRON] imagine template refresh started at ${runDate}`);
 
-    const { refreshImagineTemplatesForDate } = await import('./services/imagineTemplateService.js');
-    const result = await refreshImagineTemplatesForDate(env, { force: false });
+    const {
+      createImagineTemplateRefreshJob,
+      enqueueImagineTemplateRefreshJob,
+    } = await import('./services/imagineTemplateJobService.js');
 
-    if (result.status === 'error') {
-      console.error('[CRON] imagine template refresh failed:', result.errorMessage);
+    const { job, created } = await createImagineTemplateRefreshJob(env.DB, {
+      force: false,
+      requestedByRole: 'system',
+      source: 'cron',
+    });
+
+    if (!created) {
+      console.log(`[CRON] imagine template refresh already queued/running: job=${job.id}, snapshot=${job.snapshotDate}`);
       return;
     }
 
-    console.log(
-      `[CRON] imagine template refresh completed: date=${result.snapshotDate}, templates=${result.templateCount}, hot=${result.hotCount}, skipped=${result.skipped}`
-    );
+    await enqueueImagineTemplateRefreshJob({
+      env,
+      jobId: job.id,
+      executionCtx: ctx,
+    });
+
+    console.log(`[CRON] imagine template refresh queued: job=${job.id}, snapshot=${job.snapshotDate}`);
   },
   async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext) {
     const {
       runChapterGenerationTaskInBackground,
       runOutlineGenerationTaskInBackground,
     } = await import('./routes/generation.js');
+    const { runImagineTemplateRefreshJob } = await import('./services/imagineTemplateJobService.js');
 
     for (const message of batch.messages) {
       try {
         const payload = message.body;
         const taskType = payload.taskType || 'chapters';
-        console.log(`Processing queue message: Task ID ${payload.taskId}, type=${taskType}`);
+        const taskRef = payload.taskId || payload.jobId || 'n/a';
+        console.log(`Processing queue message: ref=${taskRef}, type=${taskType}`);
 
-        if (taskType === 'outline') {
+        if (taskType === 'imagine_templates') {
+          if (!payload.jobId) {
+            throw new Error('Missing jobId for imagine_templates queue payload');
+          }
+          await runImagineTemplateRefreshJob(env, payload.jobId);
+        } else if (taskType === 'outline') {
           await runOutlineGenerationTaskInBackground({
             env,
             aiConfig: payload.aiConfig,

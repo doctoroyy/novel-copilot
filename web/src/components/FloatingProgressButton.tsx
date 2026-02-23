@@ -42,12 +42,16 @@ export function FloatingProgressButton() {
       const type = (task.taskType || 'chapters') as TaskType;
       const current = Math.max(0, task.currentProgress || 0);
       const total = task.targetCount > 0 ? task.targetCount : undefined;
+      const numericTaskId = typeof task.id === 'number' ? task.id : undefined;
+      const fallbackTitle = task.projectName
+        ? `${task.projectName}: ${type === 'outline' ? '大纲生成中...' : '任务执行中...'}`
+        : '任务执行中...';
 
       return {
         id: `server-${task.id}`,
-        taskId: task.id,
+        taskId: numericTaskId,
         type,
-        title: task.currentMessage || `${task.projectName}: ${type === 'outline' ? '大纲生成中...' : '任务执行中...'}`,
+        title: task.currentMessage || fallbackTitle,
         status: task.status === 'paused' ? 'preparing' : 'generating',
         current,
         total,

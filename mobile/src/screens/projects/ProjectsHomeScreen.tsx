@@ -123,6 +123,9 @@ export function ProjectsHomeScreen() {
       setNewBible('');
       setNewChapters('120');
       setNewMinChapterWords('2500');
+      setTemplateHint(null);
+      setSelectedTemplateId('');
+      setTemplateSnapshotDate('latest');
       await loadProjects();
     } catch (err) {
       setError((err as Error).message);
@@ -200,16 +203,13 @@ export function ProjectsHomeScreen() {
   const handleRefreshTemplates = useCallback(async () => {
     if (!token) return;
     setTemplateRefreshing(true);
-    setTemplateHint('正在生成热点模板，请稍候...');
+    setTemplateHint('正在提交模板刷新任务...');
     try {
       const result = await refreshBibleTemplates(config.apiBaseUrl, token, undefined, true);
-      if (result.status === 'error') {
-        throw new Error(result.errorMessage || '模板生成失败');
-      }
       setTemplateHint(
-        result.skipped
-          ? `模板已是最新（${result.snapshotDate}）`
-          : `模板已更新：${result.templateCount} 个（${result.snapshotDate}）`
+        result.created
+          ? '模板刷新任务已加入任务中心，请到「任务中心」查看进度。'
+          : '已有模板刷新任务在执行，请到「任务中心」查看进度。'
       );
       await loadTemplateData(templateSnapshotDate === 'latest' ? undefined : templateSnapshotDate);
     } catch (err) {
@@ -226,6 +226,12 @@ export function ProjectsHomeScreen() {
     void loadTemplateData();
   }, [showAiModal, loadTemplateData]);
 
+  useEffect(() => {
+    if (!showCreateModal) return;
+    if (templateLoading || templateOptions.length > 0) return;
+    void loadTemplateData(templateSnapshotDate === 'latest' ? undefined : templateSnapshotDate);
+  }, [showCreateModal, templateLoading, templateOptions.length, loadTemplateData, templateSnapshotDate]);
+
   const applyTemplate = (templateId: string) => {
     setSelectedTemplateId(templateId);
     const selected = templateOptions.find((item) => item.id === templateId);
@@ -235,6 +241,8 @@ export function ProjectsHomeScreen() {
     if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
     if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
   };
+
+  const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId) || null;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -414,6 +422,92 @@ export function ProjectsHomeScreen() {
                 placeholderTextColor={ui.colors.textTertiary}
               />
 
+              <Text style={styles.inputLabel}>热点模板 (可选)</Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.refreshTemplateBtn,
+                  pressed && styles.pressed,
+                  templateRefreshing && styles.refreshTemplateBtnDisabled,
+                ]}
+                onPress={() => void handleRefreshTemplates()}
+                disabled={templateRefreshing}
+              >
+                {templateRefreshing ? (
+                  <ActivityIndicator color={ui.colors.primary} />
+                ) : (
+                  <Ionicons name="refresh" size={14} color={ui.colors.primaryStrong} />
+                )}
+                <Text style={styles.refreshTemplateBtnText}>
+                  {templateRefreshing ? '提交中...' : '拉取/刷新模板'}
+                </Text>
+              </Pressable>
+
+              {templateHint ? (
+                <View style={styles.templateHintBox}>
+                  <Text style={styles.templateHintText}>{templateHint}</Text>
+                </View>
+              ) : null}
+
+              {templateLoading ? (
+                <View style={styles.templateLoadingBox}>
+                  <ActivityIndicator color={ui.colors.primary} />
+                  <Text style={styles.templateLoadingText}>正在加载模板...</Text>
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.templateCardRow}
+                >
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.templateCard,
+                      !selectedTemplateId && styles.templateCardActive,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => setSelectedTemplateId('')}
+                  >
+                    <Text style={[styles.templateTitle, !selectedTemplateId && styles.templateTitleActive]}>不使用模板</Text>
+                    <Text style={styles.templateMeta}>纯手动输入</Text>
+                  </Pressable>
+                  {templateOptions.map((template) => (
+                    <Pressable
+                      key={template.id}
+                      style={({ pressed }) => [
+                        styles.templateCard,
+                        selectedTemplateId === template.id && styles.templateCardActive,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={() => applyTemplate(template.id)}
+                    >
+                      <Text
+                        style={[styles.templateTitle, selectedTemplateId === template.id && styles.templateTitleActive]}
+                        numberOfLines={2}
+                      >
+                        {template.name}
+                      </Text>
+                      <Text style={styles.templateMeta} numberOfLines={1}>
+                        {template.genre} · {(template.keywords || []).slice(0, 3).join(' / ')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+
+              {!templateLoading && templateOptions.length === 0 ? (
+                <View style={styles.templateEmptyBox}>
+                  <Text style={styles.templateEmptyText}>当前暂无可用模板，触发刷新后可在任务中心查看生成进度。</Text>
+                </View>
+              ) : null}
+
+              {selectedTemplate ? (
+                <View style={styles.templateHintBox}>
+                  <Text style={styles.templateHintText}>
+                    已选模板：{selectedTemplate.name} ｜ 类型：{selectedTemplate.genre}
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.labelRow}>
                 <Text style={styles.inputLabel}>故事设定 (Bible)</Text>
                 <Pressable 
@@ -421,7 +515,7 @@ export function ProjectsHomeScreen() {
                   onPress={() => setShowAiModal(true)}
                 >
                   <Ionicons name="sparkles" size={12} color={ui.colors.primary} />
-                  <Text style={styles.aiBtnText}>AI 帮你想象</Text>
+                  <Text style={styles.aiBtnText}>选模板 / AI 想象</Text>
                 </Pressable>
               </View>
               <TextInput
@@ -524,7 +618,7 @@ export function ProjectsHomeScreen() {
                   <Ionicons name="refresh" size={14} color={ui.colors.primaryStrong} />
                 )}
                 <Text style={styles.refreshTemplateBtnText}>
-                  {templateRefreshing ? '生成中...' : '拉取/刷新模板'}
+                  {templateRefreshing ? '提交中...' : '拉取/刷新模板'}
                 </Text>
               </Pressable>
 
@@ -536,7 +630,7 @@ export function ProjectsHomeScreen() {
 
               {!templateLoading && templateOptions.length === 0 ? (
                 <View style={styles.templateEmptyBox}>
-                  <Text style={styles.templateEmptyText}>当前暂无可用模板，点击上方按钮可立即生成。</Text>
+                  <Text style={styles.templateEmptyText}>当前暂无可用模板，触发刷新后可在任务中心查看生成进度。</Text>
                 </View>
               ) : null}
 

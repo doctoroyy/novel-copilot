@@ -245,31 +245,33 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const startStreamMonitor = useCallback((project: ProjectDetail, task: GenerationTask) => {
     if (task.status !== 'running') return;
-    if (streamMonitorTaskIdRef.current === task.id) return;
+    if (typeof task.id !== 'number') return;
+    const taskId = task.id;
+    if (streamMonitorTaskIdRef.current === taskId) return;
 
     stopStreamMonitor();
     const abortController = new AbortController();
     streamMonitorAbortRef.current = abortController;
-    streamMonitorTaskIdRef.current = task.id;
+    streamMonitorTaskIdRef.current = taskId;
 
     void generateChaptersWithProgress(
       project.id,
       task.targetCount,
       {
         onTaskCreated: (event) => {
-          if (streamMonitorTaskIdRef.current !== task.id) return;
+          if (streamMonitorTaskIdRef.current !== taskId) return;
           if (typeof event.taskId !== 'number') return;
           streamMonitorTaskIdRef.current = event.taskId;
           setGenerationState((prev) => ({ ...prev, taskId: event.taskId }));
         },
         onTaskResumed: (event) => {
-          if (streamMonitorTaskIdRef.current !== task.id) return;
+          if (streamMonitorTaskIdRef.current !== taskId) return;
           const completed = event.completedChapters?.length || task.completedChapters.length;
           const currentChapter = event.currentProgress || task.currentProgress || task.startChapter;
           setGenerationState((prev) => ({
             ...prev,
             isGenerating: true,
-            taskId: typeof event.taskId === 'number' ? event.taskId : task.id,
+            taskId: typeof event.taskId === 'number' ? event.taskId : taskId,
             current: completed,
             total: event.targetCount || task.targetCount,
             currentChapter,
@@ -280,11 +282,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           }));
         },
         onProgress: (event) => {
-          if (streamMonitorTaskIdRef.current !== task.id) return;
+          if (streamMonitorTaskIdRef.current !== taskId) return;
           setGenerationState((prev) => ({
             ...prev,
             isGenerating: true,
-            taskId: task.id,
+            taskId,
             current: Math.max(prev.current, event.current ?? prev.current),
             total: event.total ?? prev.total,
             currentChapter: event.chapterIndex ?? prev.currentChapter,
@@ -295,7 +297,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           }));
         },
         onChapterComplete: (chapterIndex, title) => {
-          if (streamMonitorTaskIdRef.current !== task.id) return;
+          if (streamMonitorTaskIdRef.current !== taskId) return;
           setSelectedProject((prev) => {
             if (!prev || prev.id !== project.id) return prev;
             const chapterFile = `${chapterIndex.toString().padStart(3, '0')}.md`;
@@ -319,7 +321,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           }));
         },
         onDone: (results, failedChapters) => {
-          if (streamMonitorTaskIdRef.current === task.id) {
+          if (streamMonitorTaskIdRef.current === taskId) {
             streamMonitorAbortRef.current = null;
             streamMonitorTaskIdRef.current = null;
           }
@@ -335,7 +337,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           void loadProject(project.id);
         },
         onError: (error) => {
-          if (streamMonitorTaskIdRef.current === task.id) {
+          if (streamMonitorTaskIdRef.current === taskId) {
             streamMonitorAbortRef.current = null;
             streamMonitorTaskIdRef.current = null;
           }
@@ -366,7 +368,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           setError(error);
         },
         onReconnecting: (attempt, maxAttempts) => {
-          if (streamMonitorTaskIdRef.current !== task.id) return;
+          if (streamMonitorTaskIdRef.current !== taskId) return;
           setGenerationState((prev) => ({
             ...prev,
             isGenerating: true,
@@ -380,7 +382,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       { maxRetries: 8, retryDelayMs: 1500 },
     ).catch((err) => {
       if (abortController.signal.aborted) return;
-      if (streamMonitorTaskIdRef.current === task.id) {
+      if (streamMonitorTaskIdRef.current === taskId) {
         streamMonitorAbortRef.current = null;
         streamMonitorTaskIdRef.current = null;
       }
@@ -422,6 +424,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
               message: prev.message || '任务已结束',
             };
           });
+          return;
+        }
+        if (typeof task.id !== 'number') {
+          stopStreamMonitor();
           return;
         }
 
@@ -680,7 +686,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
                 : 'error';
 
           updateTask(localTaskId, {
-            taskId: task.id,
+            taskId: typeof task.id === 'number' ? task.id : undefined,
             status,
             current,
             total,
@@ -923,7 +929,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         cancelled = true;
       } else {
         const activeTask = await getActiveTask(targetProjectRef);
-        if (activeTask?.id) {
+        if (typeof activeTask?.id === 'number') {
           await cancelTaskById(activeTask.id);
           cancelled = true;
         }

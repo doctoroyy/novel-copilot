@@ -4,6 +4,7 @@ import type { Env } from '../worker.js';
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
 export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
+type ActiveTaskStatus = 'running' | 'paused' | 'completed' | 'failed';
 
 function toTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -33,6 +34,80 @@ function toTimestampMs(value: unknown): number {
   return Date.now();
 }
 
+function parseNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseJsonNumberArray(value: unknown): number[] {
+  if (!value) return [];
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => Number(entry))
+      .filter((entry) => Number.isFinite(entry));
+  } catch {
+    return [];
+  }
+}
+
+function mapGenerationTaskRow(task: any): GenerationTask {
+  const createdAtMs = toTimestampMs(task.created_at);
+  const updatedAtMs = toTimestampMs(task.updated_at);
+  return {
+    id: task.id,
+    taskType: (task.task_type || 'chapters') as TaskType,
+    projectId: String(task.project_id || ''),
+    projectName: String(task.project_name || ''),
+    userId: String(task.user_id || ''),
+    targetCount: parseNumber(task.target_count, 0),
+    startChapter: parseNumber(task.start_chapter, 0),
+    completedChapters: parseJsonNumberArray(task.completed_chapters),
+    failedChapters: parseJsonNumberArray(task.failed_chapters),
+    currentProgress: parseNumber(task.current_progress, 0),
+    currentMessage: task.current_message ? String(task.current_message) : null,
+    cancelRequested: Boolean(task.cancel_requested),
+    status: (task.status || 'running') as ActiveTaskStatus,
+    errorMessage: task.error_message ? String(task.error_message) : null,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+    updatedAtMs,
+  };
+}
+
+function mapImagineTemplateJobRow(task: any): GenerationTask {
+  const createdAtMs = toTimestampMs(task.created_at);
+  const updatedAtMs = toTimestampMs(task.updated_at);
+  const rawStatus = String(task.status || 'queued');
+  const status: ActiveTaskStatus = rawStatus === 'running' ? 'running' : 'paused';
+  const fallbackMessage = status === 'running'
+    ? '正在抓取榜单并生成热点模板...'
+    : '热点模板任务排队中...';
+  const maxTemplates = parseNumber(task.max_templates, 0);
+  const resultTemplateCount = parseNumber(task.result_template_count, 0);
+
+  return {
+    id: `template:${String(task.id || '')}`,
+    taskType: 'other',
+    projectId: 'system:ai-imagine-template',
+    projectName: 'AI 热点模板',
+    userId: String(task.requested_by_user_id || ''),
+    targetCount: maxTemplates > 0 ? maxTemplates : 0,
+    startChapter: 0,
+    completedChapters: [],
+    failedChapters: [],
+    currentProgress: resultTemplateCount,
+    currentMessage: task.message ? String(task.message) : fallbackMessage,
+    cancelRequested: false,
+    status,
+    errorMessage: task.error_message ? String(task.error_message) : null,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+    updatedAtMs,
+  };
+}
+
 async function getProjectIdByRef(
   db: D1Database,
   projectRef: string,
@@ -54,7 +129,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const { results: tasks } = await c.env.DB.prepare(`
+    const { results: generationTasks } = await c.env.DB.prepare(`
       SELECT t.*, p.name as project_name
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
@@ -63,31 +138,39 @@ tasksRoutes.get('/active-tasks', async (c) => {
       ORDER BY t.created_at DESC
     `).bind(userId).all();
 
-    const formatted = (tasks as any[]).map(task => {
-      const createdAtMs = toTimestampMs(task.created_at);
-      const updatedAtMs = toTimestampMs(task.updated_at);
-      return {
-      id: task.id,
-      taskType: (task.task_type || 'chapters') as TaskType,
-      projectId: task.project_id,
-      projectName: task.project_name,
-      userId: task.user_id,
-      targetCount: task.target_count,
-      startChapter: task.start_chapter,
-      completedChapters: JSON.parse(task.completed_chapters || '[]'),
-      failedChapters: JSON.parse(task.failed_chapters || '[]'),
-      currentProgress: task.current_progress || 0,
-      currentMessage: task.current_message || null,
-      cancelRequested: Boolean(task.cancel_requested),
-      status: task.status,
-      errorMessage: task.error_message,
-      createdAt: createdAtMs,
-      updatedAt: updatedAtMs,
-      updatedAtMs,
-      };
-    });
+    const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
 
-    return c.json({ success: true, tasks: formatted });
+    // Template jobs are optional for old DBs that haven't run migration 0021 yet.
+    try {
+      const { results: templateJobs } = await c.env.DB.prepare(`
+        SELECT
+          id,
+          snapshot_date,
+          requested_by_user_id,
+          max_templates,
+          status,
+          message,
+          error_message,
+          result_template_count,
+          created_at,
+          updated_at
+        FROM ai_imagine_template_jobs
+        WHERE requested_by_user_id = ?
+          AND status IN ('queued', 'running')
+        ORDER BY created_at DESC
+        LIMIT 20
+      `).bind(userId).all();
+
+      mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
+    } catch (error) {
+      const message = (error as Error).message || '';
+      if (!message.includes('no such table: ai_imagine_template_jobs')) {
+        console.warn('Failed to load imagine template jobs for active tasks:', message);
+      }
+    }
+
+    mergedTasks.sort((a, b) => b.createdAt - a.createdAt);
+    return c.json({ success: true, tasks: mergedTasks });
   } catch (error) {
     console.error('Active tasks error:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -96,7 +179,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
 
 // Types
 export type GenerationTask = {
-  id: number;
+  id: number | string;
   taskType: TaskType;
   projectId: string;
   projectName: string;
@@ -108,7 +191,7 @@ export type GenerationTask = {
   currentProgress: number;
   currentMessage: string | null;
   cancelRequested: boolean;
-  status: 'running' | 'paused' | 'completed' | 'failed';
+  status: ActiveTaskStatus;
   errorMessage: string | null;
   createdAt: number;
   updatedAt: number;

@@ -3,12 +3,18 @@ import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normaliz
 import {
   getImagineTemplateSnapshot,
   listImagineTemplateSnapshotDates,
-  refreshImagineTemplatesForDate,
 } from '../services/imagineTemplateService.js';
+import {
+  createImagineTemplateRefreshJob,
+  enqueueImagineTemplateRefreshJob,
+  getImagineTemplateRefreshJob,
+  listImagineTemplateRefreshJobs,
+} from '../services/imagineTemplateJobService.js';
 
 interface Bindings {
   DB: D1Database;
   FANQIE_BROWSER?: Fetcher;
+  GENERATION_QUEUE?: Queue<any>;
 }
 
 const adminRoutes = new Hono<{ Bindings: Bindings }>();
@@ -111,7 +117,11 @@ adminRoutes.get('/invitation-codes', async (c) => {
 // Create invitation code
 adminRoutes.post('/invitation-codes', async (c) => {
   try {
-    const { code, maxUses = 10 } = await c.req.json();
+    const body = await c.req.json().catch(() => ({} as any));
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    const rawMaxUses = body.maxUses ?? body.max_uses;
+    const parsedMaxUses = Number.parseInt(String(rawMaxUses ?? ''), 10);
+    const maxUses = Number.isFinite(parsedMaxUses) && parsedMaxUses > 0 ? parsedMaxUses : 10;
 
     if (!code) {
       return c.json({ success: false, error: '请输入邀请码' }, 400);
@@ -174,6 +184,7 @@ adminRoutes.get('/bible-templates', async (c) => {
     const snapshotDate = c.req.query('snapshotDate') || undefined;
     const snapshot = await getImagineTemplateSnapshot(c.env.DB, snapshotDate);
     const availableSnapshots = await listImagineTemplateSnapshotDates(c.env.DB, 60);
+    const latestJobs = await listImagineTemplateRefreshJobs(c.env.DB, { limit: 5 });
 
     return c.json({
       success: true,
@@ -183,6 +194,8 @@ adminRoutes.get('/bible-templates', async (c) => {
       status: snapshot?.status || null,
       errorMessage: snapshot?.errorMessage || null,
       availableSnapshots,
+      latestJobs,
+      latestJob: latestJobs[0] || null,
     });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -193,16 +206,54 @@ adminRoutes.get('/bible-templates', async (c) => {
 adminRoutes.post('/bible-templates/refresh', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({} as any));
-    const result = await refreshImagineTemplatesForDate(c.env, {
-      snapshotDate: typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined,
-      // Manual trigger should force refresh by default.
-      force: body.force === undefined ? true : Boolean(body.force),
+    const userId = c.get('userId');
+    const snapshotDate = typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined;
+    const force = body.force === undefined ? true : Boolean(body.force);
+
+    const { job, created } = await createImagineTemplateRefreshJob(c.env.DB, {
+      snapshotDate,
+      force,
+      requestedByUserId: userId || null,
+      requestedByRole: 'admin',
+      source: 'admin_manual',
+    });
+
+    await enqueueImagineTemplateRefreshJob({
+      env: c.env,
+      jobId: job.id,
+      executionCtx: c.executionCtx,
     });
 
     return c.json({
-      success: result.status === 'ready',
-      ...result,
+      success: true,
+      queued: true,
+      created,
+      job,
     });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+adminRoutes.get('/bible-templates/jobs', async (c) => {
+  try {
+    const limitRaw = Number.parseInt(c.req.query('limit') || '20', 10);
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
+    const jobs = await listImagineTemplateRefreshJobs(c.env.DB, { limit });
+    return c.json({ success: true, jobs });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+adminRoutes.get('/bible-templates/jobs/:id', async (c) => {
+  try {
+    const jobId = c.req.param('id');
+    const job = await getImagineTemplateRefreshJob(c.env.DB, jobId);
+    if (!job) {
+      return c.json({ success: false, error: 'Template refresh job not found' }, 404);
+    }
+    return c.json({ success: true, job });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }

@@ -33,7 +33,7 @@ export function ActivityScreen() {
           ListHeaderComponent={
             <View style={styles.headerWrap}>
               <Text style={styles.pageTitle}>任务中心</Text>
-              <Text style={styles.pageSubtitle}>自动刷新中的生成任务看板</Text>
+              <Text style={styles.pageSubtitle}>生成任务与系统任务统一看板</Text>
               <View style={styles.summaryPanel}>
                 <View style={styles.summaryItem}>
                   <Text style={styles.summaryValue}>{runningCount}</Text>
@@ -56,7 +56,7 @@ export function ActivityScreen() {
             <View style={styles.emptyBox}>
               <Ionicons name="sparkles-outline" size={24} color={ui.colors.primary} />
               <Text style={styles.emptyTitle}>当前没有活跃任务</Text>
-              <Text style={styles.emptyText}>去「项目」页发起大纲或章节生成，会在这里实时展示。</Text>
+              <Text style={styles.emptyText}>去「项目」页发起生成，或触发模板刷新任务，会在这里实时展示。</Text>
             </View>
           }
           renderItem={({ item }) => <TaskCard task={item} />}
@@ -69,15 +69,31 @@ export function ActivityScreen() {
 }
 
 function TaskCard({ task }: { task: GenerationTask }) {
-  const done = task.completedChapters.length;
-  const total = Math.max(1, task.targetCount);
-  const pct = Math.min(100, Math.round((done / total) * 100));
+  const taskType = task.taskType || 'chapters';
+  const taskLabel = taskType === 'chapters'
+    ? '章节生成'
+    : taskType === 'outline'
+      ? '大纲生成'
+      : taskType === 'bible'
+        ? 'Story Bible'
+        : '系统任务';
+  const statusLabel = task.status === 'running'
+    ? '运行中'
+    : task.status === 'paused'
+      ? '等待中'
+      : task.status === 'completed'
+        ? '已完成'
+        : '失败';
+  const done = taskType === 'chapters' ? task.completedChapters.length : Math.max(0, task.currentProgress || 0);
+  const total = taskType === 'chapters' ? Math.max(1, task.targetCount) : Math.max(0, task.targetCount);
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
   const isRunning = task.status === 'running';
+  const updatedAtMs = task.updatedAtMs || task.updatedAt || Date.now();
 
   return (
     <View style={styles.card}>
       <View style={styles.rowBetween}>
-        <Text style={styles.cardTitle}>{task.projectName}</Text>
+        <Text style={styles.cardTitle}>{task.projectName || '未命名任务'}</Text>
         <View style={[styles.statusBadge, isRunning ? styles.statusRunning : styles.statusIdle]}>
           <Ionicons
             name={isRunning ? 'sync-outline' : 'pause-outline'}
@@ -85,23 +101,33 @@ function TaskCard({ task }: { task: GenerationTask }) {
             color={isRunning ? ui.colors.success : ui.colors.textSecondary}
           />
           <Text style={[styles.statusText, isRunning ? styles.statusTextRunning : styles.statusTextIdle]}>
-            {task.status.toUpperCase()}
+            {statusLabel}
           </Text>
         </View>
       </View>
 
       <Text style={styles.cardMessage}>{task.currentMessage || '任务处理中'}</Text>
 
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct}%` }]} />
-      </View>
+      {pct !== null ? (
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${pct}%` }]} />
+        </View>
+      ) : null}
 
       <View style={styles.rowBetween}>
-        <Text style={styles.metaText}>{done}/{total} 章</Text>
-        <Text style={styles.metaText}>当前：第 {task.currentProgress || task.startChapter} 章</Text>
+        <Text style={styles.metaText}>
+          {total > 0 ? `${done}/${total}` : taskLabel}
+        </Text>
+        <Text style={styles.metaText}>
+          更新于 {new Date(updatedAtMs).toLocaleTimeString('zh-CN', { hour12: false })}
+        </Text>
       </View>
 
-      {task.failedChapters.length > 0 ? (
+      {taskType === 'chapters' ? (
+        <Text style={styles.metaText}>当前：第 {task.currentProgress || task.startChapter} 章</Text>
+      ) : null}
+
+      {taskType === 'chapters' && task.failedChapters.length > 0 ? (
         <Text style={styles.failText}>失败章节：{task.failedChapters.join(', ')}</Text>
       ) : null}
     </View>
