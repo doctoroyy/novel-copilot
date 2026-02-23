@@ -278,10 +278,7 @@ export function AdminPage() {
   const handleManualTemplateRefresh = async () => {
     setRefreshingTemplates(true);
     try {
-      const result = await refreshAdminBibleTemplates(undefined, true);
-      if (result.status === 'error') {
-        throw new Error(result.errorMessage || '模板生成失败');
-      }
+      await refreshAdminBibleTemplates(undefined, true);
       await fetchTemplateSummary();
       setError(null);
     } catch (err) {
@@ -503,7 +500,7 @@ export function AdminPage() {
                     <div>
                       <p className="text-sm font-medium">AI 热点模板生成</p>
                       <p className="text-xs text-muted-foreground">
-                        当创建项目页没有模板时，可在这里手动触发当天模板生成。
+                        当创建项目页没有模板时，可在这里手动触发任务，进度在任务中心查看。
                       </p>
                     </div>
                     <Button
@@ -511,12 +508,18 @@ export function AdminPage() {
                       onClick={handleManualTemplateRefresh}
                       disabled={refreshingTemplates}
                     >
-                      {refreshingTemplates ? '生成中...' : '立即生成'}
+                      {refreshingTemplates ? '提交中...' : '触发任务'}
                     </Button>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     最近快照：{templateSummary?.snapshotDate || '暂无'}，模板数：{templateSummary?.templateCount ?? 0}，热榜条目：{templateSummary?.hotCount ?? 0}
                   </div>
+                  {templateSummary?.latestJob && (
+                    <div className="text-xs text-muted-foreground">
+                      最近任务：{templateSummary.latestJob.snapshotDate} · {templateSummary.latestJob.status}
+                      {templateSummary.latestJob.message ? ` · ${templateSummary.latestJob.message}` : ''}
+                    </div>
+                  )}
                   {templateSummary?.status === 'error' && (
                     <div className="text-xs text-destructive">
                       最近一次生成失败：{templateSummary.errorMessage || '未知错误'}

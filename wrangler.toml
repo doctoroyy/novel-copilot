@@ -1,7 +1,11 @@
 name = "novel-copilot"
 main = "src/worker.ts"
 compatibility_date = "2024-12-01"
-compatibility_flags = ["nodejs_compat", "no_handle_cross_request_promise_resolution"]
+compatibility_flags = [
+  "nodejs_compat",
+  "enable_nodejs_fs_module",
+  "no_handle_cross_request_promise_resolution",
+]
 
 
 # D1 Database
@@ -50,4 +54,3 @@ binding = "FANQIE_BROWSER"
 # Daily template refresh (UTC 00:20 => Asia/Shanghai 08:20)
 [triggers]
 crons = ["20 0 * * *"]
-

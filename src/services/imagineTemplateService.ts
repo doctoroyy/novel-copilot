@@ -3,9 +3,11 @@ import { generateText, getAIConfigFromRegistry, type AIConfig } from './aiClient
 
 export const FANQIE_DEFAULT_RANK_URLS = [
   'https://fanqienovel.com/rank',
-  'https://fanqienovel.com/rank/0_1_0',
-  'https://fanqienovel.com/rank/0_2_0',
 ] as const;
+
+const FANQIE_RANK_DISCOVERY_URL = 'https://fanqienovel.com/rank';
+const FANQIE_DEFAULT_SCRAPE_LIMIT = 36;
+const FANQIE_MAX_DISCOVERED_SOURCES = 16;
 
 export interface FanqieHotItem {
   rank: number;
@@ -63,6 +65,14 @@ export interface ImagineTemplateEnv {
   FANQIE_BROWSER?: Fetcher;
 }
 
+interface FanqieRankSource {
+  url: string;
+  label: string;
+  gender: number;
+  rankMold: number;
+  categoryId: number;
+}
+
 function cleanText(input: string | null | undefined): string {
   return (input || '').replace(/\s+/g, ' ').trim();
 }
@@ -77,16 +87,60 @@ export function toChinaDateKey(epochMs = Date.now()): string {
   return formatter.format(new Date(epochMs));
 }
 
-async function scrapeOneRankPage(browser: any, sourceUrl: string): Promise<FanqieHotItem[]> {
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractBookIdFromUrl(url?: string): string {
+  const raw = cleanText(url);
+  if (!raw) return '';
+  const match = raw.match(/\/page\/(\d+)/);
+  return match?.[1] || '';
+}
+
+function looksObfuscatedTitle(title?: string): boolean {
+  const text = cleanText(title);
+  if (!text) return true;
+  return /[\uE000-\uF8FF]/.test(text);
+}
+
+function summarizeSourceUrls(hotItems: FanqieHotItem[], fallback?: string[]): string {
+  const urls = new Set<string>();
+
+  for (const item of hotItems) {
+    const url = cleanText(item.sourceUrl);
+    if (url) urls.add(url);
+  }
+
+  if (urls.size === 0) {
+    for (const url of fallback || []) {
+      const normalized = cleanText(url);
+      if (normalized) urls.add(normalized);
+    }
+  }
+
+  if (urls.size === 0) {
+    urls.add(FANQIE_RANK_DISCOVERY_URL);
+  }
+
+  return [...urls].join('\n');
+}
+
+async function discoverRankSources(browser: any): Promise<FanqieRankSource[]> {
   const page = await browser.newPage();
   try {
-    await page.goto(sourceUrl, {
+    await page.goto(FANQIE_RANK_DISCOVERY_URL, {
       waitUntil: 'domcontentloaded',
       timeout: 45_000,
     });
-    await page.waitForTimeout(1400);
+    await page.waitForTimeout(1300);
 
-    const items = await page.evaluate((url: string) => {
+    const links = await page.evaluate(() => {
       const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
       const doc = (globalThis as any).document as any;
       const location = (globalThis as any).location as any;
@@ -99,8 +153,96 @@ async function scrapeOneRankPage(browser: any, sourceUrl: string): Promise<Fanqi
         }
       };
 
-      const category = normalize((doc.title || '').split('小说排行榜')[0] || doc.title || '');
-      const titleLinks = Array.from(doc.querySelectorAll('a[href*="/page/"]')) as any[];
+      const anchors = Array.from(doc.querySelectorAll('.muye-rank-menu a[href^="/rank/"]')) as any[];
+      const rows: Array<{ href: string; label: string }> = [];
+
+      for (const anchor of anchors) {
+        const href = normalize(anchor.getAttribute?.('href'));
+        const label = normalize(anchor.textContent);
+        if (!href.startsWith('/rank/')) continue;
+        if (!label) continue;
+        rows.push({
+          href: toAbs(href),
+          label,
+        });
+      }
+
+      return rows;
+    });
+
+    const deduped = new Map<string, FanqieRankSource>();
+    for (const item of links as Array<{ href: string; label: string }>) {
+      const href = cleanText(item.href);
+      const match = href.match(/\/rank\/(\d+)_(\d+)_(\d+)/);
+      if (!match) continue;
+
+      const gender = Number.parseInt(match[1], 10);
+      const rankMold = Number.parseInt(match[2], 10);
+      const categoryId = Number.parseInt(match[3], 10);
+      if (!Number.isFinite(gender) || !Number.isFinite(rankMold) || !Number.isFinite(categoryId)) continue;
+
+      const key = `${gender}_${rankMold}_${categoryId}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, {
+          url: href,
+          label: cleanText(item.label),
+          gender,
+          rankMold,
+          categoryId,
+        });
+      }
+    }
+
+    const all = [...deduped.values()];
+    const pickBy = (gender: number, rankMold: number, count: number) =>
+      all.filter((item) => item.gender === gender && item.rankMold === rankMold).slice(0, count);
+
+    const selected = [
+      ...pickBy(1, 2, 4), // 男频阅读榜
+      ...pickBy(0, 2, 4), // 女频阅读榜
+      ...pickBy(1, 1, 3), // 男频新书榜
+      ...pickBy(0, 1, 3), // 女频新书榜
+    ];
+
+    const selectedKeys = new Set(selected.map((item) => `${item.gender}_${item.rankMold}_${item.categoryId}`));
+    if (selected.length < FANQIE_MAX_DISCOVERED_SOURCES) {
+      for (const source of all) {
+        const key = `${source.gender}_${source.rankMold}_${source.categoryId}`;
+        if (selectedKeys.has(key)) continue;
+        selected.push(source);
+        selectedKeys.add(key);
+        if (selected.length >= FANQIE_MAX_DISCOVERED_SOURCES) break;
+      }
+    }
+
+    return selected.slice(0, FANQIE_MAX_DISCOVERED_SOURCES);
+  } finally {
+    await page.close();
+  }
+}
+
+async function scrapeOneRankPage(browser: any, source: FanqieRankSource): Promise<FanqieHotItem[]> {
+  const page = await browser.newPage();
+  try {
+    await page.goto(source.url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 45_000,
+    });
+    await page.waitForTimeout(1200);
+
+    const items = await page.evaluate((payload: { sourceUrl: string; categoryLabel: string }) => {
+      const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
+      const doc = (globalThis as any).document as any;
+      const location = (globalThis as any).location as any;
+      const toAbs = (href: string | null | undefined) => {
+        if (!href) return '';
+        try {
+          return new URL(href, location.origin).toString();
+        } catch {
+          return href;
+        }
+      };
+
       const rows: Array<{
         rank: number;
         title: string;
@@ -114,56 +256,150 @@ async function scrapeOneRankPage(browser: any, sourceUrl: string): Promise<Fanqi
         sourceUrl?: string;
       }> = [];
 
-      for (const titleLink of titleLinks) {
-        const title = normalize(titleLink?.textContent);
-        if (!title || title.length > 42) continue;
+      const cards = Array.from(doc.querySelectorAll('.rank-book-item')) as any[];
+      for (let i = 0; i < cards.length; i += 1) {
+        const card = cards[i];
+        const titleAnchor = card.querySelector?.('.title a');
+        const title = normalize(titleAnchor?.textContent || '');
+        const rankText = normalize(card.querySelector?.('.book-item-index h1')?.textContent || '');
+        const rank = Number.parseInt(rankText.replace(/[^\d]/g, ''), 10);
+        const author = normalize(
+          card.querySelector?.('.author a span')?.textContent
+          || card.querySelector?.('.author span')?.textContent
+          || ''
+        );
+        const summary = normalize(card.querySelector?.('.desc')?.textContent || '').slice(0, 220);
+        const status = normalize(card.querySelector?.('.book-item-footer-status')?.textContent || '');
+        const readingRaw = normalize(card.querySelector?.('.book-item-count')?.textContent || '');
+        const chapterRaw = normalize(card.querySelector?.('.book-item-footer-last .chapter')?.textContent || '');
+        const timeRaw = normalize(card.querySelector?.('.book-item-footer-time')?.textContent || '');
+        const href = normalize(titleAnchor?.getAttribute?.('href') || '');
 
-        const card = titleLink?.closest?.('div')?.parentElement;
-        if (!card) continue;
-
-        const rankText = normalize(card.querySelector?.('h1')?.textContent || '');
-        const rank = Number.parseInt(rankText, 10);
-        if (!Number.isFinite(rank)) continue;
-
-        const author = normalize(card.querySelector?.('a[href*="/author-page/"]')?.textContent || '');
-        const cardText = normalize(card.textContent || '');
-
-        const statusMatch = cardText.match(/(连载中|已完结)/);
-        const readingMatch = cardText.match(/在读[:：]\s*([^\s]+)/);
-        const updatedMatch = cardText.match(/(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})/);
-
-        const summary = normalize(
-          cardText
-            .replace(rankText, '')
-            .replace(title, '')
-            .replace(author, '')
-            .replace(/(连载中|已完结)/g, '')
-            .replace(/在读[:：]\s*[^\s]+/g, '')
-            .replace(/最近更新[:：]\s*/g, '')
-            .replace(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/g, '')
-        ).slice(0, 220);
+        if (!title && !href) continue;
 
         rows.push({
-          rank,
+          rank: Number.isFinite(rank) ? rank : i + 1,
           title,
           author: author || undefined,
           summary: summary || undefined,
-          status: statusMatch?.[1],
-          readingCountText: readingMatch?.[1],
-          updatedAtText: updatedMatch?.[1],
-          category,
-          url: toAbs(titleLink.getAttribute('href')),
-          sourceUrl: url,
+          status: status || undefined,
+          readingCountText: readingRaw.replace(/^在读[:：]?/, '') || undefined,
+          updatedAtText: timeRaw || chapterRaw.replace(/^最近更新[:：]?/, '') || undefined,
+          category: payload.categoryLabel || undefined,
+          url: toAbs(href),
+          sourceUrl: payload.sourceUrl,
         });
       }
 
       return rows;
-    }, sourceUrl);
+    }, {
+      sourceUrl: source.url,
+      categoryLabel: source.label,
+    });
 
     return items;
   } finally {
     await page.close();
   }
+}
+
+async function fetchBookPageMetadata(url: string): Promise<{
+  title?: string;
+  summary?: string;
+  category?: string;
+  author?: string;
+}> {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Referer': FANQIE_RANK_DISCOVERY_URL,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Fetch page failed: ${response.status}`);
+  }
+
+  const html = await response.text();
+  const readFirstMatch = (regexp: RegExp): string => {
+    const match = html.match(regexp);
+    if (!match) return '';
+    return decodeHtmlEntities(cleanText(match[1]));
+  };
+
+  const title =
+    readFirstMatch(/<div\s+class="info-name"[^>]*>\s*<h1>([^<]+)<\/h1>/i)
+    || readFirstMatch(/<title>\s*([^<_|]+?)\s*(?:_[^<]*)?<\/title>/i)
+    || '';
+
+  const summary = readFirstMatch(/<meta\s+name="description"\s+content="([^"]+)"/i);
+  const author =
+    readFirstMatch(/<span\s+class="author-name-text">([^<]+)<\/span>/i)
+    || readFirstMatch(/\u4f5c\u8005[:：\s]*([^"，,\s]{1,30})/i);
+
+  const categories: string[] = [];
+  const regex = /<span\s+class="info-label-grey">([^<]+)<\/span>/ig;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(html))) {
+    const value = decodeHtmlEntities(cleanText(match[1]));
+    if (value) categories.push(value);
+    if (categories.length >= 3) break;
+  }
+
+  return {
+    title: title || undefined,
+    summary: summary || undefined,
+    author: author || undefined,
+    category: categories.join(' / ') || undefined,
+  };
+}
+
+async function enrichHotItemsWithBookMetadata(items: FanqieHotItem[]): Promise<void> {
+  const candidates = items
+    .map((item, index) => ({
+      index,
+      item,
+      bookId: extractBookIdFromUrl(item.url),
+    }))
+    .filter(({ bookId, item }) =>
+      Boolean(bookId) && (looksObfuscatedTitle(item.title) || !cleanText(item.summary))
+    )
+    .slice(0, 18);
+
+  if (candidates.length === 0) return;
+
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(4, candidates.length));
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < candidates.length) {
+      const current = candidates[cursor];
+      cursor += 1;
+
+      try {
+        const item = current.item;
+        const targetUrl = item.url || `https://fanqienovel.com/page/${current.bookId}`;
+        const metadata = await fetchBookPageMetadata(targetUrl);
+
+        if (metadata.title && (looksObfuscatedTitle(item.title) || !cleanText(item.title))) {
+          item.title = metadata.title;
+        }
+        if (metadata.summary && !cleanText(item.summary)) {
+          item.summary = metadata.summary.slice(0, 220);
+        }
+        if (metadata.author && !cleanText(item.author)) {
+          item.author = metadata.author;
+        }
+        if (metadata.category && !cleanText(item.category)) {
+          item.category = metadata.category;
+        }
+      } catch (error) {
+        console.warn(`[ImagineTemplates] enrich book metadata failed for ${current.bookId}:`, (error as Error).message);
+      }
+    }
+  });
+
+  await Promise.all(workers);
 }
 
 export async function scrapeFanqieHotListWithPlaywright(
@@ -174,25 +410,50 @@ export async function scrapeFanqieHotListWithPlaywright(
     throw new Error('Missing FANQIE_BROWSER binding for Playwright scraping');
   }
 
-  const sourceUrls = options?.sourceUrls?.length ? options.sourceUrls : [...FANQIE_DEFAULT_RANK_URLS];
-  const limit = Math.max(1, Math.min(100, options?.limit ?? 36));
+  const requestedSourceUrls = (options?.sourceUrls || []).map((entry) => cleanText(entry)).filter(Boolean);
+  const limit = Math.max(1, Math.min(100, options?.limit ?? FANQIE_DEFAULT_SCRAPE_LIMIT));
   const browser = await launch(env.FANQIE_BROWSER);
 
   try {
+    let sources: FanqieRankSource[] = [];
+    if (requestedSourceUrls.length > 0) {
+      sources = requestedSourceUrls.map((url) => {
+        const match = url.match(/\/rank\/(\d+)_(\d+)_(\d+)/);
+        const gender = match ? Number.parseInt(match[1], 10) : -1;
+        const rankMold = match ? Number.parseInt(match[2], 10) : -1;
+        const categoryId = match ? Number.parseInt(match[3], 10) : -1;
+        return {
+          url,
+          label: `分类榜单 ${categoryId > 0 ? categoryId : ''}`.trim(),
+          gender,
+          rankMold,
+          categoryId,
+        };
+      });
+    } else {
+      sources = await discoverRankSources(browser as any);
+    }
+
+    if (sources.length === 0) {
+      throw new Error('No valid fanqie rank source discovered');
+    }
+
     const allItems: FanqieHotItem[] = [];
 
-    for (const sourceUrl of sourceUrls) {
+    for (const source of sources) {
       try {
-        const pageItems = await scrapeOneRankPage(browser as any, sourceUrl);
+        const pageItems = await scrapeOneRankPage(browser as any, source);
         allItems.push(...pageItems);
       } catch (error) {
-        console.warn(`[ImagineTemplates] scrape failed for ${sourceUrl}:`, (error as Error).message);
+        console.warn(`[ImagineTemplates] scrape failed for ${source.url}:`, (error as Error).message);
       }
     }
 
+    await enrichHotItemsWithBookMetadata(allItems);
+
     const deduped = new Map<string, FanqieHotItem>();
     for (const item of allItems) {
-      const key = cleanText(item.title).toLowerCase();
+      const key = extractBookIdFromUrl(item.url) || cleanText(item.title).toLowerCase();
       if (!key) continue;
       const existing = deduped.get(key);
       if (!existing || item.rank < existing.rank) {
@@ -209,7 +470,13 @@ export async function scrapeFanqieHotListWithPlaywright(
       throw new Error('Fanqie rank scraping returned zero entries');
     }
 
-    return sorted.slice(0, limit);
+    return sorted
+      .slice(0, limit)
+      .map((item) => ({
+        ...item,
+        title: cleanText(item.title) || '热榜作品',
+        sourceUrl: cleanText(item.sourceUrl) || FANQIE_RANK_DISCOVERY_URL,
+      }));
   } finally {
     await browser.close();
   }
@@ -628,7 +895,7 @@ export async function refreshImagineTemplatesForDate(
     await upsertImagineTemplateSnapshot(env.DB, {
       snapshotDate,
       source: 'fanqie_rank',
-      sourceUrl: (options?.sourceUrls || FANQIE_DEFAULT_RANK_URLS).join('\n'),
+      sourceUrl: summarizeSourceUrls(hotItems, options?.sourceUrls || [...FANQIE_DEFAULT_RANK_URLS]),
       ranking: hotItems,
       templates,
       modelProvider: aiConfig.provider,
@@ -649,7 +916,7 @@ export async function refreshImagineTemplatesForDate(
     await upsertImagineTemplateSnapshot(env.DB, {
       snapshotDate,
       source: 'fanqie_rank',
-      sourceUrl: (options?.sourceUrls || FANQIE_DEFAULT_RANK_URLS).join('\n'),
+      sourceUrl: summarizeSourceUrls(hotItems, options?.sourceUrls || [...FANQIE_DEFAULT_RANK_URLS]),
       ranking: hotItems,
       templates: [],
       status: 'error',

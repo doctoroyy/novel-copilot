@@ -222,22 +222,69 @@ export async function fetchBibleTemplates(
   };
 }
 
-export type BibleTemplateRefreshResult = {
-  success: boolean;
+export type BibleTemplateRefreshJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export type BibleTemplateRefreshJob = {
+  id: string;
   snapshotDate: string;
-  templateCount: number;
-  hotCount: number;
+  force: boolean;
+  source: string;
+  requestedByUserId: string | null;
+  requestedByRole: string;
+  sourceUrls: string[];
+  maxTemplates: number | null;
+  status: BibleTemplateRefreshJobStatus;
+  message: string | null;
+  errorMessage: string | null;
+  resultTemplateCount: number;
+  resultHotCount: number;
   skipped: boolean;
-  status: 'ready' | 'error';
-  errorMessage?: string;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  updatedAt: number;
 };
+
+export type BibleTemplateRefreshEnqueueResult = {
+  success: boolean;
+  queued: boolean;
+  created: boolean;
+  job: BibleTemplateRefreshJob;
+};
+
+function parseTemplateRefreshJob(raw: any): BibleTemplateRefreshJob {
+  return {
+    id: String(raw?.id || ''),
+    snapshotDate: String(raw?.snapshotDate || ''),
+    force: Boolean(raw?.force),
+    source: String(raw?.source || 'manual'),
+    requestedByUserId: raw?.requestedByUserId ? String(raw.requestedByUserId) : null,
+    requestedByRole: String(raw?.requestedByRole || 'user'),
+    sourceUrls: Array.isArray(raw?.sourceUrls) ? raw.sourceUrls.map((item: any) => String(item)) : [],
+    maxTemplates: raw?.maxTemplates === null || raw?.maxTemplates === undefined
+      ? null
+      : Number(raw.maxTemplates) || null,
+    status: ['queued', 'running', 'completed', 'failed'].includes(String(raw?.status))
+      ? (String(raw.status) as BibleTemplateRefreshJobStatus)
+      : 'queued',
+    message: raw?.message ? String(raw.message) : null,
+    errorMessage: raw?.errorMessage ? String(raw.errorMessage) : null,
+    resultTemplateCount: Number(raw?.resultTemplateCount || 0),
+    resultHotCount: Number(raw?.resultHotCount || 0),
+    skipped: Boolean(raw?.skipped),
+    createdAt: Number(raw?.createdAt || 0),
+    startedAt: raw?.startedAt === null || raw?.startedAt === undefined ? null : Number(raw.startedAt),
+    finishedAt: raw?.finishedAt === null || raw?.finishedAt === undefined ? null : Number(raw.finishedAt),
+    updatedAt: Number(raw?.updatedAt || 0),
+  };
+}
 
 export async function refreshBibleTemplates(
   apiBaseUrl: string,
   token: string,
   snapshotDate?: string,
   force: boolean = true,
-): Promise<BibleTemplateRefreshResult> {
+): Promise<BibleTemplateRefreshEnqueueResult> {
   const res = await fetch(buildApiUrl(apiBaseUrl, '/bible-templates/refresh'), {
     method: 'POST',
     headers: {
@@ -250,20 +297,34 @@ export async function refreshBibleTemplates(
     }),
   });
 
-  const json = await parseJsonResponse<BibleTemplateRefreshResult>(res);
-  if (!json.success && (json as any).status !== 'error') {
-    throw new Error(json.error || 'Failed to refresh bible templates');
+  const json = await parseJsonResponse<{ queued: boolean; created: boolean; job: BibleTemplateRefreshJob }>(res);
+  if (!json.success || !(json as any).job) {
+    throw new Error(json.error || 'Failed to enqueue bible template refresh');
   }
 
   return {
     success: Boolean(json.success),
-    snapshotDate: String((json as any).snapshotDate || ''),
-    templateCount: Number((json as any).templateCount || 0),
-    hotCount: Number((json as any).hotCount || 0),
-    skipped: Boolean((json as any).skipped),
-    status: (json as any).status === 'error' ? 'error' : 'ready',
-    errorMessage: (json as any).errorMessage || undefined,
+    queued: Boolean((json as any).queued),
+    created: Boolean((json as any).created),
+    job: parseTemplateRefreshJob((json as any).job),
   };
+}
+
+export async function fetchBibleTemplateRefreshJob(
+  apiBaseUrl: string,
+  token: string,
+  jobId: string,
+): Promise<BibleTemplateRefreshJob> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/bible-templates/refresh-jobs/${encodeURIComponent(jobId)}`), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ job: BibleTemplateRefreshJob }>(res);
+  if (!json.success || !(json as any).job) {
+    throw new Error(json.error || 'Failed to fetch bible template refresh job');
+  }
+
+  return parseTemplateRefreshJob((json as any).job);
 }
 
 async function parseSSE(
@@ -708,6 +769,8 @@ export type AdminBibleTemplateSummary = {
   status: 'ready' | 'error' | null;
   errorMessage: string | null;
   availableSnapshots: BibleTemplateSnapshotResponse['availableSnapshots'];
+  latestJob: BibleTemplateRefreshJob | null;
+  latestJobs: BibleTemplateRefreshJob[];
 };
 
 export async function fetchAdminBibleTemplateSummary(
@@ -728,6 +791,8 @@ export async function fetchAdminBibleTemplateSummary(
     status: (json as any).status ?? null,
     errorMessage: (json as any).errorMessage ?? null,
     availableSnapshots: Array.isArray((json as any).availableSnapshots) ? (json as any).availableSnapshots : [],
+    latestJob: (json as any).latestJob ? parseTemplateRefreshJob((json as any).latestJob) : null,
+    latestJobs: Array.isArray((json as any).latestJobs) ? (json as any).latestJobs.map((item: any) => parseTemplateRefreshJob(item)) : [],
   };
 }
 
@@ -736,7 +801,7 @@ export async function refreshAdminBibleTemplates(
   token: string,
   snapshotDate?: string,
   force: boolean = true,
-): Promise<BibleTemplateRefreshResult> {
+): Promise<BibleTemplateRefreshEnqueueResult> {
   const res = await fetch(buildApiUrl(apiBaseUrl, '/admin/bible-templates/refresh'), {
     method: 'POST',
     headers: {
@@ -749,18 +814,32 @@ export async function refreshAdminBibleTemplates(
     }),
   });
 
-  const json = await parseJsonResponse<BibleTemplateRefreshResult>(res);
-  if (!json.success && (json as any).status !== 'error') {
-    throw new Error(json.error || 'Failed to refresh admin bible templates');
+  const json = await parseJsonResponse<{ queued: boolean; created: boolean; job: BibleTemplateRefreshJob }>(res);
+  if (!json.success || !(json as any).job) {
+    throw new Error(json.error || 'Failed to enqueue admin bible templates refresh');
   }
 
   return {
     success: Boolean(json.success),
-    snapshotDate: String((json as any).snapshotDate || ''),
-    templateCount: Number((json as any).templateCount || 0),
-    hotCount: Number((json as any).hotCount || 0),
-    skipped: Boolean((json as any).skipped),
-    status: (json as any).status === 'error' ? 'error' : 'ready',
-    errorMessage: (json as any).errorMessage || undefined,
+    queued: Boolean((json as any).queued),
+    created: Boolean((json as any).created),
+    job: parseTemplateRefreshJob((json as any).job),
   };
+}
+
+export async function fetchAdminBibleTemplateRefreshJob(
+  apiBaseUrl: string,
+  token: string,
+  jobId: string,
+): Promise<BibleTemplateRefreshJob> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/admin/bible-templates/jobs/${encodeURIComponent(jobId)}`), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ job: BibleTemplateRefreshJob }>(res);
+  if (!json.success || !(json as any).job) {
+    throw new Error(json.error || 'Failed to fetch admin bible template refresh job');
+  }
+
+  return parseTemplateRefreshJob((json as any).job);
 }

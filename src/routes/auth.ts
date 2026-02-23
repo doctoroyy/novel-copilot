@@ -46,7 +46,8 @@ authRoutes.post('/register', async (c) => {
       return c.json({ success: false, error: '邀请码已过期' }, 400);
     }
 
-    const maxUses = Number((code as any).max_uses ?? 1);
+    const parsedMaxUses = Number((code as any).max_uses);
+    const maxUses = Number.isFinite(parsedMaxUses) ? parsedMaxUses : 10;
     const usedCount = Number((code as any).used_count ?? 0);
     if (Number.isFinite(maxUses) && maxUses > 0 && Number.isFinite(usedCount) && usedCount >= maxUses) {
       return c.json({ success: false, error: '邀请码已用完' }, 400);
@@ -83,8 +84,8 @@ authRoutes.post('/register', async (c) => {
         AND COALESCE(is_active, 1) = 1
         AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?)
         AND (
-          COALESCE(max_uses, 1) <= 0
-          OR COALESCE(used_count, 0) < COALESCE(max_uses, 1)
+          COALESCE(max_uses, 10) <= 0
+          OR COALESCE(used_count, 0) < COALESCE(max_uses, 10)
         )
     `).bind(now, userId, normalizedInvitationCode, now).run();
 

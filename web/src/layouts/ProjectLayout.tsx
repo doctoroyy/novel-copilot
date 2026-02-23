@@ -120,16 +120,12 @@ function ProjectLayoutInner() {
 
   const handleRefreshTemplates = async () => {
     setTemplateRefreshing(true);
-    setTemplateHint('正在生成热点模板，请稍候...');
     try {
-      const result = await refreshBibleTemplates(undefined, true);
-      if (result.status === 'error') {
-        throw new Error(result.errorMessage || '模板生成失败');
-      }
+      const enqueue = await refreshBibleTemplates(undefined, true);
       setTemplateHint(
-        result.skipped
-          ? `模板已是最新（${result.snapshotDate}）`
-          : `模板已更新：${result.templateCount} 个（${result.snapshotDate}）`
+        enqueue.created
+          ? '模板刷新任务已加入任务中心，请在右下角「任务管理」查看进度。'
+          : '已有模板刷新任务在执行，请在右下角「任务管理」查看进度。'
       );
       await loadTemplates(templateSnapshotDate === 'latest' ? undefined : templateSnapshotDate);
     } catch (err) {
@@ -399,7 +395,7 @@ function ProjectLayoutInner() {
                 <Select
                   value={selectedTemplateId || 'none'}
                   onValueChange={(value) => applyTemplate(value === 'none' ? '' : value)}
-                  disabled={templateLoading || templateOptions.length === 0}
+                  disabled={templateLoading}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={templateLoading ? '模板加载中...' : '选择热点模板'} />
@@ -421,7 +417,7 @@ function ProjectLayoutInner() {
               )}
               {!templateLoading && templateOptions.length === 0 && (
                 <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-2 text-xs text-amber-800">
-                  当前还没有可用模板。点击“拉取/刷新模板”可立即生成当天热点模板。
+                  当前还没有可用模板。点击“拉取/刷新模板”后，可在右下角任务中心查看生成进度。
                 </div>
               )}
               {selectedTemplateId && (

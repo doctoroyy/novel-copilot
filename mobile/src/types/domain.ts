@@ -112,7 +112,8 @@ export type BibleTemplateSnapshotResponse = {
 };
 
 export type GenerationTask = {
-  id: number;
+  id: number | string;
+  taskType?: 'chapters' | 'outline' | 'bible' | 'other';
   projectId: string;
   projectName: string;
   userId: string;
@@ -122,6 +123,7 @@ export type GenerationTask = {
   failedChapters: number[];
   currentProgress: number;
   currentMessage: string | null;
+  cancelRequested?: boolean;
   status: 'running' | 'paused' | 'completed' | 'failed';
   errorMessage: string | null;
   createdAt: number;
