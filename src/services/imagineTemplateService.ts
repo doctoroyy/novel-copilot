@@ -12,6 +12,16 @@ const PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS = [1_500, 5_000, 12_000] as const;
 const FANQIE_PAGE_TIMEOUT_MS = 18_000;
 const FANQIE_SCRAPE_DEADLINE_MS = 150_000;
 const FANQIE_BOOK_META_TIMEOUT_MS = 12_000;
+const TEMPLATE_NAME_STYLES = [
+  '强钩子开局',
+  '冲突升级',
+  '反转推进',
+  '成长逆袭',
+  '多线博弈',
+  '情绪兑现',
+  '悬念驱动',
+  '节奏拉满',
+] as const;
 
 export interface FanqieHotItem {
   rank: number;
@@ -81,6 +91,37 @@ function cleanText(input: string | null | undefined): string {
   return (input || '').replace(/\s+/g, ' ').trim();
 }
 
+function cleanCopyText(input: string | null | undefined): string {
+  const text = cleanText(input);
+  if (!text) return '';
+
+  return text
+    .replace(/[\uE000-\uF8FF]/gu, '')
+    .replace(/[\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu, '')
+    .replace(/[□■◻◼▢▣▤▥▦▧▨▩]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function clipText(value: string, max = 20): string {
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+function normalizeGenreLabel(raw: string | null | undefined): string {
+  const cleaned = cleanCopyText(raw)
+    .replace(/[|/\\]+/g, '·')
+    .replace(/[\s·]{2,}/g, '·')
+    .replace(/^[·\s]+|[·\s]+$/g, '');
+  if (!cleaned) return '综合题材';
+  return clipText(cleaned, 10);
+}
+
+function buildReadableTemplateName(index: number, genre: string): string {
+  const style = TEMPLATE_NAME_STYLES[index % TEMPLATE_NAME_STYLES.length];
+  const serial = String(index + 1).padStart(2, '0');
+  return `${normalizeGenreLabel(genre)}·${style} 模板${serial}`;
+}
+
 export function toChinaDateKey(epochMs = Date.now()): string {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai',
@@ -110,7 +151,10 @@ function extractBookIdFromUrl(url?: string): string {
 function looksObfuscatedTitle(title?: string): boolean {
   const text = cleanText(title);
   if (!text) return true;
-  return /[\uE000-\uF8FF]/.test(text);
+  if (/[\uE000-\uF8FF]/.test(text)) return true;
+  const normalized = cleanCopyText(text);
+  if (!normalized) return true;
+  return normalized.length < Math.max(2, Math.floor(text.length * 0.6));
 }
 
 function summarizeSourceUrls(hotItems: FanqieHotItem[], fallback?: string[]): string {
@@ -530,11 +574,21 @@ export async function scrapeFanqieHotListWithPlaywright(
 
     return sorted
       .slice(0, limit)
-      .map((item) => ({
-        ...item,
-        title: cleanText(item.title) || '热榜作品',
-        sourceUrl: cleanText(item.sourceUrl) || FANQIE_RANK_DISCOVERY_URL,
-      }));
+      .map((item, index) => {
+        const title = cleanCopyText(item.title) || `热榜作品 ${index + 1}`;
+        return {
+          ...item,
+          title,
+          author: cleanCopyText(item.author) || undefined,
+          summary: clipText(cleanCopyText(item.summary), 220) || undefined,
+          status: cleanCopyText(item.status) || undefined,
+          readingCountText: cleanCopyText(item.readingCountText) || undefined,
+          updatedAtText: cleanCopyText(item.updatedAtText) || undefined,
+          category: cleanCopyText(item.category) || undefined,
+          url: cleanText(item.url) || undefined,
+          sourceUrl: cleanText(item.sourceUrl) || FANQIE_RANK_DISCOVERY_URL,
+        };
+      });
   } finally {
     await browser.close();
   }
@@ -605,7 +659,7 @@ function extractFirstJsonObject(raw: string): string | null {
 function normalizeStringArray(value: unknown, max = 8): string[] {
   if (Array.isArray(value)) {
     return value
-      .map((entry) => cleanText(String(entry)))
+      .map((entry) => cleanCopyText(String(entry)))
       .filter(Boolean)
       .slice(0, max);
   }
@@ -613,7 +667,7 @@ function normalizeStringArray(value: unknown, max = 8): string[] {
   if (typeof value === 'string') {
     return value
       .split(/[、,，;；|]/)
-      .map((entry) => cleanText(entry))
+      .map((entry) => cleanCopyText(entry))
       .filter(Boolean)
       .slice(0, max);
   }
@@ -629,15 +683,15 @@ function buildTemplateId(snapshotDate: string, index: number, name: string): str
 }
 
 function sanitizeTemplate(raw: any, index: number, snapshotDate: string): ImagineTemplate {
-  const name = cleanText(raw?.name || raw?.title || `热点模板 ${index + 1}`);
-  const genre = cleanText(raw?.genre || raw?.type || '热点融合');
-  const coreTheme = cleanText(raw?.coreTheme || raw?.theme || '逆袭与成长');
-  const oneLineSellingPoint = cleanText(raw?.oneLineSellingPoint || raw?.sellingPoint || '高反差冲突 + 高密度爽点');
-  const protagonistSetup = cleanText(raw?.protagonistSetup || raw?.protagonist || '主角具备清晰目标与强执行力');
-  const hookDesign = cleanText(raw?.hookDesign || raw?.hook || '开篇用危机事件+身份反差制造强钩子');
-  const conflictDesign = cleanText(raw?.conflictDesign || raw?.conflict || '每 3-5 章触发一次明显冲突升级');
-  const growthRoute = cleanText(raw?.growthRoute || raw?.growth || '小胜-受挫-反杀-跨阶成长');
-  const recommendedOpening = cleanText(raw?.recommendedOpening || raw?.opening || '第一章直入主冲突，80字内给出悬念与代价');
+  const genre = normalizeGenreLabel(raw?.genre || raw?.type || '热点融合');
+  const coreTheme = cleanCopyText(raw?.coreTheme || raw?.theme || '逆袭与成长') || '逆袭与成长';
+  const name = buildReadableTemplateName(index, genre);
+  const oneLineSellingPoint = cleanCopyText(raw?.oneLineSellingPoint || raw?.sellingPoint || '高压开局 + 快节奏升级 + 连续反转') || '高压开局 + 快节奏升级 + 连续反转';
+  const protagonistSetup = cleanCopyText(raw?.protagonistSetup || raw?.protagonist || '主角具备清晰目标与强执行力') || '主角具备清晰目标与强执行力';
+  const hookDesign = cleanCopyText(raw?.hookDesign || raw?.hook || '开篇用危机事件与身份反差制造强钩子') || '开篇用危机事件与身份反差制造强钩子';
+  const conflictDesign = cleanCopyText(raw?.conflictDesign || raw?.conflict || '每 3-5 章触发一次明显冲突升级') || '每 3-5 章触发一次明显冲突升级';
+  const growthRoute = cleanCopyText(raw?.growthRoute || raw?.growth || '小胜-受挫-反杀-跨阶成长') || '小胜-受挫-反杀-跨阶成长';
+  const recommendedOpening = cleanCopyText(raw?.recommendedOpening || raw?.opening || '第一章直入主冲突，80 字内给出悬念和代价。') || '第一章直入主冲突，80 字内给出悬念和代价。';
 
   const keywords = normalizeStringArray(raw?.keywords, 10);
   const fanqieSignals = normalizeStringArray(raw?.fanqieSignals || raw?.platformSignals, 10);
@@ -664,12 +718,13 @@ function fallbackTemplatesFromHotList(hotItems: FanqieHotItem[], snapshotDate: s
   const topItems = hotItems.slice(0, 12);
 
   return topItems.map((item, index) => {
-    const seed = cleanText(item.title) || `热点题材 ${index + 1}`;
-    const genre = cleanText(item.category?.split('·').pop()) || '热点融合';
+    const seed = cleanCopyText(item.title) || '';
+    const genre = normalizeGenreLabel(item.category?.split('·').pop() || '热点融合');
+    const name = buildReadableTemplateName(index, genre);
 
     return {
-      id: buildTemplateId(snapshotDate, index, seed),
-      name: `${seed} 同款强钩子模板`,
+      id: buildTemplateId(snapshotDate, index, name),
+      name,
       genre,
       coreTheme: '强目标驱动下的逆袭与博弈',
       oneLineSellingPoint: '高压开局 + 快节奏升级 + 连续反转',
@@ -679,8 +734,8 @@ function fallbackTemplatesFromHotList(hotItems: FanqieHotItem[], snapshotDate: s
       conflictDesign: '外部压迫和内部短板双线并进，每卷末爆点收束',
       growthRoute: '生存破局 -> 小范围掌控 -> 跨层博弈 -> 终局对决',
       fanqieSignals: ['高频爽点', '章节末悬念', '冲突密度高', '情绪回报快'],
-      recommendedOpening: `开篇 100 字内呈现「${seed}」同款危机现场与主角抉择。`,
-      sourceBooks: [seed],
+      recommendedOpening: '开篇 100 字内呈现危机现场、主角代价与反制动作。',
+      sourceBooks: seed ? [seed] : [],
     };
   });
 }
@@ -709,7 +764,7 @@ export async function extractImagineTemplatesFromHotList(params: {
     .join('\n');
 
   const system = `你是顶级网文策划编辑，擅长把热点榜单抽象成可复用的创作模板。\n请严格输出 JSON，不要输出 Markdown，不要输出解释。`;
-  const prompt = `请基于以下番茄小说热榜内容，生成 ${maxTemplates} 个“AI 自动想象模板”。\n\n要求：\n1) 模板必须覆盖多类型，不要都一样。\n2) 每个模板都要可直接用于生成 Story Bible。\n3) 强调“开篇钩子、冲突升级、爽点兑现、成长路线”。\n4) 不要照抄榜单情节，要抽象成可复用套路。\n\n榜单数据：\n${hotListText}\n\n返回 JSON 结构：\n{\n  "templates": [\n    {\n      "name": "模板名",\n      "genre": "类型",\n      "coreTheme": "核心主题",\n      "oneLineSellingPoint": "一句话卖点",\n      "keywords": ["关键词1", "关键词2"],\n      "protagonistSetup": "主角设定",\n      "hookDesign": "开篇钩子",\n      "conflictDesign": "冲突设计",\n      "growthRoute": "成长路线",\n      "fanqieSignals": ["平台信号1", "平台信号2"],\n      "recommendedOpening": "开篇建议",\n      "sourceBooks": ["来自哪些热门书名"]\n    }\n  ]\n}`;
+  const prompt = `请基于以下番茄小说热榜内容，生成 ${maxTemplates} 个“AI 自动想象模板”。\n\n要求：\n1) 模板必须覆盖多类型，不要都一样。\n2) 每个模板都要可直接用于生成 Story Bible。\n3) 强调“开篇钩子、冲突升级、爽点兑现、成长路线”。\n4) 不要照抄榜单情节，要抽象成可复用套路。\n5) 文案必须使用自然中文，不要出现乱码字符、私有区字符、机翻味表达。\n\n榜单数据：\n${hotListText}\n\n返回 JSON 结构：\n{\n  "templates": [\n    {\n      "name": "模板名",\n      "genre": "类型",\n      "coreTheme": "核心主题",\n      "oneLineSellingPoint": "一句话卖点",\n      "keywords": ["关键词1", "关键词2"],\n      "protagonistSetup": "主角设定",\n      "hookDesign": "开篇钩子",\n      "conflictDesign": "冲突设计",\n      "growthRoute": "成长路线",\n      "fanqieSignals": ["平台信号1", "平台信号2"],\n      "recommendedOpening": "开篇建议",\n      "sourceBooks": ["来自哪些热门书名"]\n    }\n  ]\n}`;
 
   let raw = '';
   try {
@@ -799,11 +854,26 @@ function parseSnapshotRow(row: any): ImagineTemplateSnapshot | null {
   if (!row) return null;
 
   try {
-    const ranking = JSON.parse(row.ranking_json || '[]') as FanqieHotItem[];
-    const templates = JSON.parse(row.templates_json || '[]') as ImagineTemplate[];
+    const snapshotDate = String(row.snapshot_date);
+    const rankingRaw = JSON.parse(row.ranking_json || '[]') as FanqieHotItem[];
+    const ranking = rankingRaw.map((item, index) => ({
+      rank: Number.isFinite(Number(item?.rank)) ? Number(item.rank) : index + 1,
+      title: cleanCopyText(item?.title) || `热榜作品 ${index + 1}`,
+      author: cleanCopyText(item?.author) || undefined,
+      summary: clipText(cleanCopyText(item?.summary), 220) || undefined,
+      status: cleanCopyText(item?.status) || undefined,
+      readingCountText: cleanCopyText(item?.readingCountText) || undefined,
+      updatedAtText: cleanCopyText(item?.updatedAtText) || undefined,
+      category: cleanCopyText(item?.category) || undefined,
+      url: cleanText(item?.url) || undefined,
+      sourceUrl: cleanText(item?.sourceUrl) || FANQIE_RANK_DISCOVERY_URL,
+    }));
+
+    const templatesRaw = JSON.parse(row.templates_json || '[]') as ImagineTemplate[];
+    const templates = templatesRaw.map((item, index) => sanitizeTemplate(item, index, snapshotDate));
 
     return {
-      snapshotDate: String(row.snapshot_date),
+      snapshotDate,
       source: String(row.source || 'fanqie_rank'),
       sourceUrl: String(row.source_url || FANQIE_DEFAULT_RANK_URLS[0]),
       ranking,
