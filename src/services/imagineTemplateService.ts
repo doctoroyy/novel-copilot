@@ -7,7 +7,11 @@ export const FANQIE_DEFAULT_RANK_URLS = [
 
 const FANQIE_RANK_DISCOVERY_URL = 'https://fanqienovel.com/rank';
 const FANQIE_DEFAULT_SCRAPE_LIMIT = 36;
-const FANQIE_MAX_DISCOVERED_SOURCES = 16;
+const FANQIE_MAX_DISCOVERED_SOURCES = 8;
+const PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS = [1_500, 5_000, 12_000] as const;
+const FANQIE_PAGE_TIMEOUT_MS = 18_000;
+const FANQIE_SCRAPE_DEADLINE_MS = 150_000;
+const FANQIE_BOOK_META_TIMEOUT_MS = 12_000;
 
 export interface FanqieHotItem {
   rank: number;
@@ -131,14 +135,59 @@ function summarizeSourceUrls(hotItems: FanqieHotItem[], fallback?: string[]): st
   return [...urls].join('\n');
 }
 
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function isPlaywrightRateLimitError(error: unknown): boolean {
+  const message = String((error as Error)?.message || '').toLowerCase();
+  return message.includes('rate limit') || message.includes('code: 429') || message.includes('too many requests');
+}
+
+async function launchBrowserWithRetry(browserBinding: Fetcher): Promise<any> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await launch(browserBinding);
+    } catch (error) {
+      lastError = error as Error;
+      if (!isPlaywrightRateLimitError(lastError) || attempt === PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS.length) {
+        throw lastError;
+      }
+
+      const delay = PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS[attempt];
+      console.warn(
+        `[ImagineTemplates] Playwright launch rate-limited, retrying in ${delay}ms (attempt ${attempt + 1}/${PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS.length + 1})`
+      );
+      await sleep(delay);
+    }
+  }
+
+  throw lastError || new Error('Failed to launch Playwright browser');
+}
+
 async function discoverRankSources(browser: any): Promise<FanqieRankSource[]> {
   const page = await browser.newPage();
   try {
     await page.goto(FANQIE_RANK_DISCOVERY_URL, {
       waitUntil: 'domcontentloaded',
-      timeout: 45_000,
+      timeout: FANQIE_PAGE_TIMEOUT_MS,
     });
-    await page.waitForTimeout(1300);
+    await page.waitForTimeout(900);
 
     const links = await page.evaluate(() => {
       const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
@@ -226,9 +275,9 @@ async function scrapeOneRankPage(browser: any, source: FanqieRankSource): Promis
   try {
     await page.goto(source.url, {
       waitUntil: 'domcontentloaded',
-      timeout: 45_000,
+      timeout: FANQIE_PAGE_TIMEOUT_MS,
     });
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(700);
 
     const items = await page.evaluate((payload: { sourceUrl: string; categoryLabel: string }) => {
       const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim();
@@ -309,13 +358,22 @@ async function fetchBookPageMetadata(url: string): Promise<{
   category?: string;
   author?: string;
 }> {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Referer': FANQIE_RANK_DISCOVERY_URL,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FANQIE_BOOK_META_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': FANQIE_RANK_DISCOVERY_URL,
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
     throw new Error(`Fetch page failed: ${response.status}`);
   }
@@ -412,7 +470,7 @@ export async function scrapeFanqieHotListWithPlaywright(
 
   const requestedSourceUrls = (options?.sourceUrls || []).map((entry) => cleanText(entry)).filter(Boolean);
   const limit = Math.max(1, Math.min(100, options?.limit ?? FANQIE_DEFAULT_SCRAPE_LIMIT));
-  const browser = await launch(env.FANQIE_BROWSER);
+  const browser = await launchBrowserWithRetry(env.FANQIE_BROWSER);
 
   try {
     let sources: FanqieRankSource[] = [];
@@ -480,6 +538,24 @@ export async function scrapeFanqieHotListWithPlaywright(
   } finally {
     await browser.close();
   }
+}
+
+async function getLatestSnapshotWithRanking(db: D1Database, limit = 10): Promise<ImagineTemplateSnapshot | null> {
+  const rows = await db.prepare(`
+    SELECT *
+    FROM ai_imagine_template_snapshots
+    ORDER BY snapshot_date DESC
+    LIMIT ?
+  `).bind(Math.max(1, Math.min(60, limit))).all();
+
+  for (const row of (rows.results || []) as any[]) {
+    const snapshot = parseSnapshotRow(row);
+    if (snapshot && Array.isArray(snapshot.ranking) && snapshot.ranking.length > 0) {
+      return snapshot;
+    }
+  }
+
+  return null;
 }
 
 function extractFirstJsonObject(raw: string): string | null {
@@ -860,14 +936,14 @@ export async function refreshImagineTemplatesForDate(
 }> {
   const snapshotDate = options?.snapshotDate || toChinaDateKey();
   const force = Boolean(options?.force);
+  const existingSnapshot = await getImagineTemplateSnapshot(env.DB, snapshotDate);
 
   if (!force) {
-    const existing = await getImagineTemplateSnapshot(env.DB, snapshotDate);
-    if (existing && existing.status === 'ready' && existing.templates.length > 0) {
+    if (existingSnapshot && existingSnapshot.status === 'ready' && existingSnapshot.templates.length > 0) {
       return {
         snapshotDate,
-        templateCount: existing.templates.length,
-        hotCount: existing.ranking.length,
+        templateCount: existingSnapshot.templates.length,
+        hotCount: existingSnapshot.ranking.length,
         skipped: true,
         status: 'ready',
       };
@@ -877,10 +953,35 @@ export async function refreshImagineTemplatesForDate(
   let hotItems: FanqieHotItem[] = [];
 
   try {
-    hotItems = await scrapeFanqieHotListWithPlaywright(env, {
-      sourceUrls: options?.sourceUrls,
-      limit: 36,
-    });
+    try {
+      hotItems = await withTimeout(
+        scrapeFanqieHotListWithPlaywright(env, {
+          sourceUrls: options?.sourceUrls,
+          limit: 36,
+        }),
+        FANQIE_SCRAPE_DEADLINE_MS,
+        `Fanqie scraping timeout after ${FANQIE_SCRAPE_DEADLINE_MS}ms`
+      );
+    } catch (scrapeError) {
+      const fallbackSnapshot = (existingSnapshot && existingSnapshot.ranking.length > 0)
+        ? existingSnapshot
+        : await getLatestSnapshotWithRanking(env.DB, 12);
+
+      if (fallbackSnapshot && fallbackSnapshot.ranking.length > 0) {
+        hotItems = fallbackSnapshot.ranking
+          .slice(0, 36)
+          .map((item) => ({
+            ...item,
+            sourceUrl: cleanText(item.sourceUrl) || FANQIE_RANK_DISCOVERY_URL,
+          }));
+        console.warn(
+          '[ImagineTemplates] scrape failed, using cached ranking snapshot:',
+          (scrapeError as Error).message
+        );
+      } else {
+        throw scrapeError;
+      }
+    }
 
     const aiConfig =
       await getAIConfigFromRegistry(env.DB, 'generate_outline') ||
