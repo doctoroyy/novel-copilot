@@ -927,11 +927,16 @@ export function ProjectDetailScreen() {
         <Modal visible={outlineModal} animationType="slide" transparent onRequestClose={() => setOutlineModal(false)}>
           <KeyboardAvoidingView
             style={styles.modalMask}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={insets.top + 8}
+            behavior={Platform.OS === 'ios' ? 'position' : undefined}
+            keyboardVerticalOffset={0}
           >
             <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 20 }]}>
-              <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={styles.modalScrollContent}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+                contentContainerStyle={styles.modalScrollContent}
+              >
                 <Text style={styles.modalTitle}>大纲参数</Text>
                 <Text style={styles.inputLabel}>目标章节数</Text>
                 <TextInput

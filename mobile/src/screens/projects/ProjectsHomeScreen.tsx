@@ -18,13 +18,12 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { createProject, fetchProjects } from '../../lib/api';
+import { createProject, fetchBibleTemplates, fetchProjects, generateBible } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import { gradients, ui } from '../../theme/tokens';
-import type { ProjectSummary } from '../../types/domain';
+import type { BibleImagineTemplate, ProjectSummary } from '../../types/domain';
 import type { ProjectsStackParamList } from '../../types/navigation';
-import { generateBible } from '../../lib/api';
 
 export function ProjectsHomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
@@ -50,6 +49,11 @@ export function ProjectsHomeScreen() {
   const [aiTheme, setAiTheme] = useState('');
   const [aiKeywords, setAiKeywords] = useState('');
   const [generatingBible, setGeneratingBible] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSnapshotDate, setTemplateSnapshotDate] = useState('latest');
+  const [templateDates, setTemplateDates] = useState<string[]>([]);
+  const [templateOptions, setTemplateOptions] = useState<BibleImagineTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
 
   const loadProjects = useCallback(async (isRefresh = false) => {
     if (!token) return;
@@ -134,12 +138,21 @@ export function ProjectsHomeScreen() {
 
     setGeneratingBible(true);
     try {
+      const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId);
       const bible = await generateBible(
         config.apiBaseUrl,
         token,
-        aiGenre,
-        aiTheme,
-        aiKeywords,
+        {
+          genre: aiGenre,
+          theme: aiTheme,
+          keywords: aiKeywords,
+          templateId: selectedTemplateId || undefined,
+          templateSnapshotDate:
+            templateSnapshotDate && templateSnapshotDate !== 'latest'
+              ? templateSnapshotDate
+              : undefined,
+          template: selectedTemplate,
+        },
         config.ai
       );
       setNewBible(bible);
@@ -148,11 +161,53 @@ export function ProjectsHomeScreen() {
       setAiGenre('');
       setAiTheme('');
       setAiKeywords('');
+      setSelectedTemplateId('');
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setGeneratingBible(false);
     }
+  };
+
+  const loadTemplateData = useCallback(async (snapshotDate?: string) => {
+    if (!token) return;
+    setTemplateLoading(true);
+    try {
+      const data = await fetchBibleTemplates(config.apiBaseUrl, token, snapshotDate);
+      setTemplateOptions(data.templates || []);
+      setTemplateDates(
+        (data.availableSnapshots || [])
+          .filter((entry) => entry.status === 'ready')
+          .map((entry) => entry.snapshotDate)
+      );
+      if (snapshotDate) {
+        setTemplateSnapshotDate(snapshotDate);
+      } else if (templateSnapshotDate !== 'latest' && data.snapshotDate) {
+        setTemplateSnapshotDate(data.snapshotDate);
+      }
+      if (!data.templates.some((item) => item.id === selectedTemplateId)) {
+        setSelectedTemplateId('');
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTemplateLoading(false);
+    }
+  }, [config.apiBaseUrl, token, templateSnapshotDate, selectedTemplateId]);
+
+  useEffect(() => {
+    if (!showAiModal) return;
+    void loadTemplateData();
+  }, [showAiModal, loadTemplateData]);
+
+  const applyTemplate = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+    const selected = templateOptions.find((item) => item.id === templateId);
+    if (!selected) return;
+
+    if (!aiGenre.trim()) setAiGenre(selected.genre);
+    if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
+    if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
   };
 
   return (
@@ -291,13 +346,14 @@ export function ProjectsHomeScreen() {
       <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
         <KeyboardAvoidingView
           style={styles.modalMask}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={insets.top + 8}
+          behavior={Platform.OS === 'ios' ? 'position' : undefined}
+          keyboardVerticalOffset={0}
         >
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
               contentContainerStyle={styles.modalScrollContent}
             >
               <View style={styles.sheetHandle} />
@@ -368,18 +424,111 @@ export function ProjectsHomeScreen() {
       <Modal visible={showAiModal} animationType="slide" transparent onRequestClose={() => setShowAiModal(false)}>
         <KeyboardAvoidingView
           style={styles.modalMask}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={insets.top + 8}
+          behavior={Platform.OS === 'ios' ? 'position' : undefined}
+          keyboardVerticalOffset={0}
         >
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
               contentContainerStyle={styles.modalScrollContent}
             >
               <View style={styles.sheetHandle} />
               <Text style={styles.modalTitle}>AI 辅助设定</Text>
               <Text style={styles.modalSubtitle}>输入关键词，AI 帮你生成完整世界观</Text>
+
+              <Text style={styles.inputLabel}>模板日期</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.templateDateRow}
+              >
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.templateDateChip,
+                    templateSnapshotDate === 'latest' && styles.templateDateChipActive,
+                    pressed && styles.pressed,
+                  ]}
+                  onPress={() => {
+                    setTemplateSnapshotDate('latest');
+                    setSelectedTemplateId('');
+                    void loadTemplateData();
+                  }}
+                >
+                  <Text style={[
+                    styles.templateDateText,
+                    templateSnapshotDate === 'latest' && styles.templateDateTextActive,
+                  ]}>最新</Text>
+                </Pressable>
+                {templateDates.map((date) => (
+                  <Pressable
+                    key={date}
+                    style={({ pressed }) => [
+                      styles.templateDateChip,
+                      templateSnapshotDate === date && styles.templateDateChipActive,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => {
+                      setTemplateSnapshotDate(date);
+                      setSelectedTemplateId('');
+                      void loadTemplateData(date);
+                    }}
+                  >
+                    <Text style={[
+                      styles.templateDateText,
+                      templateSnapshotDate === date && styles.templateDateTextActive,
+                    ]}>{date}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              <Text style={styles.inputLabel}>热点模板</Text>
+              {templateLoading ? (
+                <View style={styles.templateLoadingBox}>
+                  <ActivityIndicator color={ui.colors.primary} />
+                  <Text style={styles.templateLoadingText}>正在加载模板...</Text>
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.templateCardRow}
+                >
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.templateCard,
+                      !selectedTemplateId && styles.templateCardActive,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => setSelectedTemplateId('')}
+                  >
+                    <Text style={[styles.templateTitle, !selectedTemplateId && styles.templateTitleActive]}>不使用模板</Text>
+                    <Text style={styles.templateMeta}>纯手动输入</Text>
+                  </Pressable>
+                  {templateOptions.map((template) => (
+                    <Pressable
+                      key={template.id}
+                      style={({ pressed }) => [
+                        styles.templateCard,
+                        selectedTemplateId === template.id && styles.templateCardActive,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={() => applyTemplate(template.id)}
+                    >
+                      <Text
+                        style={[styles.templateTitle, selectedTemplateId === template.id && styles.templateTitleActive]}
+                        numberOfLines={2}
+                      >
+                        {template.name}
+                      </Text>
+                      <Text style={styles.templateMeta} numberOfLines={1}>
+                        {template.genre} · {(template.keywords || []).slice(0, 3).join(' / ')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
 
               <Text style={styles.inputLabel}>类型 (必填)</Text>
               <TextInput
@@ -832,6 +981,75 @@ const styles = StyleSheet.create({
     color: ui.colors.textSecondary,
     fontSize: 13,
     marginTop: 2,
+  },
+  templateDateRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  templateDateChip: {
+    borderRadius: ui.radius.pill,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  templateDateChipActive: {
+    backgroundColor: ui.colors.primarySoft,
+    borderColor: ui.colors.primaryBorder,
+  },
+  templateDateText: {
+    color: ui.colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  templateDateTextActive: {
+    color: ui.colors.primaryStrong,
+  },
+  templateLoadingBox: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    minHeight: 72,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  templateLoadingText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+  },
+  templateCardRow: {
+    gap: 10,
+    paddingVertical: 2,
+  },
+  templateCard: {
+    width: 200,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  templateCardActive: {
+    borderColor: ui.colors.primaryBorder,
+    backgroundColor: ui.colors.primarySoft,
+  },
+  templateTitle: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  templateTitleActive: {
+    color: ui.colors.primaryStrong,
+  },
+  templateMeta: {
+    color: ui.colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
   },
   labelRow: {
     flexDirection: 'row',

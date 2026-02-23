@@ -3,6 +3,8 @@ import type { Env } from '../worker.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
+export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
+
 function toTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -66,6 +68,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
       const updatedAtMs = toTimestampMs(task.updated_at);
       return {
       id: task.id,
+      taskType: (task.task_type || 'chapters') as TaskType,
       projectId: task.project_id,
       projectName: task.project_name,
       userId: task.user_id,
@@ -94,6 +97,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
 // Types
 export type GenerationTask = {
   id: number;
+  taskType: TaskType;
   projectId: string;
   projectName: string;
   userId: string;
@@ -142,6 +146,54 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
   }
 });
 
+// Get task by taskId (user-scoped)
+tasksRoutes.get('/tasks/:id', async (c) => {
+  const taskId = c.req.param('id');
+  const userId = c.get('userId');
+
+  try {
+    const task = await c.env.DB.prepare(`
+      SELECT t.*, p.name as project_name
+      FROM generation_tasks t
+      JOIN projects p ON t.project_id = p.id
+      WHERE t.id = ? AND t.user_id = ?
+      LIMIT 1
+    `).bind(taskId, userId).first() as any;
+
+    if (!task) {
+      return c.json({ success: false, error: 'Task not found' }, 404);
+    }
+
+    const createdAtMs = toTimestampMs(task.created_at);
+    const updatedAtMs = toTimestampMs(task.updated_at);
+
+    return c.json({
+      success: true,
+      task: {
+        id: task.id,
+        taskType: (task.task_type || 'chapters') as TaskType,
+        projectId: task.project_id,
+        projectName: task.project_name,
+        userId: task.user_id,
+        targetCount: task.target_count,
+        startChapter: task.start_chapter,
+        completedChapters: JSON.parse(task.completed_chapters || '[]'),
+        failedChapters: JSON.parse(task.failed_chapters || '[]'),
+        currentProgress: task.current_progress || 0,
+        currentMessage: task.current_message || null,
+        cancelRequested: Boolean(task.cancel_requested),
+        status: task.status,
+        errorMessage: task.error_message,
+        createdAt: createdAtMs,
+        updatedAt: updatedAtMs,
+        updatedAtMs,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Get active task for a project
 tasksRoutes.get('/projects/:name/active-task', async (c) => {
   const name = c.req.param('name');
@@ -159,6 +211,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
       WHERE t.project_id = ? AND t.user_id = ? AND t.status IN ('running', 'paused')
+      AND t.task_type = 'chapters'
       AND t.cancel_requested = 0
       ORDER BY t.created_at DESC
       LIMIT 1
@@ -172,6 +225,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
     const updatedAtMs = toTimestampMs(task.updated_at);
     const result: GenerationTask = {
       id: task.id,
+      taskType: (task.task_type || 'chapters') as TaskType,
       projectId: task.project_id,
       projectName: task.project_name,
       userId: task.user_id,
@@ -349,6 +403,7 @@ export async function createGenerationTask(
     SELECT id, target_count, start_chapter, status, cancel_requested, completed_chapters
     FROM generation_tasks
     WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
+    AND task_type = 'chapters'
     ORDER BY created_at DESC
     LIMIT 1
   `).bind(projectId, userId).first() as { id: number; target_count: number; start_chapter: number; completed_chapters: string } | null;
@@ -389,11 +444,48 @@ export async function createGenerationTask(
 
   // Create new task
   const result = await db.prepare(`
-    INSERT INTO generation_tasks (project_id, user_id, target_count, start_chapter, cancel_requested)
-    VALUES (?, ?, ?, ?, 0)
+    INSERT INTO generation_tasks (project_id, user_id, target_count, start_chapter, cancel_requested, task_type)
+    VALUES (?, ?, ?, ?, 0, 'chapters')
   `).bind(projectId, userId, targetCount, startChapter).run();
 
   return result.meta.last_row_id as number;
+}
+
+export async function createBackgroundTask(
+  db: D1Database,
+  projectId: string,
+  userId: string,
+  taskType: TaskType,
+  targetCount: number,
+  startChapter: number = 0,
+  initialMessage: string | null = null
+): Promise<{ taskId: number; created: boolean }> {
+  const existing = await db.prepare(`
+    SELECT id
+    FROM generation_tasks
+    WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0 AND task_type = ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(projectId, userId, taskType).first() as { id: number } | null;
+
+  if (existing?.id) {
+    return { taskId: existing.id, created: false };
+  }
+
+  const result = await db.prepare(`
+    INSERT INTO generation_tasks (
+      project_id,
+      user_id,
+      target_count,
+      start_chapter,
+      cancel_requested,
+      task_type,
+      current_message
+    )
+    VALUES (?, ?, ?, ?, 0, ?, ?)
+  `).bind(projectId, userId, targetCount, startChapter, taskType, initialMessage).run();
+
+  return { taskId: result.meta.last_row_id as number, created: true };
 }
 
 export async function updateTaskProgress(
@@ -456,12 +548,14 @@ export async function checkRunningTask(
     ? await db.prepare(`
         SELECT * FROM generation_tasks
         WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
+        AND task_type = 'chapters'
         ORDER BY updated_at DESC
         LIMIT 1
       `).bind(projectId, userId).first()
     : await db.prepare(`
         SELECT * FROM generation_tasks
         WHERE project_id = ? AND status = 'running' AND cancel_requested = 0
+        AND task_type = 'chapters'
         ORDER BY updated_at DESC
         LIMIT 1
       `).bind(projectId).first()) as any;
@@ -475,6 +569,7 @@ export async function checkRunningTask(
         completedChapters: JSON.parse(task.completed_chapters || '[]'),
         failedChapters: JSON.parse(task.failed_chapters || '[]'),
         targetCount: task.target_count,
+        taskType: (task.task_type || 'chapters') as TaskType,
         currentProgress: task.current_progress,
         currentMessage: task.current_message,
         cancelRequested: Boolean(task.cancel_requested),
@@ -526,6 +621,7 @@ export async function getTaskById(
   const updatedAtMs = toTimestampMs(task.updated_at);
   return {
     id: task.id,
+    taskType: (task.task_type || 'chapters') as TaskType,
     projectId: task.project_id,
     projectName: task.project_name,
     userId: task.user_id,

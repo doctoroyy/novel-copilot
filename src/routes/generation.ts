@@ -11,7 +11,22 @@ import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
-import { createGenerationTask, updateTaskProgress, completeTask, checkRunningTask, updateTaskMessage, getTaskById } from './tasks.js';
+import {
+  createGenerationTask,
+  createBackgroundTask,
+  updateTaskProgress,
+  completeTask,
+  checkRunningTask,
+  updateTaskMessage,
+  getTaskById,
+} from './tasks.js';
+import {
+  getImagineTemplateSnapshot,
+  listImagineTemplateSnapshotDates,
+  refreshImagineTemplatesForDate,
+  resolveImagineTemplateById,
+  type ImagineTemplate,
+} from '../services/imagineTemplateService.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -179,202 +194,282 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
   };
 }
 
-// Generate outline (streaming SSE to avoid Workers timeout)
+type OutlineQueuePayload = {
+  taskType: 'outline';
+  taskId: number;
+  userId: string;
+  projectId: string;
+  targetChapters: number;
+  targetWordCount: number;
+  customPrompt?: string;
+  minChapterWords?: number;
+  aiConfig: AIConfig;
+};
+
+const OUTLINE_TASK_PROGRESS_TOTAL = 100;
+
+function computeOutlineProgress(volumeIndex: number, totalVolumes: number): number {
+  if (totalVolumes <= 0) {
+    return 70;
+  }
+  const ratio = (volumeIndex + 1) / totalVolumes;
+  const scaled = 20 + Math.round(ratio * 60);
+  return Math.max(20, Math.min(80, scaled));
+}
+
+async function enqueueOutlineTask(c: any, payload: OutlineQueuePayload): Promise<void> {
+  if (c.env.GENERATION_QUEUE) {
+    await c.env.GENERATION_QUEUE.send(payload);
+    return;
+  }
+
+  console.warn('GENERATION_QUEUE not bound, falling back to waitUntil for outline task');
+  c.executionCtx.waitUntil(
+    runOutlineGenerationTaskInBackground({
+      env: c.env,
+      taskId: payload.taskId,
+      userId: payload.userId,
+      projectId: payload.projectId,
+      targetChapters: payload.targetChapters,
+      targetWordCount: payload.targetWordCount,
+      customPrompt: payload.customPrompt,
+      minChapterWords: payload.minChapterWords,
+      aiConfig: payload.aiConfig,
+    })
+  );
+}
+
+export async function runOutlineGenerationTaskInBackground(params: {
+  env: Env;
+  taskId: number;
+  userId: string;
+  projectId: string;
+  targetChapters: number;
+  targetWordCount: number;
+  customPrompt?: string;
+  minChapterWords?: number;
+  aiConfig: AIConfig;
+}) {
+  const {
+    env,
+    taskId,
+    userId,
+    projectId,
+    targetChapters,
+    targetWordCount,
+    customPrompt,
+    minChapterWords,
+    aiConfig,
+  } = params;
+
+  try {
+    const runtime = await getTaskRuntimeControl(env.DB, taskId);
+    if (!runtime.exists || runtime.status !== 'running') {
+      return;
+    }
+    if (runtime.cancelRequested) {
+      await completeTask(env.DB, taskId, false, '任务已取消');
+      return;
+    }
+
+    const project = await env.DB.prepare(`
+      SELECT p.id, p.bible, p.name, s.min_chapter_words
+      FROM projects p
+      LEFT JOIN states s ON p.id = s.project_id
+      WHERE p.id = ? AND p.user_id = ? AND p.deleted_at IS NULL
+      LIMIT 1
+    `).bind(projectId, userId).first() as {
+      id: string;
+      bible: string;
+      name: string;
+      min_chapter_words?: number;
+    } | null;
+
+    if (!project) {
+      await completeTask(env.DB, taskId, false, 'Project not found');
+      return;
+    }
+
+    const effectiveMinChapterWords =
+      minChapterWords
+      ?? (Number.isFinite(Number(project.min_chapter_words))
+        ? Number(project.min_chapter_words)
+        : DEFAULT_MIN_CHAPTER_WORDS);
+
+    await updateTaskMessage(env.DB, taskId, '正在准备大纲生成...', 5);
+
+    try {
+      await consumeCredit(env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
+    } catch (creditError) {
+      await completeTask(env.DB, taskId, false, (creditError as Error).message);
+      return;
+    }
+
+    let bible = project.bible;
+    if (customPrompt) {
+      bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
+    }
+
+    const charRecord = await env.DB.prepare(`
+      SELECT characters_json FROM characters WHERE project_id = ?
+    `).bind(project.id).first() as { characters_json?: string } | null;
+    const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json) : undefined;
+
+    await updateTaskMessage(
+      env.DB,
+      taskId,
+      characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...',
+      12
+    );
+
+    const masterOutline = await generateMasterOutline(aiConfig, {
+      bible,
+      targetChapters,
+      targetWordCount,
+      characters,
+      minChapterWords: effectiveMinChapterWords,
+    });
+
+    const totalVolumes = masterOutline.volumes?.length || 0;
+    const volumes = [];
+
+    for (let i = 0; i < masterOutline.volumes.length; i++) {
+      const currentRuntime = await getTaskRuntimeControl(env.DB, taskId);
+      if (!currentRuntime.exists || currentRuntime.status !== 'running') {
+        return;
+      }
+      if (currentRuntime.cancelRequested) {
+        await completeTask(env.DB, taskId, false, '任务已取消');
+        return;
+      }
+
+      const vol = masterOutline.volumes[i];
+      const previousVolumeEndState = i > 0
+        ? masterOutline.volumes[i - 1].volumeEndState ||
+        `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
+        : null;
+
+      await updateTaskMessage(
+        env.DB,
+        taskId,
+        `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...`,
+        computeOutlineProgress(i, totalVolumes)
+      );
+
+      const chapters = await generateVolumeChapters(aiConfig, {
+        bible,
+        masterOutline,
+        volume: vol,
+        previousVolumeSummary: previousVolumeEndState || undefined,
+        minChapterWords: effectiveMinChapterWords,
+      });
+
+      const normalizedVolume = normalizeVolume(vol, i, chapters);
+      volumes.push(normalizedVolume);
+    }
+
+    const outline = {
+      totalChapters: targetChapters,
+      targetWordCount,
+      volumes,
+      mainGoal: masterOutline.mainGoal || '',
+      milestones: normalizeMilestones(masterOutline.milestones || []),
+    };
+
+    await updateTaskMessage(env.DB, taskId, '正在验证并保存大纲...', 90);
+
+    const validation = validateOutline(outline, targetChapters);
+    if (!validation.valid) {
+      console.warn('Outline validation issues:', validation.issues);
+    }
+
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
+    `).bind(project.id, JSON.stringify(outline)).run();
+
+    await env.DB.prepare(`
+      UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
+    `).bind(targetChapters, effectiveMinChapterWords, project.id).run();
+
+    await updateTaskMessage(env.DB, taskId, '大纲生成完成', OUTLINE_TASK_PROGRESS_TOTAL);
+    await completeTask(env.DB, taskId, true, undefined);
+  } catch (error) {
+    console.error(`Outline task ${taskId} failed:`, error);
+    await completeTask(env.DB, taskId, false, (error as Error).message || '大纲生成失败');
+  }
+}
+
+// Generate outline (queue-backed, returns immediately)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId') as string | null;
   if (!userId) {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
-  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
 
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
   if (!aiConfig) {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  const encoder = new TextEncoder();
-
-  // Create a readable stream for SSE
-  const stream = new ReadableStream({
-    async start(controller) {
-      // Helper to send SSE event
-      const sendEvent = (type: string, data: any) => {
-        const payload = JSON.stringify({ type, ...data });
-        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      };
-
-      // Heartbeat to keep connection alive
-      const heartbeatInterval = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
-        } catch {
-          clearInterval(heartbeatInterval);
-        }
-      }, 5000);
-
-      try {
-        const { targetChapters = 400, targetWordCount = 100, customPrompt, minChapterWords } = await c.req.json();
-        const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
-        const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords);
-        if (hasMinChapterWords && parsedMinChapterWords === null) {
-          sendEvent('error', {
-            error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
-          });
-          controller.close();
-          clearInterval(heartbeatInterval);
-          return;
-        }
-
-        sendEvent('start', { targetChapters, targetWordCount });
-
-        // Get project (user-scoped)
-        const project = await c.env.DB.prepare(`
-          SELECT p.id, p.bible, p.name, s.min_chapter_words
-          FROM projects p
-          LEFT JOIN states s ON p.id = s.project_id
-          WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
-          ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
-          LIMIT 1
-        `).bind(name, name, userId, name).first();
-
-        if (!project) {
-          sendEvent('error', { error: 'Project not found' });
-          controller.close();
-          clearInterval(heartbeatInterval);
-          return;
-        }
-
-        const effectiveMinChapterWords =
-          parsedMinChapterWords
-          ?? (Number.isFinite(Number((project as any).min_chapter_words))
-            ? Number((project as any).min_chapter_words)
-            : DEFAULT_MIN_CHAPTER_WORDS);
-
-        let bible = (project as any).bible;
-        if (customPrompt) {
-          bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
-        }
-
-        // 查询是否已有人物关系数据（先建人物再生成大纲的场景）
-        const charRecord = await c.env.DB.prepare(`
-          SELECT characters_json FROM characters WHERE project_id = ?
-        `).bind(project.id).first();
-        const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json as string) : undefined;
-
-        console.log(`Starting outline generation for ${(project as any).name}: ${targetChapters} chapters, ${targetWordCount}万字${characters ? ' (with characters)' : ''}`);
-
-        // Phase 1: Generate master outline
-        sendEvent('progress', { phase: 1, message: characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...' });
-        console.log('Phase 1: Generating master outline...');
-        // 0. Consume Credit
-        try {
-          await consumeCredit(c.env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
-        } catch (error) {
-          sendEvent('error', { error: (error as Error).message, status: 402 });
-          controller.close();
-          clearInterval(heartbeatInterval);
-          return;
-        }
-
-        // 1. Generate Outline (传入 characters 以获得更好的大局观)
-        const masterOutline = await generateMasterOutline(aiConfig, {
-          bible,
-          targetChapters,
-          targetWordCount,
-          characters,
-          minChapterWords: effectiveMinChapterWords,
-        });
-        const totalVolumes = masterOutline.volumes?.length || 0;
-        console.log(`Master outline generated: ${totalVolumes} volumes`);
-        sendEvent('master_outline', { totalVolumes, mainGoal: masterOutline.mainGoal });
-
-        // Phase 2: Generate volume chapters
-        const volumes = [];
-        for (let i = 0; i < masterOutline.volumes.length; i++) {
-          const vol = masterOutline.volumes[i];
-          const previousVolumeEndState = i > 0
-            ? masterOutline.volumes[i - 1].volumeEndState ||
-            `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
-            : null;
-
-          sendEvent('progress', {
-            phase: 2,
-            volumeIndex: i + 1,
-            totalVolumes,
-            volumeTitle: vol.title,
-            message: `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...`
-          });
-          console.log(`Phase 2.${i + 1}: Generating chapters for volume ${i + 1}/${totalVolumes} "${vol.title}"...`);
-
-          const chapters = await generateVolumeChapters(aiConfig, {
-            bible,
-            masterOutline,
-            volume: vol,
-            previousVolumeSummary: previousVolumeEndState || undefined,
-            minChapterWords: effectiveMinChapterWords,
-          });
-          const normalizedVolume = normalizeVolume(vol, i, chapters);
-          volumes.push(normalizedVolume);
-
-          sendEvent('volume_complete', {
-            volumeIndex: i + 1,
-            totalVolumes,
-            volumeTitle: normalizedVolume.title,
-            chapterCount: normalizedVolume.chapters?.length || 0
-          });
-        }
-
-        const outline = {
-          totalChapters: targetChapters,
-          targetWordCount,
-          volumes,
-          mainGoal: masterOutline.mainGoal || '',
-          milestones: normalizeMilestones(masterOutline.milestones || []),
-        };
-
-        // Phase 3: Validate
-        sendEvent('progress', { phase: 3, message: '正在验证大纲...' });
-        console.log('Phase 3: Validating outline...');
-        const validation = validateOutline(outline, targetChapters);
-        if (!validation.valid) {
-          console.warn('Outline validation issues:', validation.issues);
-        }
-
-        // Save outline
-        await c.env.DB.prepare(`
-          INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
-        `).bind((project as any).id, JSON.stringify(outline)).run();
-
-        // Update state
-        await c.env.DB.prepare(`
-          UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
-        `).bind(targetChapters, effectiveMinChapterWords, (project as any).id).run();
-
-        console.log(`Outline generation complete for ${name}!`);
-
-        sendEvent('done', {
-          success: true,
-          outline,
-          validation: validation.valid ? undefined : validation
-        });
-
-        clearInterval(heartbeatInterval);
-        controller.close();
-      } catch (error) {
-        sendEvent('error', { error: (error as Error).message });
-        clearInterval(heartbeatInterval);
-        controller.close();
-      }
+  try {
+    const { targetChapters = 400, targetWordCount = 100, customPrompt, minChapterWords } = await c.req.json();
+    const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
+    const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords);
+    if (hasMinChapterWords && parsedMinChapterWords === null) {
+      return c.json({
+        success: false,
+        error: `minChapterWords must be an integer between ${MIN_CHAPTER_WORDS_LIMIT} and ${MAX_CHAPTER_WORDS_LIMIT}`,
+      }, 400);
     }
-  });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+    const project = await c.env.DB.prepare(`
+      SELECT p.id
+      FROM projects p
+      WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as { id: string } | null;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const { taskId, created } = await createBackgroundTask(
+      c.env.DB,
+      project.id,
+      userId,
+      'outline',
+      OUTLINE_TASK_PROGRESS_TOTAL,
+      0,
+      '任务已创建，等待队列执行...'
+    );
+
+    if (created) {
+      await enqueueOutlineTask(c, {
+        taskType: 'outline',
+        taskId,
+        userId,
+        projectId: project.id,
+        targetChapters,
+        targetWordCount,
+        customPrompt,
+        minChapterWords: parsedMinChapterWords ?? undefined,
+        aiConfig,
+      });
+    }
+
+    return c.json({
+      success: true,
+      message: created
+        ? 'Outline generation task has been enqueued in the background.'
+        : 'An outline generation task is already running in the background.',
+      taskId,
+    }, 202);
+  } catch (error) {
+    console.error('Outline generation enqueue failed:', error);
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
 });
 
 
@@ -789,6 +884,7 @@ async function startGenerationChain(
   if (c.env.GENERATION_QUEUE) {
     // Queue implementation
     await c.env.GENERATION_QUEUE.send({
+      taskType: 'chapters',
       taskId,
       userId,
       aiConfig,
@@ -1146,6 +1242,7 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       try {
         await env.GENERATION_QUEUE.send({
+          taskType: 'chapters',
           taskId,
           userId,
           aiConfig,
@@ -1602,6 +1699,61 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
 
 });
 
+function mergeKeywordInput(rawKeywords: string, template?: ImagineTemplate): string {
+  const list = [
+    ...rawKeywords.split(/[、,，;；|]/).map((entry) => entry.trim()).filter(Boolean),
+    ...(template?.keywords || []),
+  ];
+  return [...new Set(list)].slice(0, 12).join('、');
+}
+
+function formatTemplateHint(template: ImagineTemplate | null, snapshotDate?: string): string {
+  if (!template) return '';
+
+  return `【热点模板参考${snapshotDate ? ` (${snapshotDate})` : ''}】
+- 模板名: ${template.name}
+- 类型: ${template.genre}
+- 核心主题: ${template.coreTheme}
+- 一句话卖点: ${template.oneLineSellingPoint}
+- 关键词: ${(template.keywords || []).join('、')}
+- 主角设定: ${template.protagonistSetup}
+- 开篇钩子: ${template.hookDesign}
+- 冲突设计: ${template.conflictDesign}
+- 成长路线: ${template.growthRoute}
+- 平台信号: ${(template.fanqieSignals || []).join('、')}
+- 开篇建议: ${template.recommendedOpening}
+- 参考热点书名: ${(template.sourceBooks || []).join('、')}`;
+}
+
+generationRoutes.get('/bible-templates', async (c) => {
+  const snapshotDate = c.req.query('snapshotDate') || c.req.query('date');
+  const selectedSnapshot = await getImagineTemplateSnapshot(c.env.DB, snapshotDate || undefined);
+  const dates = await listImagineTemplateSnapshotDates(c.env.DB, 60);
+
+  return c.json({
+    success: true,
+    snapshotDate: selectedSnapshot?.snapshotDate || null,
+    templates: selectedSnapshot?.templates || [],
+    ranking: selectedSnapshot?.ranking || [],
+    status: selectedSnapshot?.status || null,
+    errorMessage: selectedSnapshot?.errorMessage || null,
+    availableSnapshots: dates,
+  });
+});
+
+generationRoutes.post('/bible-templates/refresh', async (c) => {
+  const body = await c.req.json().catch(() => ({} as any));
+  const result = await refreshImagineTemplatesForDate(c.env, {
+    snapshotDate: typeof body.snapshotDate === 'string' ? body.snapshotDate : undefined,
+    force: Boolean(body.force),
+  });
+
+  return c.json({
+    success: result.status === 'ready',
+    ...result,
+  });
+});
+
 // Generate bible
 generationRoutes.post('/generate-bible', async (c) => {
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
@@ -1611,7 +1763,35 @@ generationRoutes.post('/generate-bible', async (c) => {
   }
 
   try {
-    const { genre, theme, keywords } = await c.req.json();
+    const body = await c.req.json().catch(() => ({} as any));
+    const genreInput = typeof body.genre === 'string' ? body.genre.trim() : '';
+    const themeInput = typeof body.theme === 'string' ? body.theme.trim() : '';
+    const keywordsInput = typeof body.keywords === 'string' ? body.keywords.trim() : '';
+    const templateId = typeof body.templateId === 'string' ? body.templateId.trim() : '';
+    const templateSnapshotDate = typeof body.templateSnapshotDate === 'string' ? body.templateSnapshotDate.trim() : '';
+
+    const bodyTemplate = body.template && typeof body.template === 'object'
+      ? body.template as ImagineTemplate
+      : null;
+
+    let resolvedTemplate: ImagineTemplate | null = bodyTemplate;
+    let resolvedTemplateDate: string | undefined;
+
+    if (!resolvedTemplate && templateId) {
+      const resolved = await resolveImagineTemplateById(
+        c.env.DB,
+        templateId,
+        templateSnapshotDate || undefined
+      );
+      if (resolved) {
+        resolvedTemplate = resolved.template;
+        resolvedTemplateDate = resolved.snapshotDate;
+      }
+    }
+
+    const genre = genreInput || resolvedTemplate?.genre || '';
+    const theme = themeInput || resolvedTemplate?.coreTheme || '';
+    const keywords = mergeKeywordInput(keywordsInput, resolvedTemplate || undefined);
 
     // Genre-specific templates for better quality
     const genreTemplates: Record<string, string> = {
@@ -1642,8 +1822,8 @@ generationRoutes.post('/generate-bible', async (c) => {
 【注意事项】不能只靠战力，要有情感线、成长线（心境成长）、谜团揭示。`,
     };
 
-    // Get genre template or use default
     const genreTemplate = genre && genreTemplates[genre] ? genreTemplates[genre] : '';
+    const templateHint = formatTemplateHint(resolvedTemplate, resolvedTemplateDate || templateSnapshotDate || undefined);
 
     const system = `你是一个**番茄/起点爆款网文策划专家**，精通读者心理和平台推荐算法。
 
@@ -1707,12 +1887,21 @@ ${theme ? `- 主题/核心创意: ${theme}` : ''}
 ${keywords ? `- 关键词/元素: ${keywords}` : ''}
 
 ${genreTemplate ? `【类型参考模板】\n${genreTemplate}` : ''}
+${templateHint ? `${templateHint}\n` : ''}
 
 请基于以上信息，生成一个**能在番茄获得流量**的完整 Story Bible：`;
 
     const bible = await generateText(aiConfig, { system, prompt, temperature: 0.9 });
 
-    return c.json({ success: true, bible });
+    return c.json({
+      success: true,
+      bible,
+      templateApplied: resolvedTemplate ? {
+        templateId: resolvedTemplate.id,
+        templateName: resolvedTemplate.name,
+        snapshotDate: resolvedTemplateDate || templateSnapshotDate || null,
+      } : null,
+    });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }

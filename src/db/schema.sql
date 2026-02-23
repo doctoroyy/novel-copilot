@@ -169,6 +169,28 @@ CREATE INDEX IF NOT EXISTS idx_chapter_qc_project ON chapter_qc(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapter_qc_score ON chapter_qc(project_id, score);
 
 -- =====================================================
+-- AI 自动想象模板快照（番茄热榜 -> LLM 模板）
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS ai_imagine_template_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_date TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL DEFAULT 'fanqie_rank',
+  source_url TEXT NOT NULL,
+  ranking_json TEXT NOT NULL,
+  templates_json TEXT NOT NULL,
+  model_provider TEXT,
+  model_name TEXT,
+  status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN ('ready', 'error')),
+  error_message TEXT,
+  created_at INTEGER DEFAULT (unixepoch() * 1000),
+  updated_at INTEGER DEFAULT (unixepoch() * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_imagine_snapshot_created ON ai_imagine_template_snapshots(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_imagine_snapshot_status_date ON ai_imagine_template_snapshots(status, snapshot_date DESC);
+
+-- =====================================================
 -- Generation Tasks (for persistence and resume)
 -- =====================================================
 

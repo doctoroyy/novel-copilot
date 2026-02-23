@@ -85,7 +85,7 @@ export function ActivityPanel({
     : 0;
 
   return (
-    <aside className="w-80 lg:w-80 sm:w-72 h-screen flex flex-col border-l border-border bg-sidebar">
+    <aside className="w-80 lg:w-80 sm:w-72 h-dvh flex flex-col border-l border-border bg-sidebar">
       {/* Header */}
       <div className="p-3 lg:p-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">

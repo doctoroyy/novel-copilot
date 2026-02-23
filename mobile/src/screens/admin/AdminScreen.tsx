@@ -278,8 +278,8 @@ export function AdminScreen() {
     >
       <KeyboardAvoidingView
         style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={insets.top + 8}
+        behavior={Platform.OS === 'ios' ? 'position' : undefined}
+        keyboardVerticalOffset={0}
       >
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
@@ -288,7 +288,11 @@ export function AdminScreen() {
               <Ionicons name="close" size={24} color={ui.colors.text} />
             </TouchableOpacity>
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
             <Text style={styles.label}>显示名称</Text>
             <TextInput
               style={styles.input}
@@ -355,8 +359,8 @@ export function AdminScreen() {
     >
       <KeyboardAvoidingView
         style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={insets.top + 8}
+        behavior={Platform.OS === 'ios' ? 'position' : undefined}
+        keyboardVerticalOffset={0}
       >
          <View style={[styles.modalContent, { height: 'auto', maxHeight: 300 }]}>
             <Text style={styles.modalTitle}>修改定价: {editingFeature?.name}</Text>

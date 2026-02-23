@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
-import { cancelAllActiveTasks, cancelTaskById } from '@/lib/api';
+import { cancelAllActiveTasks, cancelTaskById, getAllActiveTasks, type GenerationTask } from '@/lib/api';
 import {
   TASK_HISTORY_EVENT_NAME,
   getTaskHistorySnapshot,
@@ -23,6 +23,7 @@ export function FloatingProgressButton() {
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
   const [cancelingProjectName, setCancelingProjectName] = useState<string | null>(null);
+  const [serverTasks, setServerTasks] = useState<ActiveTask[]>([]);
 
   // Listen for history updates
   useEffect(() => {
@@ -32,22 +33,78 @@ export function FloatingProgressButton() {
     return () => window.removeEventListener(TASK_HISTORY_EVENT_NAME, handler);
   }, []);
 
-  // Combine legacy generation state with new active tasks
-  const allTasks: ActiveTask[] = [
-    ...activeTasks,
-    // Add legacy chapter generation if active
-    ...(generationState.isGenerating ? [{
-      id: 'legacy-chapters',
-      type: 'chapters' as TaskType,
-      title: generationState.message || '生成章节中...',
-      status: generationState.status || 'generating',
-      current: generationState.current,
-      total: generationState.total,
-      startTime: generationState.startTime ?? 0,
-      projectName: generationState.projectName,
-      taskId: generationState.taskId,
-    }] : []),
-  ];
+  // Recover/poll running tasks from backend so refresh can restore task panel state
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const mapServerTask = (task: GenerationTask): ActiveTask => {
+      const type = (task.taskType || 'chapters') as TaskType;
+      const current = Math.max(0, task.currentProgress || 0);
+      const total = task.targetCount > 0 ? task.targetCount : undefined;
+
+      return {
+        id: `server-${task.id}`,
+        taskId: task.id,
+        type,
+        title: task.currentMessage || `${task.projectName}: ${type === 'outline' ? '大纲生成中...' : '任务执行中...'}`,
+        status: task.status === 'paused' ? 'preparing' : 'generating',
+        current,
+        total,
+        startTime: task.createdAt || task.updatedAtMs || Date.now(),
+        projectName: task.projectName,
+        startChapter: task.startChapter,
+        message: task.currentMessage || undefined,
+      };
+    };
+
+    const sync = async () => {
+      try {
+        const tasks = await getAllActiveTasks();
+        if (disposed) return;
+        setServerTasks(tasks.map(mapServerTask));
+      } catch {
+        if (disposed) return;
+        // Keep previous snapshot on transient network/auth failures
+      }
+    };
+
+    void sync();
+    timer = setInterval(() => {
+      void sync();
+    }, 2500);
+
+    return () => {
+      disposed = true;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  const allTasks = useMemo(() => {
+    const merged: ActiveTask[] = [
+      ...serverTasks,
+      ...activeTasks,
+      ...(generationState.isGenerating ? [{
+        id: 'legacy-chapters',
+        type: 'chapters' as TaskType,
+        title: generationState.message || '生成章节中...',
+        status: generationState.status || 'generating',
+        current: generationState.current,
+        total: generationState.total,
+        startTime: generationState.startTime ?? 0,
+        projectName: generationState.projectName,
+        taskId: generationState.taskId,
+      }] : []),
+    ];
+
+    const seen = new Set<string>();
+    return merged.filter((task) => {
+      const key = typeof task.taskId === 'number' ? `task-${task.taskId}` : `id-${task.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [serverTasks, activeTasks, generationState]);
 
   const hasActiveTasks = allTasks.length > 0;
 

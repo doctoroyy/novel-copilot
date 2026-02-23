@@ -43,4 +43,11 @@ run_worker_first = ["/api/*"]
 binding = "ANIME_VIDEOS"
 bucket_name = "novel-copilot-videos"
 
+# Cloudflare Browser Rendering (Playwright)
+[browser]
+binding = "FANQIE_BROWSER"
+
+# Daily template refresh (UTC 00:20 => Asia/Shanghai 08:20)
+[triggers]
+crons = ["20 0 * * *"]
 

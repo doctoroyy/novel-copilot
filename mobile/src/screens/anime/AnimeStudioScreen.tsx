@@ -230,13 +230,14 @@ export function AnimeStudioScreen() {
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={insets.top + 8}
+          keyboardVerticalOffset={0}
         >
           <ScrollView
             contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void loadAll(true)} tintColor={ui.colors.primary} />}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             <View style={styles.headerWrap}>
               <View style={styles.headerBadge}>
