@@ -113,12 +113,35 @@ export function AdminPage() {
   const [batchRegistering, setBatchRegistering] = useState(false);
   const [templateSummary, setTemplateSummary] = useState<AdminBibleTemplateSummary | null>(null);
   const [refreshingTemplates, setRefreshingTemplates] = useState(false);
+  const [templateSnapshotView, setTemplateSnapshotView] = useState('latest');
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [selectedTemplatePreviewId, setSelectedTemplatePreviewId] = useState('');
 
   const findPreset = (providerId: string) => providerPresets.find(p => p.id === providerId);
 
-  const fetchTemplateSummary = async () => {
-    const summary = await fetchAdminBibleTemplateSummary();
+  const humanizeTemplateError = (message?: string | null) => {
+    if (!message) return '';
+    const lower = message.toLowerCase();
+    if (lower.includes('rate limit') || lower.includes('code: 429')) {
+      return '抓取服务限流（429），系统会自动退避重试。';
+    }
+    if (message.includes('输出被截断')) {
+      return '模型输出过长被截断，系统已自动降级并重试。';
+    }
+    if (lower.includes('timeout')) {
+      return '任务执行超时，建议稍后重试。';
+    }
+    return message;
+  };
+
+  const fetchTemplateSummary = async (snapshotDate?: string) => {
+    const summary = await fetchAdminBibleTemplateSummary(snapshotDate);
     setTemplateSummary(summary);
+    setSelectedTemplatePreviewId((prev) => {
+      if (summary.templates.length === 0) return '';
+      if (prev && summary.templates.some((item) => item.id === prev)) return prev;
+      return summary.templates[0].id;
+    });
   };
 
   const openManualAddForm = (prefill?: Partial<{
@@ -280,7 +303,7 @@ export function AdminPage() {
     setRefreshingTemplates(true);
     try {
       await refreshAdminBibleTemplates(undefined, true);
-      await fetchTemplateSummary();
+      await fetchTemplateSummary(templateSnapshotView === 'latest' ? undefined : templateSnapshotView);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -288,6 +311,24 @@ export function AdminPage() {
       setRefreshingTemplates(false);
     }
   };
+
+  const filteredTemplates = (templateSummary?.templates || []).filter((template) => {
+    const needle = templateSearch.trim().toLowerCase();
+    if (!needle) return true;
+    const haystack = [
+      template.name,
+      template.genre,
+      template.coreTheme,
+      template.oneLineSellingPoint,
+      ...(template.keywords || []),
+    ].join(' ').toLowerCase();
+    return haystack.includes(needle);
+  });
+
+  const selectedTemplatePreview = filteredTemplates.find((item) => item.id === selectedTemplatePreviewId)
+    || (templateSummary?.templates || []).find((item) => item.id === selectedTemplatePreviewId)
+    || filteredTemplates[0]
+    || null;
   
   if (loading) {
     return (
@@ -570,97 +611,216 @@ export function AdminPage() {
                   <Sparkles className="h-5 w-5 text-orange-500" />
                   模板管理中心
                 </CardTitle>
-                <CardDescription>统一管理热点模板任务、失败原因和历史快照</CardDescription>
+                <CardDescription>统一管理模板任务、模板库内容与历史快照</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="rounded-xl border bg-gradient-to-r from-orange-500/10 via-muted/20 to-transparent p-4 space-y-3">
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                     <div>
-                      <p className="text-sm font-medium">手动触发模板刷新任务</p>
+                      <p className="text-sm font-semibold">模板任务控制台</p>
                       <p className="text-xs text-muted-foreground">
-                        触发后会进入任务中心执行，避免页面停留时任务中断。
+                        手动触发后任务会进入任务中心执行，不受页面关闭影响。
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        当前快照：{templateSummary?.snapshotDate || '暂无'} · 模板 {templateSummary?.templateCount ?? 0} 条 · 热榜 {templateSummary?.hotCount ?? 0} 条
                       </p>
                     </div>
-                    <Button
-                      size="sm"
-                      onClick={handleManualTemplateRefresh}
-                      disabled={refreshingTemplates}
-                    >
-                      {refreshingTemplates ? '提交中...' : '触发任务'}
+                    <Button size="sm" onClick={handleManualTemplateRefresh} disabled={refreshingTemplates}>
+                      {refreshingTemplates ? (
+                        <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> 提交中</span>
+                      ) : (
+                        '触发任务'
+                      )}
                     </Button>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    最近快照：{templateSummary?.snapshotDate || '暂无'}，模板数：{templateSummary?.templateCount ?? 0}，热榜条目：{templateSummary?.hotCount ?? 0}
-                  </div>
                   {templateSummary?.latestJob && (
-                    <div className="text-xs text-muted-foreground">
+                    <div className="rounded-lg border bg-background/50 px-3 py-2 text-xs text-muted-foreground">
                       最近任务：{templateSummary.latestJob.snapshotDate} · {templateSummary.latestJob.status}
                       {templateSummary.latestJob.message ? ` · ${templateSummary.latestJob.message}` : ''}
+                      {templateSummary.latestJob.errorMessage ? ` · ${humanizeTemplateError(templateSummary.latestJob.errorMessage)}` : ''}
                     </div>
                   )}
-                  {templateSummary?.latestJob?.errorMessage && (
-                    <div className="text-xs text-destructive">
-                      最近失败原因：{templateSummary.latestJob.errorMessage}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <Select
+                      value={templateSnapshotView}
+                      onValueChange={(value) => {
+                        setTemplateSnapshotView(value);
+                        setTemplateSearch('');
+                        void fetchTemplateSummary(value === 'latest' ? undefined : value);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择快照" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="latest">最新快照</SelectItem>
+                        {(templateSummary?.availableSnapshots || []).map((snapshot) => (
+                          <SelectItem key={snapshot.snapshotDate} value={snapshot.snapshotDate}>
+                            {snapshot.snapshotDate} · {snapshot.templateCount} 条
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="relative">
+                      <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        value={templateSearch}
+                        onChange={(e) => setTemplateSearch(e.target.value)}
+                        placeholder="搜索模板名/类型/关键词"
+                        className="pl-9"
+                      />
                     </div>
-                  )}
-                  {templateSummary?.status === 'error' && (
-                    <div className="text-xs text-destructive">
-                      当前快照异常：{templateSummary.errorMessage || '未知错误'}
-                    </div>
-                  )}
+                    <Button
+                      variant="outline"
+                      onClick={() => fetchTemplateSummary(templateSnapshotView === 'latest' ? undefined : templateSnapshotView)}
+                    >
+                      <RefreshCcw className="h-4 w-4 mr-1" />
+                      刷新列表
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="rounded-lg border bg-muted/10 p-3 space-y-2">
-                    <p className="text-sm font-medium">最近任务</p>
-                    {!templateSummary?.latestJobs?.length ? (
-                      <p className="text-xs text-muted-foreground">暂无任务记录</p>
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+                  <div className="xl:col-span-4 rounded-xl border bg-muted/10 p-3 space-y-2">
+                    <p className="text-sm font-semibold">模板库 ({filteredTemplates.length})</p>
+                    {filteredTemplates.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">当前筛选条件下没有模板，尝试切换快照或清空搜索词。</p>
                     ) : (
-                      <div className="space-y-2">
-                        {templateSummary.latestJobs.map((job) => (
-                          <div key={job.id} className="rounded-md border bg-background/60 p-2 space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-xs font-medium">{job.snapshotDate}</p>
-                              <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
-                                {job.status}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{job.message || '无状态描述'}</p>
-                            {job.errorMessage && (
-                              <p className="text-xs text-destructive">{job.errorMessage}</p>
-                            )}
-                            <p className="text-[11px] text-muted-foreground">
-                              {new Date(job.createdAt).toLocaleString('zh-CN')}
+                      <div className="space-y-2 max-h-[460px] overflow-auto pr-1">
+                        {filteredTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => setSelectedTemplatePreviewId(template.id)}
+                            className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                              selectedTemplatePreview?.id === template.id
+                                ? 'border-orange-400 bg-orange-500/10'
+                                : 'border-border bg-background/50 hover:bg-muted/40'
+                            }`}
+                          >
+                            <p className="text-sm font-medium truncate">{template.name}</p>
+                            <p className="text-xs text-muted-foreground mt-1 truncate">
+                              {template.genre} · {template.oneLineSellingPoint}
                             </p>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <div className="rounded-lg border bg-muted/10 p-3 space-y-2">
-                    <p className="text-sm font-medium">历史快照</p>
-                    {!templateSummary?.availableSnapshots?.length ? (
-                      <p className="text-xs text-muted-foreground">暂无快照</p>
+                  <div className="xl:col-span-5 rounded-xl border bg-muted/10 p-3 space-y-3">
+                    <p className="text-sm font-semibold">模板详情</p>
+                    {!selectedTemplatePreview ? (
+                      <p className="text-xs text-muted-foreground">从左侧选择一个模板后，这里会展示完整设定。</p>
                     ) : (
-                      <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
-                        {templateSummary.availableSnapshots.map((snapshot) => (
-                          <div key={snapshot.snapshotDate} className="rounded-md border bg-background/60 p-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-xs font-medium">{snapshot.snapshotDate}</p>
-                              <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
-                                {snapshot.status}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              模板数：{snapshot.templateCount} · 更新时间：{new Date(snapshot.updatedAt).toLocaleString('zh-CN')}
-                            </p>
+                      <div className="space-y-3 text-xs">
+                        <div className="rounded-lg border bg-background/60 p-3">
+                          <p className="text-sm font-semibold">{selectedTemplatePreview.name}</p>
+                          <p className="text-muted-foreground mt-1">{selectedTemplatePreview.genre} · {selectedTemplatePreview.coreTheme}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-lg border bg-background/50 p-2">
+                            <p className="text-muted-foreground">一句话卖点</p>
+                            <p className="mt-1">{selectedTemplatePreview.oneLineSellingPoint}</p>
                           </div>
-                        ))}
+                          <div className="rounded-lg border bg-background/50 p-2">
+                            <p className="text-muted-foreground">关键词</p>
+                            <p className="mt-1">{selectedTemplatePreview.keywords.join(' / ') || '暂无'}</p>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border bg-background/50 p-2">
+                          <p className="text-muted-foreground">主角设定</p>
+                          <p className="mt-1">{selectedTemplatePreview.protagonistSetup}</p>
+                        </div>
+                        <div className="rounded-lg border bg-background/50 p-2">
+                          <p className="text-muted-foreground">开篇钩子</p>
+                          <p className="mt-1">{selectedTemplatePreview.hookDesign}</p>
+                        </div>
+                        <div className="rounded-lg border bg-background/50 p-2">
+                          <p className="text-muted-foreground">冲突设计</p>
+                          <p className="mt-1">{selectedTemplatePreview.conflictDesign}</p>
+                        </div>
+                        <div className="rounded-lg border bg-background/50 p-2">
+                          <p className="text-muted-foreground">成长路线</p>
+                          <p className="mt-1">{selectedTemplatePreview.growthRoute}</p>
+                        </div>
+                        <div className="rounded-lg border bg-background/50 p-2">
+                          <p className="text-muted-foreground">开篇建议</p>
+                          <p className="mt-1">{selectedTemplatePreview.recommendedOpening}</p>
+                        </div>
                       </div>
                     )}
                   </div>
+
+                  <div className="xl:col-span-3 space-y-4">
+                    <div className="rounded-xl border bg-muted/10 p-3 space-y-2">
+                      <p className="text-sm font-semibold">最近任务</p>
+                      {!templateSummary?.latestJobs?.length ? (
+                        <p className="text-xs text-muted-foreground">暂无任务记录</p>
+                      ) : (
+                        <div className="space-y-2 max-h-[220px] overflow-auto pr-1">
+                          {templateSummary.latestJobs.map((job) => (
+                            <div key={job.id} className="rounded-md border bg-background/60 p-2 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-medium">{job.snapshotDate}</p>
+                                <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
+                                  {job.status}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">{job.message || '无状态描述'}</p>
+                              {job.errorMessage && (
+                                <p className="text-xs text-destructive">{humanizeTemplateError(job.errorMessage)}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border bg-muted/10 p-3 space-y-2">
+                      <p className="text-sm font-semibold">历史快照</p>
+                      {!templateSummary?.availableSnapshots?.length ? (
+                        <p className="text-xs text-muted-foreground">暂无快照</p>
+                      ) : (
+                        <div className="space-y-2 max-h-[220px] overflow-auto pr-1">
+                          {templateSummary.availableSnapshots.map((snapshot) => (
+                            <button
+                              key={snapshot.snapshotDate}
+                              type="button"
+                              onClick={() => {
+                                setTemplateSnapshotView(snapshot.snapshotDate);
+                                setTemplateSearch('');
+                                void fetchTemplateSummary(snapshot.snapshotDate);
+                              }}
+                              className="w-full text-left rounded-md border bg-background/60 p-2 hover:bg-muted/30"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-medium">{snapshot.snapshotDate}</p>
+                                <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
+                                  {snapshot.status}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground mt-1">
+                                模板 {snapshot.templateCount} 条
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {templateSummary?.status === 'error' && (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                    当前快照异常：{humanizeTemplateError(templateSummary.errorMessage || '未知错误')}
+                  </div>
+                )}
+                {templateSummary?.latestJob?.errorMessage && (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                    最近失败原因：{humanizeTemplateError(templateSummary.latestJob.errorMessage)}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

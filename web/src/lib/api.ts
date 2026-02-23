@@ -1135,6 +1135,14 @@ export type AdminBibleTemplateSummary = {
   snapshotDate: string | null;
   templateCount: number;
   hotCount: number;
+  templates: BibleImagineTemplate[];
+  rankingPreview: Array<{
+    rank: number;
+    title: string;
+    author?: string;
+    category?: string;
+    summary?: string;
+  }>;
   status: 'ready' | 'error' | null;
   errorMessage: string | null;
   availableSnapshots: BibleTemplateSnapshotSummary[];
@@ -1153,6 +1161,8 @@ export async function fetchAdminBibleTemplateSummary(snapshotDate?: string): Pro
     snapshotDate: data.snapshotDate ?? null,
     templateCount: Number(data.templateCount || 0),
     hotCount: Number(data.hotCount || 0),
+    templates: Array.isArray(data.templates) ? data.templates : [],
+    rankingPreview: Array.isArray(data.rankingPreview) ? data.rankingPreview : [],
     status: data.status ?? null,
     errorMessage: data.errorMessage ?? null,
     availableSnapshots: Array.isArray(data.availableSnapshots) ? data.availableSnapshots : [],

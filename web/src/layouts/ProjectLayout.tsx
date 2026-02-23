@@ -398,13 +398,16 @@ function ProjectLayoutInner() {
                   disabled={templateLoading}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={templateLoading ? '模板加载中...' : '选择热点模板'} />
+                    <SelectValue placeholder={templateLoading ? '模板加载中...' : '选择可复用模板'} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">不使用模板</SelectItem>
                     {templateOptions.map((template) => (
-                      <SelectItem key={template.id} value={template.id}>
-                        {template.name}
+                      <SelectItem key={template.id} value={template.id} textValue={template.name}>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="truncate">{template.name}</span>
+                          <span className="text-[11px] text-muted-foreground truncate">{template.genre}</span>
+                        </div>
                       </SelectItem>
                     ))}
                   </SelectContent>

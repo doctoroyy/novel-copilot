@@ -191,6 +191,8 @@ adminRoutes.get('/bible-templates', async (c) => {
       snapshotDate: snapshot?.snapshotDate || null,
       templateCount: snapshot?.templates.length || 0,
       hotCount: snapshot?.ranking.length || 0,
+      templates: snapshot?.templates || [],
+      rankingPreview: (snapshot?.ranking || []).slice(0, 20),
       status: snapshot?.status || null,
       errorMessage: snapshot?.errorMessage || null,
       availableSnapshots,
