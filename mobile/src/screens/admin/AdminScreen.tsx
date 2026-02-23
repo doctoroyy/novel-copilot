@@ -233,7 +233,7 @@ export function AdminScreen() {
         <View key={m.id} style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
-              {m.is_default && <Ionicons name="star" size={16} color="#f59e0b" style={{ marginRight: 4 }} />}
+              {!!m.is_default && <Ionicons name="star" size={16} color="#f59e0b" style={{ marginRight: 4 }} />}
               <Text style={styles.cardTitle}>{m.display_name}</Text>
               {!m.is_active && (
                 <View style={styles.badge}>
