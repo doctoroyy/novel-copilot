@@ -66,6 +66,8 @@ export type ProjectDetail = {
   bible: string;
   background?: string;
   role_settings?: string;
+  chapter_prompt_profile?: string;
+  chapter_prompt_custom?: string;
   outline: NovelOutline | null;
   chapters: string[];
 };

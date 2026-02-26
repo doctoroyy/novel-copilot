@@ -8,9 +8,12 @@ import {
   PanelRightOpen, 
   LogOut,
   LayoutDashboard,
+  ScrollText,
   FileText,
   Wand2,
   BookOpen,
+  BookMarked,
+  Newspaper,
   Network,
   Clapperboard,
   Settings,
@@ -38,10 +41,12 @@ interface HeaderProps {
 
 const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
+  { id: 'settings', label: '项目设定', icon: ScrollText },
+  { id: 'bible', label: '设定预览', icon: BookMarked },
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
-  // Knowledge tab removed
+  { id: 'summary', label: '剧情摘要', icon: Newspaper },
   { id: 'characters', label: '人物关系', icon: Network },
   { id: 'anime', label: 'AI动漫', icon: Clapperboard },
 ];
