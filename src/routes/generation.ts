@@ -439,6 +439,14 @@ export async function runOutlineGenerationTaskInBackground(params: {
     const totalVolumes = masterOutline.volumes?.length || 0;
     const volumes = [];
 
+    const buildOutlineSnapshot = (currentVolumes: any[]) => ({
+      totalChapters: targetChapters,
+      targetWordCount,
+      volumes: currentVolumes,
+      mainGoal: masterOutline.mainGoal || '',
+      milestones: normalizeMilestones(masterOutline.milestones || []),
+    });
+
     for (let i = 0; i < masterOutline.volumes.length; i++) {
       const currentRuntime = await getTaskRuntimeControl(env.DB, taskId);
       if (!currentRuntime.exists || currentRuntime.status !== 'running') {
@@ -472,15 +480,21 @@ export async function runOutlineGenerationTaskInBackground(params: {
 
       const normalizedVolume = normalizeVolume(vol, i, chapters);
       volumes.push(normalizedVolume);
+
+      const snapshotOutline = buildOutlineSnapshot(volumes);
+      await env.DB.prepare(`
+        INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
+      `).bind(project.id, JSON.stringify(snapshotOutline)).run();
+
+      await updateTaskMessage(
+        env.DB,
+        taskId,
+        `第 ${i + 1}/${totalVolumes} 卷已生成并保存，可在「大纲/章节」页预览并开写`,
+        computeOutlineProgress(i, totalVolumes)
+      );
     }
 
-    const outline = {
-      totalChapters: targetChapters,
-      targetWordCount,
-      volumes,
-      mainGoal: masterOutline.mainGoal || '',
-      milestones: normalizeMilestones(masterOutline.milestones || []),
-    };
+    const outline = buildOutlineSnapshot(volumes);
 
     await updateTaskMessage(env.DB, taskId, '正在验证并保存大纲...', 90);
 
