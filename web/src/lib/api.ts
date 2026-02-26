@@ -133,6 +133,29 @@ export type BibleTemplateRefreshJob = {
   updatedAt: number;
 };
 
+export type BibleGenerationJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export type BibleGenerationJob = {
+  id: string;
+  status: BibleGenerationJobStatus;
+  message: string | null;
+  errorMessage: string | null;
+  bible: string | null;
+  templateApplied: {
+    templateId: string;
+    templateName: string;
+    snapshotDate: string | null;
+  } | null;
+  fallbackModelUsed: {
+    provider: string;
+    model: string;
+  } | null;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  updatedAt: number;
+};
+
 export type BibleTemplateRefreshEnqueueResult = {
   success: boolean;
   queued: boolean;
@@ -888,7 +911,7 @@ export async function generateBible(
   },
   aiHeaders?: Record<string, string>
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/generate-bible`, {
+  const startRes = await fetch(`${API_BASE}/generate-bible`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
     body: JSON.stringify({
@@ -900,9 +923,67 @@ export async function generateBible(
       template: options?.template,
     }),
   });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.bible;
+  const startData = await startRes.json().catch(() => ({ success: false, error: `HTTP ${startRes.status}` }));
+  if (!startRes.ok || !startData.success) {
+    throw new Error(startData.error || `Request failed: ${startRes.status}`);
+  }
+
+  if (typeof startData.bible === 'string' && startData.bible.trim()) {
+    return startData.bible;
+  }
+
+  const jobId = String(startData?.job?.id || startData?.jobId || '').trim();
+  if (!jobId) {
+    throw new Error('Story Bible 任务创建成功，但缺少任务 ID');
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const maxPoll = 180;
+  const pollIntervalMs = 1500;
+
+  for (let i = 0; i < maxPoll; i++) {
+    const job = await fetchBibleGenerationJob(jobId);
+    if (job.status === 'completed') {
+      if (job.bible && job.bible.trim()) {
+        return job.bible;
+      }
+      throw new Error('Story Bible 任务已完成，但没有返回正文内容');
+    }
+    if (job.status === 'failed') {
+      throw new Error(job.errorMessage || job.message || 'Story Bible 任务执行失败');
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  throw new Error('Story Bible 任务仍在后台执行，请到任务中心查看进度');
+}
+
+export async function fetchBibleGenerationJob(jobId: string): Promise<BibleGenerationJob> {
+  const res = await fetch(`${API_BASE}/bible-generation-jobs/${encodeURIComponent(jobId)}`, {
+    headers: defaultHeaders(),
+    cache: 'no-store',
+  });
+  const data = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  if (!res.ok || !data.success || !data.job) {
+    throw new Error(data.error || 'Failed to fetch bible generation job');
+  }
+
+  const job = data.job as Partial<BibleGenerationJob>;
+  return {
+    id: String(job.id || jobId),
+    status: ['queued', 'running', 'completed', 'failed'].includes(String(job.status))
+      ? (String(job.status) as BibleGenerationJobStatus)
+      : 'queued',
+    message: job.message ? String(job.message) : null,
+    errorMessage: job.errorMessage ? String(job.errorMessage) : null,
+    bible: job.bible ? String(job.bible) : null,
+    templateApplied: job.templateApplied || null,
+    fallbackModelUsed: job.fallbackModelUsed || null,
+    createdAt: Number(job.createdAt || 0),
+    startedAt: job.startedAt === null || job.startedAt === undefined ? null : Number(job.startedAt),
+    finishedAt: job.finishedAt === null || job.finishedAt === undefined ? null : Number(job.finishedAt),
+    updatedAt: Number(job.updatedAt || 0),
+  };
 }
 
 export async function testAIConnection(config: {
