@@ -40,7 +40,10 @@ export function FloatingProgressButton() {
 
     const mapServerTask = (task: GenerationTask): ActiveTask => {
       const type = (task.taskType || 'chapters') as TaskType;
-      const current = Math.max(0, task.currentProgress || 0);
+      const completedCount = Array.isArray(task.completedChapters) ? task.completedChapters.length : 0;
+      const current = type === 'chapters'
+        ? Math.max(0, completedCount)
+        : Math.max(0, task.currentProgress || 0);
       const total = task.targetCount > 0 ? task.targetCount : undefined;
       const numericTaskId = typeof task.id === 'number' ? task.id : undefined;
       const fallbackTitle = task.projectName

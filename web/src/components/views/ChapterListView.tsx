@@ -110,7 +110,9 @@ export function ChapterListView({
   const remainingChapters = Math.max(0, project.state.totalChapters - generatedChapters);
 
   // Check if any active task is generating our project
-  const currentProjectTasks = activeTasks.filter(t => t.projectName === project.id);
+  const currentProjectTasks = activeTasks.filter(
+    (t) => t.projectName === project.name || t.projectName === project.id
+  );
   const isGeneratingTaskActive = currentProjectTasks.some(t => t.status === 'generating' || t.status === 'preparing' || t.status === 'saving');
 
   // Check if specific chapters are currently being generated in background
