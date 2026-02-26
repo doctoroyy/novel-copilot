@@ -46,8 +46,6 @@ app.use('/api/admin/*', authMiddleware());
 app.use('/api/credit/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 app.use('/api/tasks/*', authMiddleware());
-app.use('/api/generate-bible', authMiddleware());
-app.use('/api/bible-generation-jobs/*', authMiddleware());
 app.use('/api/bible-templates/refresh', authMiddleware());
 app.use('/api/bible-templates/refresh-jobs', authMiddleware());
 app.use('/api/bible-templates/refresh-jobs/*', authMiddleware());
@@ -193,7 +191,6 @@ export default {
     const {
       runChapterGenerationTaskInBackground,
       runOutlineGenerationTaskInBackground,
-      runBibleGenerationJob,
     } = await import('./routes/generation.js');
     const { runImagineTemplateRefreshJob } = await import('./services/imagineTemplateJobService.js');
 
@@ -209,14 +206,6 @@ export default {
             throw new Error('Missing jobId for imagine_templates queue payload');
           }
           await runImagineTemplateRefreshJob(env, payload.jobId);
-        } else if (taskType === 'bible') {
-          if (!payload.jobId) {
-            throw new Error('Missing jobId for bible queue payload');
-          }
-          await runBibleGenerationJob({
-            env,
-            jobId: payload.jobId,
-          });
         } else if (taskType === 'outline') {
           await runOutlineGenerationTaskInBackground({
             env,

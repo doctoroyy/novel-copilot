@@ -168,7 +168,7 @@ export async function generateBible(
   },
   aiConfig?: AppConfig['ai'],
 ): Promise<string> {
-  const startRes = await fetch(buildApiUrl(apiBaseUrl, '/generate-bible'), {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/generate-bible'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -184,70 +184,9 @@ export async function generateBible(
     }),
   });
 
-  const startJson = await parseJsonResponse<{
-    bible?: string;
-    job?: { id?: string };
-    jobId?: string;
-  }>(startRes);
-
-  if (!startJson.success) throw new Error(startJson.error || 'Failed to start bible generation');
-  if (typeof startJson.bible === 'string' && startJson.bible.trim()) return startJson.bible;
-
-  const jobId = String(startJson.job?.id || startJson.jobId || '').trim();
-  if (!jobId) throw new Error('Story Bible 任务创建成功，但缺少任务 ID');
-
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  const maxPoll = 180;
-  const pollIntervalMs = 1500;
-
-  for (let i = 0; i < maxPoll; i++) {
-    const job = await fetchBibleGenerationJob(apiBaseUrl, token, jobId);
-    if (job.status === 'completed') {
-      if (job.bible && job.bible.trim()) return job.bible;
-      throw new Error('Story Bible 任务已完成，但没有返回正文内容');
-    }
-    if (job.status === 'failed') {
-      throw new Error(job.errorMessage || job.message || 'Story Bible 任务执行失败');
-    }
-    await sleep(pollIntervalMs);
-  }
-
-  throw new Error('Story Bible 任务仍在后台执行，请到任务中心查看进度');
-}
-
-type BibleGenerationJobStatus = 'queued' | 'running' | 'completed' | 'failed';
-
-type BibleGenerationJobResponse = {
-  id: string;
-  status: BibleGenerationJobStatus;
-  message: string | null;
-  errorMessage: string | null;
-  bible: string | null;
-};
-
-async function fetchBibleGenerationJob(
-  apiBaseUrl: string,
-  token: string,
-  jobId: string,
-): Promise<BibleGenerationJobResponse> {
-  const res = await fetch(buildApiUrl(apiBaseUrl, `/bible-generation-jobs/${encodeURIComponent(jobId)}`), {
-    headers: authHeaders(token),
-  });
-
-  const json = await parseJsonResponse<{ job?: Partial<BibleGenerationJobResponse> }>(res);
-  if (!json.success || !json.job) {
-    throw new Error(json.error || 'Failed to fetch bible generation job');
-  }
-
-  return {
-    id: String(json.job.id || jobId),
-    status: ['queued', 'running', 'completed', 'failed'].includes(String(json.job.status))
-      ? (String(json.job.status) as BibleGenerationJobStatus)
-      : 'queued',
-    message: json.job.message ? String(json.job.message) : null,
-    errorMessage: json.job.errorMessage ? String(json.job.errorMessage) : null,
-    bible: json.job.bible ? String(json.job.bible) : null,
-  };
+  const json = await parseJsonResponse<{ bible: string }>(res);
+  if (!json.success || !json.bible) throw new Error(json.error || 'Failed to generate bible');
+  return json.bible;
 }
 
 export async function fetchBibleTemplates(
