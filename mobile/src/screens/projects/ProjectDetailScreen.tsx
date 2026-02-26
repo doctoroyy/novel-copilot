@@ -36,12 +36,13 @@ import type { GenerationTask, ProjectDetail } from '../../types/domain';
 import { gradients, ui } from '../../theme/tokens';
 
 type ScreenRoute = RouteProp<ProjectsStackParamList, 'ProjectDetail'>;
-type DetailPanel = 'hub' | 'outline' | 'chapters' | 'summary' | 'studio';
+type DetailPanel = 'hub' | 'outline' | 'chapters' | 'bible' | 'summary' | 'studio';
 
 const PANELS: { id: DetailPanel; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'hub', label: '书籍主页', hint: '总览与导航', icon: 'home-outline' },
   { id: 'outline', label: '大纲中心', hint: '卷章结构', icon: 'library-outline' },
   { id: 'chapters', label: '章节库', hint: '正文与复制', icon: 'document-text-outline' },
+  { id: 'bible', label: '小说设定', hint: '世界观与角色', icon: 'book-outline' },
   { id: 'summary', label: '剧情摘要', hint: '脉络与待办', icon: 'newspaper-outline' },
   { id: 'studio', label: '创作台', hint: '生成与控制', icon: 'sparkles-outline' },
 ];
@@ -597,6 +598,13 @@ export function ProjectDetailScreen() {
                   onPress={() => setActivePanel('summary')}
                 />
                 <ModuleEntry
+                  icon="book-outline"
+                  title="小说设定"
+                  desc={project.bible?.trim() ? '查看世界观与角色设定' : '当前没有设定内容'}
+                  tone="accent"
+                  onPress={() => setActivePanel('bible')}
+                />
+                <ModuleEntry
                   icon="sparkles-outline"
                   title="创作台"
                   desc="生成章节、重建大纲、重置项目"
@@ -816,6 +824,43 @@ export function ProjectDetailScreen() {
                       ? `需要处理：${project.state.needHumanReason || '请检查剧情一致性与角色状态。'}`
                       : '当前无需人工介入。'}
                   </Text>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {activePanel === 'bible' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionBibleCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionBibleIcon]}>
+                    <Ionicons name="book-outline" size={13} color={ui.colors.accent} />
+                  </View>
+                  <Text style={styles.sectionTitle}>小说设定</Text>
+                </View>
+                <Text style={styles.sectionHint}>用于约束世界观、角色行为与章节风格一致性</Text>
+
+                <View style={styles.bibleBlock}>
+                  <Text style={styles.bibleBlockTitle}>Story Bible</Text>
+                  <Text style={styles.bibleBlockText}>{project.bible?.trim() || '暂无内容'}</Text>
+                </View>
+
+                <View style={styles.bibleBlock}>
+                  <Text style={styles.bibleBlockTitle}>世界观与背景</Text>
+                  <Text style={styles.bibleBlockText}>{project.background?.trim() || '暂无内容'}</Text>
+                </View>
+
+                <View style={styles.bibleBlock}>
+                  <Text style={styles.bibleBlockTitle}>角色设定</Text>
+                  <Text style={styles.bibleBlockText}>{project.role_settings?.trim() || '暂无内容'}</Text>
+                </View>
+
+                <View style={styles.bibleBlock}>
+                  <Text style={styles.bibleBlockTitle}>正文提示词配置</Text>
+                  <Text style={styles.bibleMetaLine}>
+                    模板：{project.chapter_prompt_profile?.trim() || 'web_novel_light（默认）'}
+                  </Text>
+                  <Text style={styles.bibleBlockText}>{project.chapter_prompt_custom?.trim() || '暂无自定义补充要求'}</Text>
                 </View>
               </View>
             </View>
@@ -1412,6 +1457,13 @@ const styles = StyleSheet.create({
   sectionSummaryCard: {
     backgroundColor: ui.colors.surfaceWarm,
   },
+  sectionBibleCard: {
+    backgroundColor: ui.colors.surfaceAccent,
+    borderColor: ui.colors.accentBorder,
+  },
+  sectionBibleIcon: {
+    backgroundColor: ui.colors.accentSoft,
+  },
   sectionHint: {
     color: ui.colors.textSecondary,
     fontSize: 12,
@@ -1527,6 +1579,30 @@ const styles = StyleSheet.create({
     color: ui.colors.textSecondary,
     lineHeight: 21,
     fontSize: 14,
+  },
+  bibleBlock: {
+    marginTop: 8,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  bibleBlockTitle: {
+    color: ui.colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  bibleBlockText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 19,
+  },
+  bibleMetaLine: {
+    color: ui.colors.textTertiary,
+    fontSize: 11,
   },
   loopList: {
     gap: 6,

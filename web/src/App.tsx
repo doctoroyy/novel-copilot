@@ -14,6 +14,8 @@ import {
   ChaptersPage,
   OutlinePage,
   BiblePage,
+  SummaryPage,
+  SettingsPage,
   CharactersPage,
   AnimePage,
 } from './pages/project';
@@ -112,10 +114,12 @@ export default function App() {
                     <Route index element={<DashboardPage />} />
                     <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
                     <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
+                    <Route path="project/:projectId/settings" element={<SettingsPage />} />
+                    <Route path="project/:projectId/bible" element={<BiblePage />} />
+                    <Route path="project/:projectId/summary" element={<SummaryPage />} />
                     <Route path="project/:projectId/outline" element={<OutlinePage />} />
                     <Route path="project/:projectId/generate" element={<GeneratePage />} />
                     <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
-                    <Route path="project/:projectId/bible" element={<BiblePage />} />
                     <Route path="project/:projectId/characters" element={<CharactersPage />} />
                     <Route path="project/:projectId/anime" element={<AnimePage />} />
                     <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
