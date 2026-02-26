@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Loader2, BookOpen, ShieldX, Crown } from 'lucide-react';
 import { AIConfigProvider } from './contexts/AIConfigContext';
@@ -7,21 +8,30 @@ import { ServerEventsProvider } from './contexts/ServerEventsContext';
 import { WebMCPProvider } from './components/WebMCPProvider';
 import { ThemeProvider } from './contexts/ThemeContext';
 
-import ProjectLayout from './layouts/ProjectLayout';
-import {
-  DashboardPage,
-  GeneratePage,
-  ChaptersPage,
-  OutlinePage,
-  BiblePage,
-  SummaryPage,
-  SettingsPage,
-  CharactersPage,
-  AnimePage,
-} from './pages/project';
-import { LoginPage } from './pages/LoginPage';
-import { AdminPage } from './pages/AdminPage';
-import { LandingPage } from './pages/LandingPage';
+const ProjectLayout = lazy(() => import('./layouts/ProjectLayout'));
+const DashboardPage = lazy(() => import('./pages/project/DashboardPage'));
+const GeneratePage = lazy(() => import('./pages/project/GeneratePage'));
+const ChaptersPage = lazy(() => import('./pages/project/ChaptersPage'));
+const OutlinePage = lazy(() => import('./pages/project/OutlinePage'));
+const BiblePage = lazy(() => import('./pages/project/BiblePage'));
+const SummaryPage = lazy(() => import('./pages/project/SummaryPage'));
+const SettingsPage = lazy(() => import('./pages/project/SettingsPage'));
+const CharactersPage = lazy(() => import('./pages/project/CharactersPage'));
+const AnimePage = lazy(() => import('./pages/project/AnimePage'));
+const LoginPage = lazy(async () => ({ default: (await import('./pages/LoginPage')).LoginPage }));
+const AdminPage = lazy(async () => ({ default: (await import('./pages/AdminPage')).AdminPage }));
+const LandingPage = lazy(async () => ({ default: (await import('./pages/LandingPage')).LandingPage }));
+
+function RouteLoadingFallback() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center">
+        <Loader2 className="h-10 w-10 mx-auto animate-spin mb-4 text-primary" />
+        <p className="text-muted-foreground">页面加载中...</p>
+      </div>
+    </div>
+  );
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, loading } = useAuth();
@@ -106,25 +116,27 @@ export default function App() {
             <ThemeProvider>
               <WebMCPProvider />
               <BrowserRouter>
-                <Routes>
-                  <Route path="/login" element={<LoginRoute />} />
-                  <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+                <Suspense fallback={<RouteLoadingFallback />}>
+                  <Routes>
+                    <Route path="/login" element={<LoginRoute />} />
+                    <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
 
-                  <Route element={<ProtectedRoute><ProjectLayout /></ProtectedRoute>}>
-                    <Route index element={<DashboardPage />} />
-                    <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
-                    <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
-                    <Route path="project/:projectId/settings" element={<SettingsPage />} />
-                    <Route path="project/:projectId/bible" element={<BiblePage />} />
-                    <Route path="project/:projectId/summary" element={<SummaryPage />} />
-                    <Route path="project/:projectId/outline" element={<OutlinePage />} />
-                    <Route path="project/:projectId/generate" element={<GeneratePage />} />
-                    <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
-                    <Route path="project/:projectId/characters" element={<CharactersPage />} />
-                    <Route path="project/:projectId/anime" element={<AnimePage />} />
-                    <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
-                  </Route>
-                </Routes>
+                    <Route element={<ProtectedRoute><ProjectLayout /></ProtectedRoute>}>
+                      <Route index element={<DashboardPage />} />
+                      <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
+                      <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
+                      <Route path="project/:projectId/settings" element={<SettingsPage />} />
+                      <Route path="project/:projectId/bible" element={<BiblePage />} />
+                      <Route path="project/:projectId/summary" element={<SummaryPage />} />
+                      <Route path="project/:projectId/outline" element={<OutlinePage />} />
+                      <Route path="project/:projectId/generate" element={<GeneratePage />} />
+                      <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
+                      <Route path="project/:projectId/characters" element={<CharactersPage />} />
+                      <Route path="project/:projectId/anime" element={<AnimePage />} />
+                      <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
+                    </Route>
+                  </Routes>
+                </Suspense>
               </BrowserRouter>
             </ThemeProvider>
           </ServerEventsProvider>
