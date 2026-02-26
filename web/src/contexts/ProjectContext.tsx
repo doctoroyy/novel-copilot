@@ -668,6 +668,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
       let networkRetryCount = 0;
       const maxNetworkRetries = 80;
+      let lastOutlineProgress = -1;
+      let lastPreviewHint = '';
+      let lastPartialRefreshAt = 0;
       while (true) {
         try {
           const task = await getTaskById(taskId);
@@ -693,6 +696,18 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             message: task.currentMessage || undefined,
             title: `${selectedProject.name}: ${task.currentMessage || '大纲生成中...'}`,
           });
+
+          const message = task.currentMessage || '';
+          const now = Date.now();
+          const progressChanged = current !== lastOutlineProgress;
+          const previewHintChanged = message.includes('可在「大纲/章节」页预览并开写') && message !== lastPreviewHint;
+          const shouldRefreshPartial = task.status === 'running' && (progressChanged || previewHintChanged);
+          if (shouldRefreshPartial && now - lastPartialRefreshAt > 1200) {
+            await loadProject(selectedProject.id);
+            lastPartialRefreshAt = now;
+            lastOutlineProgress = current;
+            lastPreviewHint = message;
+          }
 
           if (task.status === 'completed') {
             completeTask(localTaskId, true);
