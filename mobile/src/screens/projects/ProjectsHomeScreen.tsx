@@ -192,6 +192,9 @@ export function ProjectsHomeScreen() {
       }
       if (!data.templates.some((item) => item.id === selectedTemplateId)) {
         setSelectedTemplateId('');
+        setAiGenre('');
+        setAiTheme('');
+        setAiKeywords('');
       }
     } catch (err) {
       setError((err as Error).message);
@@ -234,12 +237,24 @@ export function ProjectsHomeScreen() {
 
   const applyTemplate = (templateId: string) => {
     setSelectedTemplateId(templateId);
-    const selected = templateOptions.find((item) => item.id === templateId);
-    if (!selected) return;
+    if (!templateId) {
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+      return;
+    }
 
-    if (!aiGenre.trim()) setAiGenre(selected.genre);
-    if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
-    if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
+    const selected = templateOptions.find((item) => item.id === templateId);
+    if (!selected) {
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+      return;
+    }
+
+    setAiGenre(selected.genre || '');
+    setAiTheme(selected.coreTheme || '');
+    setAiKeywords((selected.keywords || []).join('、'));
   };
 
   const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId) || null;
@@ -465,7 +480,7 @@ export function ProjectsHomeScreen() {
                       !selectedTemplateId && styles.templateCardActive,
                       pressed && styles.pressed,
                     ]}
-                    onPress={() => setSelectedTemplateId('')}
+                    onPress={() => applyTemplate('')}
                   >
                     <Text style={[styles.templateTitle, !selectedTemplateId && styles.templateTitleActive]}>不使用模板</Text>
                     <Text style={styles.templateMeta}>纯手动输入</Text>
@@ -572,7 +587,7 @@ export function ProjectsHomeScreen() {
                   ]}
                   onPress={() => {
                     setTemplateSnapshotDate('latest');
-                    setSelectedTemplateId('');
+                    applyTemplate('');
                     void loadTemplateData();
                   }}
                 >
@@ -591,7 +606,7 @@ export function ProjectsHomeScreen() {
                     ]}
                     onPress={() => {
                       setTemplateSnapshotDate(date);
-                      setSelectedTemplateId('');
+                      applyTemplate('');
                       void loadTemplateData(date);
                     }}
                   >
@@ -652,7 +667,7 @@ export function ProjectsHomeScreen() {
                       !selectedTemplateId && styles.templateCardActive,
                       pressed && styles.pressed,
                     ]}
-                    onPress={() => setSelectedTemplateId('')}
+                    onPress={() => applyTemplate('')}
                   >
                     <Text style={[styles.templateTitle, !selectedTemplateId && styles.templateTitleActive]}>不使用模板</Text>
                     <Text style={styles.templateMeta}>纯手动输入</Text>

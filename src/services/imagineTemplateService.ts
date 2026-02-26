@@ -165,6 +165,22 @@ function looksObfuscatedTitle(title?: string): boolean {
   return normalized.length < Math.max(2, Math.floor(text.length * 0.6));
 }
 
+function isLowQualitySentence(input: string | null | undefined): boolean {
+  const text = cleanCopyText(input);
+  if (!text) return true;
+  if (text.length < 4) return true;
+  if (/^[\d\W_]+$/.test(text)) return true;
+  if (/undefined|null|nan/i.test(text)) return true;
+  return false;
+}
+
+function normalizeHotTitleForTemplate(title: string | null | undefined, index: number): string {
+  const cleaned = cleanCopyText(title);
+  if (!cleaned) return `热榜作品 ${index + 1}`;
+  if (looksObfuscatedTitle(cleaned)) return `热榜作品 ${index + 1}`;
+  return clipText(cleaned, 28);
+}
+
 function summarizeSourceUrls(hotItems: FanqieHotItem[], fallback?: string[]): string {
   const urls = new Set<string>();
 
@@ -583,12 +599,13 @@ export async function scrapeFanqieHotListWithPlaywright(
     return sorted
       .slice(0, limit)
       .map((item, index) => {
-        const title = cleanCopyText(item.title) || `热榜作品 ${index + 1}`;
+        const title = normalizeHotTitleForTemplate(item.title, index);
+        const summary = clipText(cleanCopyText(item.summary), 220);
         return {
           ...item,
           title,
           author: cleanCopyText(item.author) || undefined,
-          summary: clipText(cleanCopyText(item.summary), 220) || undefined,
+          summary: isLowQualitySentence(summary) ? undefined : summary,
           status: cleanCopyText(item.status) || undefined,
           readingCountText: cleanCopyText(item.readingCountText) || undefined,
           updatedAtText: cleanCopyText(item.updatedAtText) || undefined,
@@ -748,7 +765,8 @@ function pickFirstClause(text: string, max = 40): string {
 }
 
 function deriveKeywordsFromHotItem(item: FanqieHotItem, genre: string): string[] {
-  const text = `${cleanCopyText(item.title)} ${cleanCopyText(item.category)} ${cleanCopyText(item.summary)}`;
+  const safeTitle = looksObfuscatedTitle(item.title) ? '' : cleanCopyText(item.title);
+  const text = `${safeTitle} ${cleanCopyText(item.category)} ${cleanCopyText(item.summary)}`;
   const keywords: string[] = [];
   const push = (value: string) => {
     const normalized = cleanCopyText(value);
@@ -799,12 +817,13 @@ function buildSeedTemplateFromHotItem(
     .map((entry) => cleanCopyText(entry))
     .filter(Boolean);
   const genre = normalizeGenreLabel(categoryTokens[categoryTokens.length - 1] || categoryTokens[0] || '热点融合');
-  const title = cleanCopyText(item.title) || `热榜作品 ${index + 1}`;
-  const summarySeed = pickFirstClause(item.summary || '', 34);
-  const conflictSeed = summarySeed || `${clipText(title, 16)}同类高压危机`;
+  const safeTitle = normalizeHotTitleForTemplate(item.title, index);
+  const summarySeedRaw = pickFirstClause(item.summary || '', 34);
+  const summarySeed = isLowQualitySentence(summarySeedRaw) ? '' : summarySeedRaw;
+  const conflictSeed = summarySeed || `${genre}题材下的高压危机`;
   const name = buildReadableTemplateName(index, genre);
   const coreTheme = summarySeed || `${genre}题材下的高压破局与成长跃迁`;
-  const oneLineSellingPoint = `以${clipText(title, 14)}同类爽点为引擎：危机开局→连锁反转→阶段兑现`;
+  const oneLineSellingPoint = `${genre}题材：危机开局→冲突升级→反转兑现→阶段成长`;
   const protagonistSetup = `主角从弱势处境切入，围绕“${clipText(conflictSeed, 18)}”这一代价目标，在资源短板中持续补强。`;
   const hookDesign = `首章 300 字内抛出「${clipText(conflictSeed, 18)}」级不可逆事件，逼迫主角立刻选边站队。`;
   const conflictDesign = `设置外压（对手/规则）与内耗（短板/关系）双线推进，每 3-5 章完成一次冲突抬升。`;
@@ -825,7 +844,7 @@ function buildSeedTemplateFromHotItem(
     growthRoute,
     fanqieSignals,
     recommendedOpening,
-    sourceBooks: [title],
+    sourceBooks: safeTitle.startsWith('热榜作品 ') ? [] : [safeTitle],
   };
 }
 
@@ -875,18 +894,29 @@ function sanitizeTemplate(
 
   const genre = normalizeGenreLabel(raw?.genre || raw?.type || seedTemplate.genre);
   const rawName = cleanCopyText(raw?.name || raw?.title);
-  const name = rawName || buildReadableTemplateName(index, genre);
-  const coreTheme = cleanCopyText(raw?.coreTheme || raw?.theme) || seedTemplate.coreTheme;
-  const oneLineSellingPoint = cleanCopyText(raw?.oneLineSellingPoint || raw?.sellingPoint) || seedTemplate.oneLineSellingPoint;
-  const protagonistSetup = cleanCopyText(raw?.protagonistSetup || raw?.protagonist) || seedTemplate.protagonistSetup;
-  const hookDesign = cleanCopyText(raw?.hookDesign || raw?.hook) || seedTemplate.hookDesign;
-  const conflictDesign = cleanCopyText(raw?.conflictDesign || raw?.conflict) || seedTemplate.conflictDesign;
-  const growthRoute = cleanCopyText(raw?.growthRoute || raw?.growth) || seedTemplate.growthRoute;
-  const recommendedOpening = cleanCopyText(raw?.recommendedOpening || raw?.opening) || seedTemplate.recommendedOpening;
+  const name = isLowQualitySentence(rawName) ? buildReadableTemplateName(index, genre) : rawName;
+
+  const rawCoreTheme = cleanCopyText(raw?.coreTheme || raw?.theme);
+  const rawSelling = cleanCopyText(raw?.oneLineSellingPoint || raw?.sellingPoint);
+  const rawProtagonist = cleanCopyText(raw?.protagonistSetup || raw?.protagonist);
+  const rawHook = cleanCopyText(raw?.hookDesign || raw?.hook);
+  const rawConflict = cleanCopyText(raw?.conflictDesign || raw?.conflict);
+  const rawGrowth = cleanCopyText(raw?.growthRoute || raw?.growth);
+  const rawOpening = cleanCopyText(raw?.recommendedOpening || raw?.opening);
+
+  const coreTheme = isLowQualitySentence(rawCoreTheme) ? seedTemplate.coreTheme : rawCoreTheme;
+  const oneLineSellingPoint = isLowQualitySentence(rawSelling) ? seedTemplate.oneLineSellingPoint : rawSelling;
+  const protagonistSetup = isLowQualitySentence(rawProtagonist) ? seedTemplate.protagonistSetup : rawProtagonist;
+  const hookDesign = isLowQualitySentence(rawHook) ? seedTemplate.hookDesign : rawHook;
+  const conflictDesign = isLowQualitySentence(rawConflict) ? seedTemplate.conflictDesign : rawConflict;
+  const growthRoute = isLowQualitySentence(rawGrowth) ? seedTemplate.growthRoute : rawGrowth;
+  const recommendedOpening = isLowQualitySentence(rawOpening) ? seedTemplate.recommendedOpening : rawOpening;
 
   const keywordsRaw = normalizeStringArray(raw?.keywords, 10);
   const fanqieSignalsRaw = normalizeStringArray(raw?.fanqieSignals || raw?.platformSignals, 10);
-  const sourceBooksRaw = normalizeStringArray(raw?.sourceBooks || raw?.references || raw?.hotBooks, 5);
+  const sourceBooksRaw = normalizeStringArray(raw?.sourceBooks || raw?.references || raw?.hotBooks, 5)
+    .map((entry, i) => normalizeHotTitleForTemplate(entry, i))
+    .filter((entry) => !entry.startsWith('热榜作品 '));
 
   return {
     id: cleanText(raw?.id) || buildTemplateId(snapshotDate, index, name),
@@ -1089,9 +1119,12 @@ function parseSnapshotRow(row: any): ImagineTemplateSnapshot | null {
     const rankingRaw = JSON.parse(row.ranking_json || '[]') as FanqieHotItem[];
     const ranking = rankingRaw.map((item, index) => ({
       rank: Number.isFinite(Number(item?.rank)) ? Number(item.rank) : index + 1,
-      title: cleanCopyText(item?.title) || `热榜作品 ${index + 1}`,
+      title: normalizeHotTitleForTemplate(item?.title, index),
       author: cleanCopyText(item?.author) || undefined,
-      summary: clipText(cleanCopyText(item?.summary), 220) || undefined,
+      summary: (() => {
+        const cleaned = clipText(cleanCopyText(item?.summary), 220);
+        return isLowQualitySentence(cleaned) ? undefined : cleaned;
+      })(),
       status: cleanCopyText(item?.status) || undefined,
       readingCountText: cleanCopyText(item?.readingCountText) || undefined,
       updatedAtText: cleanCopyText(item?.updatedAtText) || undefined,
