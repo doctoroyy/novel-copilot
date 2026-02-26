@@ -1,5 +1,6 @@
 import { launch } from '@cloudflare/playwright';
 import { generateTextWithRetry, getAIConfigFromRegistry, type AIConfig } from './aiClient.js';
+import { parse as parsePartialJson } from 'partial-json';
 
 export const FANQIE_DEFAULT_RANK_URLS = [
   'https://fanqienovel.com/rank',
@@ -21,6 +22,13 @@ const TEMPLATE_NAME_STYLES = [
   '情绪兑现',
   '悬念驱动',
   '节奏拉满',
+] as const;
+
+const GROWTH_ROUTE_VARIANTS = [
+  '困局求生 -> 小胜立威 -> 关键失利 -> 极限反杀 -> 终局翻盘',
+  '弱势潜伏 -> 资源积累 -> 阶层突破 -> 多线博弈 -> 目标兑现',
+  '被动入局 -> 连续破局 -> 同盟扩张 -> 规则改写 -> 新秩序建立',
+  '代价开局 -> 局部控场 -> 高层对抗 -> 信念重塑 -> 终章收束',
 ] as const;
 
 export interface FanqieHotItem {
@@ -612,9 +620,9 @@ async function getLatestSnapshotWithRanking(db: D1Database, limit = 10): Promise
   return null;
 }
 
-function extractFirstJsonObject(raw: string): string | null {
+function extractFirstJsonSegment(raw: string, opener: '{' | '[', closer: '}' | ']'): string | null {
   const text = raw.trim();
-  let start = text.indexOf('{');
+  let start = text.indexOf(opener);
 
   while (start >= 0) {
     let depth = 0;
@@ -641,8 +649,8 @@ function extractFirstJsonObject(raw: string): string | null {
 
       if (inString) continue;
 
-      if (ch === '{') depth += 1;
-      if (ch === '}') {
+      if (ch === opener) depth += 1;
+      if (ch === closer) {
         depth -= 1;
         if (depth === 0) {
           return text.slice(start, i + 1);
@@ -650,10 +658,60 @@ function extractFirstJsonObject(raw: string): string | null {
       }
     }
 
-    start = text.indexOf('{', start + 1);
+    start = text.indexOf(opener, start + 1);
   }
 
   return null;
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  return extractFirstJsonSegment(raw, '{', '}');
+}
+
+function extractFirstJsonArray(raw: string): string | null {
+  return extractFirstJsonSegment(raw, '[', ']');
+}
+
+function normalizeTemplatePayload(parsed: unknown): any[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') {
+    const holder = parsed as any;
+    if (Array.isArray(holder.templates)) return holder.templates;
+    if (Array.isArray(holder.data)) return holder.data;
+  }
+  return [];
+}
+
+function parseTemplatePayload(raw: string): any[] {
+  const text = raw.trim();
+  if (!text) return [];
+
+  const candidates = [extractFirstJsonObject(text), extractFirstJsonArray(text), text]
+    .filter(Boolean) as string[];
+  const deduped = [...new Set(candidates)];
+
+  for (const candidate of deduped) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const templates = normalizeTemplatePayload(parsed);
+      if (templates.length > 0) return templates;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  for (const candidate of deduped) {
+    if (!candidate.includes('{') && !candidate.includes('[')) continue;
+    try {
+      const parsed = parsePartialJson(candidate);
+      const templates = normalizeTemplatePayload(parsed);
+      if (templates.length > 0) return templates;
+    } catch {
+      // ignore partial parse failures
+    }
+  }
+
+  return [];
 }
 
 function normalizeStringArray(value: unknown, max = 8): string[] {
@@ -682,20 +740,153 @@ function buildTemplateId(snapshotDate: string, index: number, name: string): str
     : `tpl-${snapshotDate}-${index + 1}`;
 }
 
-function sanitizeTemplate(raw: any, index: number, snapshotDate: string): ImagineTemplate {
-  const genre = normalizeGenreLabel(raw?.genre || raw?.type || '热点融合');
-  const coreTheme = cleanCopyText(raw?.coreTheme || raw?.theme || '逆袭与成长') || '逆袭与成长';
-  const name = buildReadableTemplateName(index, genre);
-  const oneLineSellingPoint = cleanCopyText(raw?.oneLineSellingPoint || raw?.sellingPoint || '高压开局 + 快节奏升级 + 连续反转') || '高压开局 + 快节奏升级 + 连续反转';
-  const protagonistSetup = cleanCopyText(raw?.protagonistSetup || raw?.protagonist || '主角具备清晰目标与强执行力') || '主角具备清晰目标与强执行力';
-  const hookDesign = cleanCopyText(raw?.hookDesign || raw?.hook || '开篇用危机事件与身份反差制造强钩子') || '开篇用危机事件与身份反差制造强钩子';
-  const conflictDesign = cleanCopyText(raw?.conflictDesign || raw?.conflict || '每 3-5 章触发一次明显冲突升级') || '每 3-5 章触发一次明显冲突升级';
-  const growthRoute = cleanCopyText(raw?.growthRoute || raw?.growth || '小胜-受挫-反杀-跨阶成长') || '小胜-受挫-反杀-跨阶成长';
-  const recommendedOpening = cleanCopyText(raw?.recommendedOpening || raw?.opening || '第一章直入主冲突，80 字内给出悬念和代价。') || '第一章直入主冲突，80 字内给出悬念和代价。';
+function pickFirstClause(text: string, max = 40): string {
+  const cleaned = cleanCopyText(text);
+  if (!cleaned) return '';
+  const first = cleaned.split(/[。！？!?\n]/)[0] || cleaned;
+  return clipText(first, max);
+}
 
-  const keywords = normalizeStringArray(raw?.keywords, 10);
-  const fanqieSignals = normalizeStringArray(raw?.fanqieSignals || raw?.platformSignals, 10);
-  const sourceBooks = normalizeStringArray(raw?.sourceBooks || raw?.references || raw?.hotBooks, 5);
+function deriveKeywordsFromHotItem(item: FanqieHotItem, genre: string): string[] {
+  const text = `${cleanCopyText(item.title)} ${cleanCopyText(item.category)} ${cleanCopyText(item.summary)}`;
+  const keywords: string[] = [];
+  const push = (value: string) => {
+    const normalized = cleanCopyText(value);
+    if (!normalized) return;
+    if (!keywords.includes(normalized)) keywords.push(normalized);
+  };
+
+  const rules: Array<{ pattern: RegExp; keyword: string }> = [
+    { pattern: /末世|丧尸|废土|灾变|冰河|天灾|求生/, keyword: '末世求生' },
+    { pattern: /修仙|仙侠|宗门|灵气|飞升|剑道/, keyword: '修炼升级' },
+    { pattern: /都市|商战|职场|豪门|神豪/, keyword: '都市逆袭' },
+    { pattern: /科幻|机甲|星际|赛博|科技/, keyword: '科技冲突' },
+    { pattern: /游戏|副本|网游|规则怪谈|闯关/, keyword: '规则闯关' },
+    { pattern: /悬疑|推理|谜案|诡异|反转/, keyword: '悬念反转' },
+    { pattern: /恋爱|婚姻|情感|追妻|甜宠|虐恋/, keyword: '情感拉扯' },
+    { pattern: /朝堂|权谋|宫斗|世家|夺嫡/, keyword: '权谋博弈' },
+    { pattern: /重生|穿越|系统|签到|金手指/, keyword: '金手指破局' },
+    { pattern: /复仇|打脸|逆袭|翻身/, keyword: '逆袭打脸' },
+  ];
+
+  for (const rule of rules) {
+    if (rule.pattern.test(text)) push(rule.keyword);
+  }
+
+  push(genre);
+  const categoryTokens = cleanCopyText(item.category)
+    .split(/[·/|]/)
+    .map((entry) => cleanCopyText(entry))
+    .filter(Boolean);
+  for (const token of categoryTokens) {
+    push(clipText(token, 10));
+  }
+
+  if (keywords.length === 0) {
+    ['高压开局', '冲突升级', '反转兑现', '成长逆袭'].forEach(push);
+  }
+
+  return keywords.slice(0, 8);
+}
+
+function buildSeedTemplateFromHotItem(
+  item: FanqieHotItem,
+  index: number,
+  snapshotDate: string
+): ImagineTemplate {
+  const categoryTokens = cleanCopyText(item.category)
+    .split(/[·/|]/)
+    .map((entry) => cleanCopyText(entry))
+    .filter(Boolean);
+  const genre = normalizeGenreLabel(categoryTokens[categoryTokens.length - 1] || categoryTokens[0] || '热点融合');
+  const title = cleanCopyText(item.title) || `热榜作品 ${index + 1}`;
+  const summarySeed = pickFirstClause(item.summary || '', 34);
+  const conflictSeed = summarySeed || `${clipText(title, 16)}同类高压危机`;
+  const name = buildReadableTemplateName(index, genre);
+  const coreTheme = summarySeed || `${genre}题材下的高压破局与成长跃迁`;
+  const oneLineSellingPoint = `以${clipText(title, 14)}同类爽点为引擎：危机开局→连锁反转→阶段兑现`;
+  const protagonistSetup = `主角从弱势处境切入，围绕“${clipText(conflictSeed, 18)}”这一代价目标，在资源短板中持续补强。`;
+  const hookDesign = `首章 300 字内抛出「${clipText(conflictSeed, 18)}」级不可逆事件，逼迫主角立刻选边站队。`;
+  const conflictDesign = `设置外压（对手/规则）与内耗（短板/关系）双线推进，每 3-5 章完成一次冲突抬升。`;
+  const growthRoute = GROWTH_ROUTE_VARIANTS[index % GROWTH_ROUTE_VARIANTS.length];
+  const fanqieSignals = ['高压开局', '连续反转', '章节尾钩子', '情绪快兑现'];
+  const recommendedOpening = `开篇先给危机场景与代价，再给主角第一步反制动作，末段留下一层更大风险。`;
+
+  return {
+    id: buildTemplateId(snapshotDate, index, name),
+    name,
+    genre,
+    coreTheme,
+    oneLineSellingPoint,
+    keywords: deriveKeywordsFromHotItem(item, genre),
+    protagonistSetup,
+    hookDesign,
+    conflictDesign,
+    growthRoute,
+    fanqieSignals,
+    recommendedOpening,
+    sourceBooks: [title],
+  };
+}
+
+function buildSeedTemplatesFromHotList(
+  hotItems: FanqieHotItem[],
+  snapshotDate: string,
+  maxTemplates: number
+): ImagineTemplate[] {
+  const targetCount = Math.max(1, Math.min(30, maxTemplates));
+  const fallbackGenres = ['都市日常', '科幻末世', '东方仙侠', '古风世情', '西方奇幻', '游戏体育', '女频衍生', '悬疑灵异'];
+
+  const sourceItems: FanqieHotItem[] = [];
+  if (hotItems.length > 0) {
+    for (let i = 0; i < targetCount; i += 1) {
+      sourceItems.push(hotItems[i % hotItems.length]);
+    }
+  } else {
+    for (let i = 0; i < targetCount; i += 1) {
+      sourceItems.push({
+        rank: i + 1,
+        title: `热榜作品 ${i + 1}`,
+        category: fallbackGenres[i % fallbackGenres.length],
+        summary: `${fallbackGenres[i % fallbackGenres.length]}题材下的高压危机与升级反转`,
+        sourceUrl: FANQIE_RANK_DISCOVERY_URL,
+      });
+    }
+  }
+
+  return sourceItems.map((item, index) => buildSeedTemplateFromHotItem(item, index, snapshotDate));
+}
+
+function sanitizeTemplate(
+  raw: any,
+  index: number,
+  snapshotDate: string,
+  seedHotItem?: FanqieHotItem
+): ImagineTemplate {
+  const seedTemplate = seedHotItem
+    ? buildSeedTemplateFromHotItem(seedHotItem, index, snapshotDate)
+    : buildSeedTemplateFromHotItem({
+      rank: index + 1,
+      title: `热榜作品 ${index + 1}`,
+      category: '热点融合',
+      summary: '高压开局与持续升级',
+      sourceUrl: FANQIE_RANK_DISCOVERY_URL,
+    }, index, snapshotDate);
+
+  const genre = normalizeGenreLabel(raw?.genre || raw?.type || seedTemplate.genre);
+  const rawName = cleanCopyText(raw?.name || raw?.title);
+  const name = rawName || buildReadableTemplateName(index, genre);
+  const coreTheme = cleanCopyText(raw?.coreTheme || raw?.theme) || seedTemplate.coreTheme;
+  const oneLineSellingPoint = cleanCopyText(raw?.oneLineSellingPoint || raw?.sellingPoint) || seedTemplate.oneLineSellingPoint;
+  const protagonistSetup = cleanCopyText(raw?.protagonistSetup || raw?.protagonist) || seedTemplate.protagonistSetup;
+  const hookDesign = cleanCopyText(raw?.hookDesign || raw?.hook) || seedTemplate.hookDesign;
+  const conflictDesign = cleanCopyText(raw?.conflictDesign || raw?.conflict) || seedTemplate.conflictDesign;
+  const growthRoute = cleanCopyText(raw?.growthRoute || raw?.growth) || seedTemplate.growthRoute;
+  const recommendedOpening = cleanCopyText(raw?.recommendedOpening || raw?.opening) || seedTemplate.recommendedOpening;
+
+  const keywordsRaw = normalizeStringArray(raw?.keywords, 10);
+  const fanqieSignalsRaw = normalizeStringArray(raw?.fanqieSignals || raw?.platformSignals, 10);
+  const sourceBooksRaw = normalizeStringArray(raw?.sourceBooks || raw?.references || raw?.hotBooks, 5);
 
   return {
     id: cleanText(raw?.id) || buildTemplateId(snapshotDate, index, name),
@@ -703,41 +894,83 @@ function sanitizeTemplate(raw: any, index: number, snapshotDate: string): Imagin
     genre,
     coreTheme,
     oneLineSellingPoint,
-    keywords,
+    keywords: keywordsRaw.length > 0 ? keywordsRaw : seedTemplate.keywords,
     protagonistSetup,
     hookDesign,
     conflictDesign,
     growthRoute,
-    fanqieSignals,
+    fanqieSignals: fanqieSignalsRaw.length > 0 ? fanqieSignalsRaw : seedTemplate.fanqieSignals,
     recommendedOpening,
-    sourceBooks,
+    sourceBooks: sourceBooksRaw.length > 0 ? sourceBooksRaw : seedTemplate.sourceBooks,
   };
 }
 
-function fallbackTemplatesFromHotList(hotItems: FanqieHotItem[], snapshotDate: string): ImagineTemplate[] {
-  const topItems = hotItems.slice(0, 12);
+function mergeTemplatesWithSeeds(templates: ImagineTemplate[], seeds: ImagineTemplate[]): ImagineTemplate[] {
+  if (templates.length === 0) return [];
+  if (seeds.length === 0) return templates;
 
-  return topItems.map((item, index) => {
-    const seed = cleanCopyText(item.title) || '';
-    const genre = normalizeGenreLabel(item.category?.split('·').pop() || '热点融合');
-    const name = buildReadableTemplateName(index, genre);
-
+  const merged = templates.map((template, index) => {
+    const seed = seeds[index % seeds.length];
     return {
-      id: buildTemplateId(snapshotDate, index, name),
-      name,
-      genre,
-      coreTheme: '强目标驱动下的逆袭与博弈',
-      oneLineSellingPoint: '高压开局 + 快节奏升级 + 连续反转',
-      keywords: ['打脸', '反转', '升级', '悬念'],
-      protagonistSetup: '主角带着明确执念与资源短板切入，先弱后强',
-      hookDesign: '第一章抛出不可逆代价事件，迫使主角立即行动',
-      conflictDesign: '外部压迫和内部短板双线并进，每卷末爆点收束',
-      growthRoute: '生存破局 -> 小范围掌控 -> 跨层博弈 -> 终局对决',
-      fanqieSignals: ['高频爽点', '章节末悬念', '冲突密度高', '情绪回报快'],
-      recommendedOpening: '开篇 100 字内呈现危机现场、主角代价与反制动作。',
-      sourceBooks: seed ? [seed] : [],
+      ...template,
+      id: cleanText(template.id) || seed.id,
+      name: cleanCopyText(template.name) || seed.name,
+      genre: normalizeGenreLabel(template.genre || seed.genre),
+      coreTheme: cleanCopyText(template.coreTheme) || seed.coreTheme,
+      oneLineSellingPoint: cleanCopyText(template.oneLineSellingPoint) || seed.oneLineSellingPoint,
+      protagonistSetup: cleanCopyText(template.protagonistSetup) || seed.protagonistSetup,
+      hookDesign: cleanCopyText(template.hookDesign) || seed.hookDesign,
+      conflictDesign: cleanCopyText(template.conflictDesign) || seed.conflictDesign,
+      growthRoute: cleanCopyText(template.growthRoute) || seed.growthRoute,
+      recommendedOpening: cleanCopyText(template.recommendedOpening) || seed.recommendedOpening,
+      keywords: normalizeStringArray(template.keywords, 10).length > 0
+        ? normalizeStringArray(template.keywords, 10)
+        : seed.keywords,
+      fanqieSignals: normalizeStringArray(template.fanqieSignals, 10).length > 0
+        ? normalizeStringArray(template.fanqieSignals, 10)
+        : seed.fanqieSignals,
+      sourceBooks: normalizeStringArray(template.sourceBooks, 5).length > 0
+        ? normalizeStringArray(template.sourceBooks, 5)
+        : seed.sourceBooks,
     };
   });
+
+  const minUnique = Math.max(2, Math.ceil(Math.min(merged.length, 10) * 0.4));
+  const textFields: Array<keyof ImagineTemplate> = [
+    'coreTheme',
+    'oneLineSellingPoint',
+    'protagonistSetup',
+    'hookDesign',
+    'conflictDesign',
+    'growthRoute',
+    'recommendedOpening',
+  ];
+
+  for (const field of textFields) {
+    const uniqueCount = new Set(
+      merged.map((item) => cleanCopyText(String(item[field] || ''))).filter(Boolean)
+    ).size;
+    if (uniqueCount >= minUnique) continue;
+    for (let i = 0; i < merged.length; i += 1) {
+      merged[i][field] = seeds[i % seeds.length][field] as any;
+    }
+  }
+
+  const keywordUnique = new Set(merged.map((item) => normalizeStringArray(item.keywords, 10).join('|')).filter(Boolean)).size;
+  if (keywordUnique < minUnique) {
+    for (let i = 0; i < merged.length; i += 1) {
+      merged[i].keywords = seeds[i % seeds.length].keywords;
+    }
+  }
+
+  const signalUnique = new Set(merged.map((item) => normalizeStringArray(item.fanqieSignals, 10).join('|')).filter(Boolean)).size;
+  if (signalUnique < minUnique) {
+    for (let i = 0; i < merged.length; i += 1) {
+      merged[i].fanqieSignals = seeds[i % seeds.length].fanqieSignals;
+    }
+  }
+
+  return merged;
 }
 
 export async function extractImagineTemplatesFromHotList(params: {
@@ -750,6 +983,7 @@ export async function extractImagineTemplatesFromHotList(params: {
   const maxTemplates = Math.max(6, Math.min(30, params.maxTemplates ?? 16));
 
   const shortlist = hotItems.slice(0, Math.max(20, maxTemplates));
+  const seedTemplates = buildSeedTemplatesFromHotList(shortlist, snapshotDate, maxTemplates);
   const hotListText = shortlist
     .map((item) => {
       const parts = [
@@ -772,38 +1006,35 @@ export async function extractImagineTemplatesFromHotList(params: {
       system,
       prompt,
       temperature: 0.65,
-      maxTokens: 3200,
+      maxTokens: 5200,
     }, 4);
   } catch (error) {
     console.warn('[ImagineTemplates] model generation failed, using fallback templates:', (error as Error).message);
-    return fallbackTemplatesFromHotList(shortlist, snapshotDate).slice(0, maxTemplates);
+    return seedTemplates.slice(0, maxTemplates);
   }
 
-  const jsonCandidate = extractFirstJsonObject(raw) || raw;
-  let parsed: any;
-
-  try {
-    parsed = JSON.parse(jsonCandidate);
-  } catch (error) {
-    console.warn('[ImagineTemplates] template JSON parse failed, using fallback templates:', (error as Error).message);
-    return fallbackTemplatesFromHotList(shortlist, snapshotDate).slice(0, maxTemplates);
+  const templatesRaw = parseTemplatePayload(raw);
+  if (templatesRaw.length === 0) {
+    console.warn('[ImagineTemplates] template JSON parse failed, using fallback templates');
+    return seedTemplates.slice(0, maxTemplates);
   }
 
-  const templatesRaw = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.templates)
-      ? parsed.templates
-      : [];
-
-  const templates = templatesRaw
+  const parsedTemplates = templatesRaw
     .slice(0, maxTemplates)
-    .map((item: any, index: number) => sanitizeTemplate(item, index, snapshotDate));
+    .map((item: any, index: number) => sanitizeTemplate(item, index, snapshotDate, shortlist[index]));
 
-  if (templates.length === 0) {
-    return fallbackTemplatesFromHotList(shortlist, snapshotDate).slice(0, maxTemplates);
+  if (parsedTemplates.length === 0) {
+    return seedTemplates.slice(0, maxTemplates);
   }
 
-  return templates;
+  const mergedTemplates = mergeTemplatesWithSeeds(parsedTemplates, seedTemplates);
+  if (mergedTemplates.length < seedTemplates.length) {
+    for (let i = mergedTemplates.length; i < seedTemplates.length; i += 1) {
+      mergedTemplates.push(seedTemplates[i]);
+    }
+  }
+
+  return mergedTemplates.slice(0, maxTemplates);
 }
 
 export async function upsertImagineTemplateSnapshot(
@@ -870,7 +1101,24 @@ function parseSnapshotRow(row: any): ImagineTemplateSnapshot | null {
     }));
 
     const templatesRaw = JSON.parse(row.templates_json || '[]') as ImagineTemplate[];
-    const templates = templatesRaw.map((item, index) => sanitizeTemplate(item, index, snapshotDate));
+    const targetCount = Math.max(
+      1,
+      Math.min(
+        30,
+        templatesRaw.length > 0
+          ? templatesRaw.length
+          : Math.min(16, Math.max(6, ranking.length || 6))
+      )
+    );
+    const seedTemplates = buildSeedTemplatesFromHotList(ranking, snapshotDate, targetCount);
+    const sanitizedTemplates = templatesRaw
+      .slice(0, targetCount)
+      .map((item, index) => sanitizeTemplate(item, index, snapshotDate, ranking[index]));
+    const templates = sanitizedTemplates.length > 0
+      ? mergeTemplatesWithSeeds(sanitizedTemplates, seedTemplates)
+      : row.status === 'error'
+        ? []
+        : seedTemplates;
 
     return {
       snapshotDate,

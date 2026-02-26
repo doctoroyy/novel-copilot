@@ -345,6 +345,19 @@ export function AdminScreen() {
           ))}
         </View>
       ) : null}
+      {templateSummary?.rankingPreview?.length ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>热榜快照（Top 10）</Text>
+          {templateSummary.rankingPreview.slice(0, 10).map((item, idx) => (
+            <View key={`${item.title}-${idx}`} style={styles.hotRow}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.hotTitle}>#{item.rank} {item.title}</Text>
+                <Text style={styles.hotMeta}>{item.category || '未分类'}{item.author ? ` · ${item.author}` : ''}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
       <View style={{ height: 40 }} />
     </ScrollView>
   );
@@ -652,6 +665,23 @@ const styles = StyleSheet.create({
   snapshotMeta: {
     color: ui.colors.textSecondary,
     fontSize: 12,
+  },
+  hotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: ui.colors.border,
+  },
+  hotTitle: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  hotMeta: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
   },
   // Modal styles
   modalOverlay: {
