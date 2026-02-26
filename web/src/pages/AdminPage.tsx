@@ -754,6 +754,32 @@ export function AdminPage() {
 
                   <div className="xl:col-span-3 space-y-4">
                     <div className="rounded-xl border bg-muted/10 p-3 space-y-2">
+                      <p className="text-sm font-semibold">热榜快照</p>
+                      {!templateSummary?.rankingPreview?.length ? (
+                        <p className="text-xs text-muted-foreground">当前快照没有热榜数据</p>
+                      ) : (
+                        <div className="space-y-2 max-h-[220px] overflow-auto pr-1">
+                          {templateSummary.rankingPreview.map((item, idx) => (
+                            <div key={`${item.title}-${idx}`} className="rounded-md border bg-background/60 p-2 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-medium">#{item.rank} {item.title}</p>
+                                <span className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground">
+                                  {item.category || '未分类'}
+                                </span>
+                              </div>
+                              {item.author ? (
+                                <p className="text-[11px] text-muted-foreground">作者：{item.author}</p>
+                              ) : null}
+                              {item.summary ? (
+                                <p className="text-[11px] text-muted-foreground line-clamp-2">{item.summary}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border bg-muted/10 p-3 space-y-2">
                       <p className="text-sm font-semibold">最近任务</p>
                       {!templateSummary?.latestJobs?.length ? (
                         <p className="text-xs text-muted-foreground">暂无任务记录</p>
