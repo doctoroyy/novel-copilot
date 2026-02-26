@@ -118,6 +118,8 @@ projectsRoutes.get('/:name', async (c) => {
       bible: (project as any).bible,
       background: (project as any).background,
       role_settings: (project as any).role_settings,
+      chapter_prompt_profile: (project as any).chapter_prompt_profile,
+      chapter_prompt_custom: (project as any).chapter_prompt_custom,
       outline: (project as any).outline_json ? JSON.parse((project as any).outline_json) : null,
       chapters: chapters.map((ch: any) => `${ch.chapter_index.toString().padStart(3, '0')}.md`),
     };

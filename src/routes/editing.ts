@@ -412,7 +412,15 @@ editingRoutes.put('/projects/:name', async (c) => {
   const MAX_CHAPTER_WORDS_LIMIT = 20000;
   
   try {
-    const { bible, background, role_settings, outline, minChapterWords } = await c.req.json();
+    const {
+      bible,
+      background,
+      role_settings,
+      chapter_prompt_profile,
+      chapter_prompt_custom,
+      outline,
+      minChapterWords,
+    } = await c.req.json();
     const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
     const parsedMinChapterWordsRaw = hasMinChapterWords ? Number.parseInt(String(minChapterWords), 10) : undefined;
     const parsedMinChapterWords = Number.isInteger(parsedMinChapterWordsRaw) ? parsedMinChapterWordsRaw : undefined;
@@ -453,9 +461,18 @@ editingRoutes.put('/projects/:name', async (c) => {
         bible = COALESCE(?, bible), 
         background = COALESCE(?, background), 
         role_settings = COALESCE(?, role_settings),
+        chapter_prompt_profile = COALESCE(?, chapter_prompt_profile),
+        chapter_prompt_custom = COALESCE(?, chapter_prompt_custom),
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(bible, background, role_settings, (project as any).id).run();
+    `).bind(
+      bible,
+      background,
+      role_settings,
+      chapter_prompt_profile,
+      chapter_prompt_custom,
+      (project as any).id
+    ).run();
 
     if (hasMinChapterWords && parsedMinChapterWords !== undefined) {
       await c.env.DB.prepare(`

@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   bible TEXT NOT NULL,
+  chapter_prompt_profile TEXT DEFAULT 'web_novel_light',
+  chapter_prompt_custom TEXT DEFAULT '',
   user_id TEXT REFERENCES users(id),
   created_at INTEGER DEFAULT (unixepoch() * 1000),
   deleted_at INTEGER DEFAULT NULL
