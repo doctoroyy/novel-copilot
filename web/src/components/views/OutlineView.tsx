@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Sparkles, RotateCw, FileText, Target, Trophy, Library, Edit2, Save, X, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Sparkles, RotateCw, FileText, Target, Trophy, Library, Edit2, Save, X, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { type ProjectDetail, type NovelOutline, refineOutline, updateOutline } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 
@@ -22,6 +22,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [editedOutline, setEditedOutline] = useState<NovelOutline | null>(null);
   const [refineMessage, setRefineMessage] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [milestonesExpanded, setMilestonesExpanded] = useState(false);
   
   const { config, isConfigured } = useAIConfig();
 
@@ -31,6 +32,10 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       setEditedOutline(JSON.parse(JSON.stringify(project.outline)));
     }
   }, [isEditing, project.outline]);
+
+  useEffect(() => {
+    setMilestonesExpanded(isEditing);
+  }, [isEditing, project.id]);
 
   const handleRefine = async () => {
     if (!isConfigured) {
@@ -174,6 +179,15 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   // Use editedOutline if editing, otherwise project.outline
   const outline = isEditing && editedOutline ? editedOutline : project.outline;
   const isBusy = isRefining || refiningVolIdx !== null || isSaving;
+  const milestoneItems = (outline.milestones || []).map((milestone, index) => ({
+    index,
+    text:
+      typeof milestone === 'string'
+        ? milestone.trim()
+        : ((milestone as any).milestone || (milestone as any).description || '').trim(),
+  }));
+  const displayMilestones = isEditing ? milestoneItems : milestoneItems.filter((item) => item.text);
+  const shouldShowMilestones = isEditing || milestonesExpanded;
 
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
@@ -228,45 +242,80 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
       {/* Milestones */}
       <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-            <Trophy className="h-5 w-5 text-yellow-500" />
-            <span>里程碑</span>
-          </CardTitle>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
+              <Trophy className="h-5 w-5 text-yellow-500" />
+              <span>里程碑</span>
+            </CardTitle>
+            {!isEditing && displayMilestones.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground"
+                onClick={() => setMilestonesExpanded((prev) => !prev)}
+              >
+                {milestonesExpanded ? (
+                  <>
+                    收起 <ChevronUp className="ml-1 h-3.5 w-3.5" />
+                  </>
+                ) : (
+                  <>
+                    展开 <ChevronDown className="ml-1 h-3.5 w-3.5" />
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            {(outline.milestones || []).map((milestone, i) => {
-              const milestoneText = typeof milestone === 'string' 
-                ? milestone 
-                : (milestone as any).milestone || (milestone as any).description || JSON.stringify(milestone);
-              
-              return (
-                <div key={i} className="flex items-start gap-3 p-2 group">
+          {displayMilestones.length === 0 ? (
+            <p className="text-xs lg:text-sm text-muted-foreground">暂无里程碑</p>
+          ) : shouldShowMilestones ? (
+            <div className="space-y-2">
+              {displayMilestones.map((milestone) => (
+                <div key={milestone.index} className="flex items-start gap-3 p-2 group">
                   <span className="text-primary mt-1.5">•</span>
                   {isEditing ? (
                     <div className="flex-1 flex gap-2">
-                      <Input 
-                        value={milestoneText} 
-                        onChange={(e) => updateMilestone(i, e.target.value)}
+                      <Input
+                        value={milestone.text}
+                        onChange={(e) => updateMilestone(milestone.index, e.target.value)}
                         className="h-8 text-xs lg:text-sm"
                       />
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10" onClick={() => removeMilestone(i)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                        onClick={() => removeMilestone(milestone.index)}
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   ) : (
-                    <span className="text-xs lg:text-sm text-muted-foreground pt-0.5">{milestoneText}</span>
+                    <span className="text-xs lg:text-sm text-muted-foreground pt-0.5">{milestone.text}</span>
                   )}
                 </div>
-              );
-            })}
-            {isEditing && (
-              <Button variant="outline" size="sm" onClick={addMilestone} className="w-full mt-2 border-dashed">
-                <Plus className="mr-1 h-3 w-3" /> 添加里程碑
-              </Button>
-            )}
-          </div>
+              ))}
+              {isEditing && (
+                <Button variant="outline" size="sm" onClick={addMilestone} className="w-full mt-2 border-dashed">
+                  <Plus className="mr-1 h-3 w-3" /> 添加里程碑
+                </Button>
+              )}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full justify-between text-xs text-muted-foreground"
+              onClick={() => setMilestonesExpanded(true)}
+            >
+              <span>已收起 {displayMilestones.length} 条里程碑</span>
+              <span className="inline-flex items-center gap-1">
+                点击展开
+                <ChevronDown className="h-3.5 w-3.5" />
+              </span>
+            </Button>
+          )}
         </CardContent>
       </Card>
 

@@ -90,6 +90,17 @@ function extractChapterTitle(content: string): string | null {
   return null;
 }
 
+function normalizeMilestone(rawMilestone: unknown): string {
+  if (typeof rawMilestone === 'string') return rawMilestone.trim();
+  if (rawMilestone && typeof rawMilestone === 'object') {
+    const milestoneObj = rawMilestone as { milestone?: unknown; description?: unknown; title?: unknown };
+    if (typeof milestoneObj.milestone === 'string') return milestoneObj.milestone.trim();
+    if (typeof milestoneObj.description === 'string') return milestoneObj.description.trim();
+    if (typeof milestoneObj.title === 'string') return milestoneObj.title.trim();
+  }
+  return '';
+}
+
 export function ProjectDetailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
   const route = useRoute<ScreenRoute>();
@@ -126,6 +137,7 @@ export function ProjectDetailScreen() {
   const [chapterCopiedIndex, setChapterCopiedIndex] = useState<number | null>(null);
   const [chapterModalCopied, setChapterModalCopied] = useState(false);
   const [expandedVolumes, setExpandedVolumes] = useState<number[]>([]);
+  const [outlineMilestonesExpanded, setOutlineMilestonesExpanded] = useState(false);
   const [chapterTitleCache, setChapterTitleCache] = useState<Record<number, string>>({});
 
   const taskPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -216,6 +228,13 @@ export function ProjectDetailScreen() {
   const remainingChapters = useMemo(
     () => Math.max(0, (project?.state.totalChapters || 0) - generatedChapters),
     [generatedChapters, project],
+  );
+  const outlineMilestones = useMemo(
+    () =>
+      (project?.outline?.milestones || [])
+        .map((milestone) => normalizeMilestone(milestone))
+        .filter((milestone) => milestone.length > 0),
+    [project?.outline?.milestones],
   );
   const outlineChapterTitles = useMemo<Record<number, string>>(() => {
     const titles: Record<number, string> = {};
@@ -465,6 +484,10 @@ export function ProjectDetailScreen() {
     await openChapter(target);
   };
 
+  useEffect(() => {
+    setOutlineMilestonesExpanded(false);
+  }, [projectId, project?.outline?.milestones?.length]);
+
   if (loading && !project) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
@@ -674,48 +697,92 @@ export function ProjectDetailScreen() {
                     </Pressable>
                   </>
                 ) : (
-                  <View style={styles.volumeList}>
-                    {project.outline.volumes.map((volume, volIndex) => {
-                      const expanded = expandedVolumes.includes(volIndex);
-                      return (
-                        <View key={`${volume.title}-${volIndex}`} style={styles.volumeCard}>
+                  <>
+                    <View style={styles.outlineMetaCard}>
+                      <Text style={styles.outlineMetaTitle}>主线目标</Text>
+                      <Text style={styles.outlineMetaText}>{project.outline.mainGoal || '暂无主线目标'}</Text>
+
+                      <View style={styles.outlineMilestoneHeader}>
+                        <Text style={styles.outlineMetaTitle}>里程碑（{outlineMilestones.length}）</Text>
+                        {outlineMilestones.length > 0 ? (
                           <Pressable
-                            style={({ pressed }) => [styles.volumeHeader, pressed && styles.pressed]}
-                            onPress={() => toggleVolumeExpand(volIndex)}
+                            style={({ pressed }) => [styles.outlineToggleBtn, pressed && styles.pressed]}
+                            onPress={() => setOutlineMilestonesExpanded((prev) => !prev)}
                           >
-                            <View style={styles.volumeHeaderTextWrap}>
-                              <Text style={styles.volumeTitle} numberOfLines={1}>
-                                第 {volIndex + 1} 卷 · {volume.title}
-                              </Text>
-                              <Text style={styles.volumeMeta}>
-                                第 {volume.startChapter}-{volume.endChapter} 章 · {volume.chapters.length} 章
-                              </Text>
-                            </View>
+                            <Text style={styles.outlineToggleText}>{outlineMilestonesExpanded ? '收起' : '展开'}</Text>
                             <Ionicons
-                              name={expanded ? 'chevron-up' : 'chevron-down'}
-                              size={16}
-                              color={ui.colors.textTertiary}
+                              name={outlineMilestonesExpanded ? 'chevron-up' : 'chevron-down'}
+                              size={14}
+                              color={ui.colors.textSecondary}
                             />
                           </Pressable>
+                        ) : null}
+                      </View>
 
-                          {expanded ? (
-                            <View style={styles.volumeBody}>
-                              <Text style={styles.volumeBodyText}>目标：{volume.goal || '暂无'}</Text>
-                              <Text style={styles.volumeBodyText}>冲突：{volume.conflict || '暂无'}</Text>
-                              <Text style={styles.volumeBodyText}>高潮：{volume.climax || '暂无'}</Text>
-                              <View style={styles.volumeChapterList}>
-                                {volume.chapters.map((chapter) => (
-                                  <Text key={`${volume.title}-${chapter.index}`} style={styles.volumeChapterText}>
-                                    第 {chapter.index} 章：{chapter.title}
-                                  </Text>
-                                ))}
-                              </View>
+                      {outlineMilestones.length === 0 ? (
+                        <Text style={styles.outlineMetaEmpty}>暂无里程碑</Text>
+                      ) : outlineMilestonesExpanded ? (
+                        <View style={styles.outlineMilestoneList}>
+                          {outlineMilestones.map((milestone, idx) => (
+                            <View key={`milestone-${idx}`} style={styles.outlineMilestoneItem}>
+                              <Text style={styles.outlineMilestoneDot}>•</Text>
+                              <Text style={styles.outlineMilestoneText}>{milestone}</Text>
                             </View>
-                          ) : null}
+                          ))}
                         </View>
-                      );
-                    })}
-                  </View>
+                      ) : (
+                        <Pressable
+                          style={({ pressed }) => [styles.outlineMilestoneCollapsed, pressed && styles.pressed]}
+                          onPress={() => setOutlineMilestonesExpanded(true)}
+                        >
+                          <Text style={styles.outlineMetaHint}>已收起 {outlineMilestones.length} 条里程碑，点击展开查看</Text>
+                        </Pressable>
+                      )}
+                    </View>
+
+                    <View style={styles.volumeList}>
+                      {project.outline.volumes.map((volume, volIndex) => {
+                        const expanded = expandedVolumes.includes(volIndex);
+                        return (
+                          <View key={`${volume.title}-${volIndex}`} style={styles.volumeCard}>
+                            <Pressable
+                              style={({ pressed }) => [styles.volumeHeader, pressed && styles.pressed]}
+                              onPress={() => toggleVolumeExpand(volIndex)}
+                            >
+                              <View style={styles.volumeHeaderTextWrap}>
+                                <Text style={styles.volumeTitle} numberOfLines={1}>
+                                  第 {volIndex + 1} 卷 · {volume.title}
+                                </Text>
+                                <Text style={styles.volumeMeta}>
+                                  第 {volume.startChapter}-{volume.endChapter} 章 · {volume.chapters.length} 章
+                                </Text>
+                              </View>
+                              <Ionicons
+                                name={expanded ? 'chevron-up' : 'chevron-down'}
+                                size={16}
+                                color={ui.colors.textTertiary}
+                              />
+                            </Pressable>
+
+                            {expanded ? (
+                              <View style={styles.volumeBody}>
+                                <Text style={styles.volumeBodyText}>目标：{volume.goal || '暂无'}</Text>
+                                <Text style={styles.volumeBodyText}>冲突：{volume.conflict || '暂无'}</Text>
+                                <Text style={styles.volumeBodyText}>高潮：{volume.climax || '暂无'}</Text>
+                                <View style={styles.volumeChapterList}>
+                                  {volume.chapters.map((chapter) => (
+                                    <Text key={`${volume.title}-${chapter.index}`} style={styles.volumeChapterText}>
+                                      第 {chapter.index} 章：{chapter.title}
+                                    </Text>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </>
                 )}
               </View>
             </View>
@@ -1471,6 +1538,80 @@ const styles = StyleSheet.create({
   emptyText: {
     color: ui.colors.textSecondary,
     fontSize: 13,
+  },
+  outlineMetaCard: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    padding: 10,
+    gap: 8,
+  },
+  outlineMetaTitle: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  outlineMetaText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  outlineMilestoneHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  outlineToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.card,
+    borderRadius: ui.radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  outlineToggleText: {
+    color: ui.colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  outlineMilestoneCollapsed: {
+    borderRadius: ui.radius.sm,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.card,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  outlineMetaHint: {
+    color: ui.colors.textTertiary,
+    fontSize: 11,
+  },
+  outlineMetaEmpty: {
+    color: ui.colors.textTertiary,
+    fontSize: 12,
+  },
+  outlineMilestoneList: {
+    gap: 6,
+  },
+  outlineMilestoneItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  outlineMilestoneDot: {
+    color: ui.colors.primaryStrong,
+    marginTop: 2,
+  },
+  outlineMilestoneText: {
+    flex: 1,
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   volumeList: {
     gap: 8,
