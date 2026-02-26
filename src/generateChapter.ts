@@ -6,6 +6,7 @@ import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
+import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
 
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
@@ -49,6 +50,10 @@ export type WriteChapterParams = {
   chapterGoalHint?: string;
   /** 本章标题 (来自大纲) */
   chapterTitle?: string;
+  /** 正文模板配置 */
+  chapterPromptProfile?: string;
+  /** 正文自定义补充提示词 */
+  chapterPromptCustom?: string;
   /** 最大重写次数 */
   maxRewriteAttempts?: number;
   /** 跳过摘要更新以节省 token */
@@ -93,63 +98,42 @@ function buildSystemPrompt(
   isFinal: boolean,
   chapterIndex: number,
   minChapterWords: number,
-  chapterTitle?: string
+  chapterTitle?: string,
+  chapterPromptProfile?: string,
+  chapterPromptCustom?: string
 ): string {
   const recommendedMaxWords = buildRecommendedMaxChapterWords(minChapterWords);
-  const titleText = chapterTitle 
-    ? `第${chapterIndex}章 ${chapterTitle}` 
+  const titleText = chapterTitle
+    ? `第${chapterIndex}章 ${chapterTitle}`
     : `第${chapterIndex}章 [你需要起一个创意标题]`;
-    
+  const styleSection = buildChapterPromptStyleSection(chapterPromptProfile, chapterPromptCustom);
+
   return `
-你是一个起点白金级网文写作引擎，输出的文字必须达到商业连载的头部水准。
+你是商业网文连载写作助手，核心目标是“好读、顺畅、让人想继续看”。
 
-═══════ 核心写作方法论 ═══════
+【阅读体验优先】
+- 以剧情推进为第一优先，文采服务于阅读速度，不要为了辞藻牺牲清晰度
+- 句子以短句和中句为主，避免连续堆砌形容词、比喻和排比
+- 对话要像真实人物说话，信息有效，减少空话和口号
+- 每个段落都应承担功能：推进事件、制造冲突或揭示信息
 
-【场景化叙事 - 禁止概述式写作】
-- 每个情节点必须展开为具体场景：有时间、地点、人物动作、对话
-- 禁止"他花了三天修炼，实力大进"这种概述句，必须展开关键场景用细节体现
-- 描写比例：场景描写 > 60%，叙述概括 < 20%，心理活动 < 20%
+【章节推进规则】
+- 本章必须完成“目标 -> 阻碍 -> 行动 -> 新结果/新问题”的推进链
+- 章节衔接必须自然，不要机械复述上一章最后一句或最后一幕
+- 开头直接进入当前场景，不写“上一章回顾式”开场
+- 非最终章结尾必须留下悬念、压力或抉择其一
 
-【感官沉浸 - 五感写作法】
-- 每个重要场景至少调动 3 种感官（视觉/听觉/触觉/嗅觉/味觉）
-- 战斗：金属碰撞的震鸣→骨骼断裂的脆响→血腥味→剧烈疼痛
-- 修炼：灵气如针刺入经脉→丹田灼热翻涌→周身骨骼噼啪作响
-- 日常：食物香气→微风触感→环境音效→光影变化
-
-【对话设计 - 声线分化】
-- 每个角色必须有辨识度极高的说话方式（用词习惯、语气、口头禅）
-- 对话必须推动剧情或揭示性格，禁止废话对白
-- 潜台词运用：角色真实想法 ≠ 说出口的话，制造张力
-- 冲突对话要有攻防节奏，不能一方碾压式说教
-- 重要对话前后加动作/表情/心理描写，不能干巴巴对话
-
-【爽点工程 - 期待→满足→超预期】
-- 建立期待：先铺垫困难/危机/压力，让读者为主角担心
-- 延迟满足：不要让主角太快解决问题，拉扯出紧张感
-- 超预期爆发：解决方式要出人意料，比读者想象的更精彩
-- 每章至少 1 个小爽点，每 3-5 章安排 1 个大爽点
-
-【微观节奏控制】
-- 紧张段落：短句、短段落、动作密集、对话急促
-- 舒缓段落：长句、环境描写、内心独白、情感流动
-- 高潮段落：极短句 + 感叹号 + 断句，制造紧迫感
-- 章节内必须有 2-3 次节奏变化，避免一平到底
-
-【章末钩子（必须使用其中一种）】
-- 反转钩：推翻读者预期（"然而他不知道，那个人其实是..."）
-- 悬念钩：抛出新谜团（"门外传来了不该出现在这里的声音"）
-- 危机钩：新的更大危险出现（"整座城，开始颤抖"）
-- 揭示钩：关键信息半遮半露（"那卷轴上的名字，他认识"）
-- 选择钩：主角面临艰难抉择（"左边是她，右边是天下"）
+【当前风格模板】
+- 模板: ${styleSection.profileLabel}
+- 说明: ${styleSection.profileDescription}
+${styleSection.styleBlock}
 
 ═══════ 硬性规则 ═══════
 - 只有当 is_final_chapter=true 才允许收束主线
 - 若 is_final_chapter=false：严禁出现任何"完结/终章/尾声/后记/感谢读者/全书完"等收尾表达
 - 每章正文字数不少于 ${minChapterWords} 字，建议控制在 ${minChapterWords}~${recommendedMaxWords} 字
-- 禁止说教式总结（如"他知道这只是开始"/"从此走上了xxx之路"）
-- 禁止上帝视角旁白（如"命运的齿轮开始转动"/"历史的车轮滚滚向前"）
-- 结尾不要用总结句，直接用钩子场景收尾
-- 开头直接进入场景，禁止用概述或旁白开头
+- 禁止说教式总结、口号式感悟、作者视角旁白
+- 结尾不要“总结陈词”，用事件/冲突/抉择直接收尾
 
 输出格式：
 - 第一行必须是章节标题：${titleText}
@@ -204,7 +188,7 @@ ${openLoops.length ? openLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（
 ${lastChapters.length ? lastChapters.map((t, i) => `---近章${i + 1}---\n${t}`).join('\n\n') : '（暂无）'}
 
 【本章写作目标提示】
-${chapterGoalHint ?? '承接上一章结尾，推进主线一步，并制造更大的危机；结尾留强钩子。'}
+${chapterGoalHint ?? '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。'}
 
 ${characters ? getCharacterContext(characters, chapterIndex) : ''}
 
@@ -217,6 +201,7 @@ ${characters ? getCharacterContext(characters, chapterIndex) : ''}
 6. 章节结尾的最后一段必须是钩子场景，不能是总结或感悟
 7. 展开具体场景而非概述，让读者"看到"而非"被告知"
 8. 本章正文字数必须至少 ${normalizeMinChapterWords(minChapterWords)} 字
+9. 与上一章衔接时自然进入当前场景，不要机械复述上一章末尾
 
 请写出本章内容：
 `.trim();
@@ -247,7 +232,14 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   const isFinal = chapterIndex === totalChapters;
   const normalizedMinChapterWords = normalizeMinChapterWords(minChapterWords);
 
-  const system = buildSystemPrompt(isFinal, chapterIndex, normalizedMinChapterWords, chapterTitle);
+  const system = buildSystemPrompt(
+    isFinal,
+    chapterIndex,
+    normalizedMinChapterWords,
+    chapterTitle,
+    params.chapterPromptProfile,
+    params.chapterPromptCustom
+  );
   const prompt = buildUserPrompt(params);
   const generationStartedAt = Date.now();
 

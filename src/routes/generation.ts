@@ -936,7 +936,15 @@ export async function runChapterGenerationTaskInBackground(params: {
 
     // 2. Load Project (fresh each iteration for updated rolling_summary)
     const project = await env.DB.prepare(`
-        SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
+        SELECT
+          p.id,
+          p.name,
+          p.bible,
+          p.chapter_prompt_profile,
+          p.chapter_prompt_custom,
+          s.*,
+          o.outline_json,
+          c.characters_json
         FROM projects p
         JOIN states s ON p.id = s.project_id
         LEFT JOIN outlines o ON p.id = o.project_id
@@ -1108,6 +1116,8 @@ export async function runChapterGenerationTaskInBackground(params: {
             chapterGoalHint,
             chapterTitle: outlineTitle,
             characters,
+            chapterPromptProfile: project.chapter_prompt_profile,
+            chapterPromptCustom: project.chapter_prompt_custom,
             summaryAiConfig: effectiveSummaryAiConfig,
             skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
             onProgress: (message, status) => {

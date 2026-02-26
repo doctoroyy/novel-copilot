@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Save, BookMarked, Users, Map, FileText } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Loader2, Save, BookMarked, Users, Map, FileText, PenLine } from 'lucide-react';
 import { updateProject, type ProjectDetail } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useToast } from '@/components/ui/use-toast';
@@ -13,12 +14,43 @@ interface SettingsViewProps {
   onRefresh?: () => void;
 }
 
+const DEFAULT_CHAPTER_PROMPT_PROFILE = 'web_novel_light';
+
+const CHAPTER_PROMPT_PROFILE_OPTIONS = [
+  {
+    id: 'web_novel_light',
+    label: '轻快网文（默认）',
+    description: '阅读顺滑，少修饰，适合日更连载。',
+  },
+  {
+    id: 'plot_first',
+    label: '剧情推进',
+    description: '冲突密度更高，强调事件推进与爽点。',
+  },
+  {
+    id: 'cinematic',
+    label: '电影感',
+    description: '保留画面感，但避免辞藻堆叠。',
+  },
+] as const;
+
+function normalizeChapterPromptProfile(value: string | undefined): string {
+  if (!value) return DEFAULT_CHAPTER_PROMPT_PROFILE;
+  return CHAPTER_PROMPT_PROFILE_OPTIONS.some((option) => option.id === value)
+    ? value
+    : DEFAULT_CHAPTER_PROMPT_PROFILE;
+}
+
 export function SettingsView({ project, onRefresh }: SettingsViewProps) {
   const { toast } = useToast();
   
   const [bible, setBible] = useState(project.bible || '');
   const [background, setBackground] = useState(project.background || '');
   const [roleSettings, setRoleSettings] = useState(project.role_settings || '');
+  const [chapterPromptProfile, setChapterPromptProfile] = useState(
+    normalizeChapterPromptProfile(project.chapter_prompt_profile)
+  );
+  const [chapterPromptCustom, setChapterPromptCustom] = useState(project.chapter_prompt_custom || '');
   
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('bible');
@@ -28,6 +60,8 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     setBible(project.bible || '');
     setBackground(project.background || '');
     setRoleSettings(project.role_settings || '');
+    setChapterPromptProfile(normalizeChapterPromptProfile(project.chapter_prompt_profile));
+    setChapterPromptCustom(project.chapter_prompt_custom || '');
   }, [project]);
 
   const handleSave = async () => {
@@ -37,6 +71,8 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
         bible,
         background,
         role_settings: roleSettings,
+        chapter_prompt_profile: chapterPromptProfile,
+        chapter_prompt_custom: chapterPromptCustom,
       });
       
       toast({
@@ -88,6 +124,10 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
             <TabsTrigger value="roles" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               角色设定
+            </TabsTrigger>
+            <TabsTrigger value="chapter-prompt" className="flex items-center gap-2">
+              <PenLine className="h-4 w-4" />
+              正文提示词
             </TabsTrigger>
           </TabsList>
 
@@ -166,6 +206,67 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
                 </CardHeader>
                 <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
                   <ReactMarkdown>{roleSettings || '*暂无内容*'}</ReactMarkdown>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="chapter-prompt" className="flex-1 min-h-0 mt-0">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+              <Card className="h-full flex flex-col">
+                <CardHeader className="py-3">
+                  <CardTitle className="text-base">正文生成模板</CardTitle>
+                  <CardDescription>控制生成正文的文风与节奏，可叠加自定义补充提示词</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">模板</p>
+                    <Select value={chapterPromptProfile} onValueChange={setChapterPromptProfile}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="选择正文模板" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CHAPTER_PROMPT_PROFILE_OPTIONS.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.description || ''}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 flex-1 min-h-[260px] flex flex-col">
+                    <p className="text-sm font-medium">自定义补充提示词（可选）</p>
+                    <Textarea
+                      value={chapterPromptCustom}
+                      onChange={(e) => setChapterPromptCustom(e.target.value)}
+                      className="flex-1 resize-none font-mono text-sm leading-relaxed"
+                      placeholder="例如：减少形容词密度，多写人物动作和决策，不要机械承接上一章最后一句。"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      这里填写的是补充要求；留空时仅使用模板默认规则。
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-full hidden lg:flex flex-col bg-muted/30">
+                <CardHeader className="py-3">
+                  <CardTitle className="text-base">当前生效设置</CardTitle>
+                </CardHeader>
+                <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{[
+                    `**模板**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.label || '轻快网文（默认）'}`,
+                    '',
+                    `**模板说明**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.description || ''}`,
+                    '',
+                    '**自定义补充提示词**:',
+                    chapterPromptCustom || '*未设置*',
+                  ].join('\n')}
+                  </ReactMarkdown>
                 </CardContent>
               </Card>
             </div>

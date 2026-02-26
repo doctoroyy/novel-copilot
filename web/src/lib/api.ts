@@ -62,6 +62,8 @@ export type ProjectDetail = {
   bible: string;
   background?: string;
   role_settings?: string;
+  chapter_prompt_profile?: string;
+  chapter_prompt_custom?: string;
   outline: NovelOutline | null;
   chapters: string[];
 };
@@ -1036,7 +1038,14 @@ export async function createChapter(
 
 export async function updateProject(
   name: string,
-  data: { bible?: string; background?: string; role_settings?: string; minChapterWords?: number }
+  data: {
+    bible?: string;
+    background?: string;
+    role_settings?: string;
+    chapter_prompt_profile?: string;
+    chapter_prompt_custom?: string;
+    minChapterWords?: number;
+  }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}`, {
     method: 'PUT',
