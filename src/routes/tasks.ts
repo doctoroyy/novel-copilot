@@ -108,6 +108,36 @@ function mapImagineTemplateJobRow(task: any): GenerationTask {
   };
 }
 
+function mapBibleGenerationJobRow(task: any): GenerationTask {
+  const createdAtMs = toTimestampMs(task.created_at);
+  const updatedAtMs = toTimestampMs(task.updated_at);
+  const rawStatus = String(task.status || 'queued');
+  const status: ActiveTaskStatus = rawStatus === 'running' ? 'running' : 'paused';
+  const fallbackMessage = status === 'running'
+    ? '正在生成 Story Bible...'
+    : 'Story Bible 任务排队中...';
+
+  return {
+    id: `bible:${String(task.id || '')}`,
+    taskType: 'bible',
+    projectId: 'system:bible-generation',
+    projectName: 'Story Bible',
+    userId: String(task.user_id || ''),
+    targetCount: 1,
+    startChapter: 0,
+    completedChapters: [],
+    failedChapters: [],
+    currentProgress: 0,
+    currentMessage: task.message ? String(task.message) : fallbackMessage,
+    cancelRequested: false,
+    status,
+    errorMessage: task.error_message ? String(task.error_message) : null,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+    updatedAtMs,
+  };
+}
+
 async function getProjectIdByRef(
   db: D1Database,
   projectRef: string,
@@ -166,6 +196,31 @@ tasksRoutes.get('/active-tasks', async (c) => {
       const message = (error as Error).message || '';
       if (!message.includes('no such table: ai_imagine_template_jobs')) {
         console.warn('Failed to load imagine template jobs for active tasks:', message);
+      }
+    }
+
+    try {
+      const { results: bibleJobs } = await c.env.DB.prepare(`
+        SELECT
+          id,
+          user_id,
+          status,
+          message,
+          error_message,
+          created_at,
+          updated_at
+        FROM bible_generation_jobs
+        WHERE user_id = ?
+          AND status IN ('queued', 'running')
+        ORDER BY created_at DESC
+        LIMIT 20
+      `).bind(userId).all();
+
+      mergedTasks.push(...((bibleJobs as any[]).map(mapBibleGenerationJobRow)));
+    } catch (error) {
+      const message = (error as Error).message || '';
+      if (!message.includes('no such table: bible_generation_jobs')) {
+        console.warn('Failed to load bible generation jobs for active tasks:', message);
       }
     }
 
