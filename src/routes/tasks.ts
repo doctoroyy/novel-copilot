@@ -44,9 +44,10 @@ function parseJsonNumberArray(value: unknown): number[] {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    const normalized = parsed
       .map((entry) => Number(entry))
       .filter((entry) => Number.isFinite(entry));
+    return Array.from(new Set(normalized)).sort((a, b) => a - b);
   } catch {
     return [];
   }
@@ -133,7 +134,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
       SELECT t.*, p.name as project_name
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
-      WHERE t.user_id = ? AND t.status IN ('running', 'paused')
+      WHERE t.user_id = ? AND t.status = 'running'
       AND t.cancel_requested = 0
       ORDER BY t.created_at DESC
     `).bind(userId).all();
@@ -293,7 +294,7 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       SELECT t.*, p.name as project_name
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
-      WHERE t.project_id = ? AND t.user_id = ? AND t.status IN ('running', 'paused')
+      WHERE t.project_id = ? AND t.user_id = ? AND t.status = 'running'
       AND t.task_type = 'chapters'
       AND t.cancel_requested = 0
       ORDER BY t.created_at DESC
@@ -585,21 +586,23 @@ export async function updateTaskProgress(
   if (!task) return;
 
   if (failed) {
-    const failedChapters = JSON.parse(task.failed_chapters || '[]');
+    const failedChapters = parseJsonNumberArray(task.failed_chapters);
     failedChapters.push(completedChapter);
+    const normalizedFailedChapters = Array.from(new Set(failedChapters)).sort((a, b) => a - b);
     await db.prepare(`
       UPDATE generation_tasks 
       SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(JSON.stringify(failedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
+    `).bind(JSON.stringify(normalizedFailedChapters), completedChapter, message || `第 ${completedChapter} 章生成失败`, taskId).run();
   } else {
-    const completedChapters = JSON.parse(task.completed_chapters || '[]');
+    const completedChapters = parseJsonNumberArray(task.completed_chapters);
     completedChapters.push(completedChapter);
+    const normalizedCompletedChapters = Array.from(new Set(completedChapters)).sort((a, b) => a - b);
     await db.prepare(`
       UPDATE generation_tasks 
       SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(JSON.stringify(completedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
+    `).bind(JSON.stringify(normalizedCompletedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
 }
 

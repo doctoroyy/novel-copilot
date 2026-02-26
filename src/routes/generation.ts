@@ -1012,6 +1012,22 @@ async function startGenerationChain(
   }
 }
 
+function getContiguousCompletedCount(startChapter: number, completedChapters: number[]): number {
+  if (!Array.isArray(completedChapters) || completedChapters.length === 0) {
+    return 0;
+  }
+  const completedSet = new Set(
+    completedChapters
+      .map((chapter) => Number(chapter))
+      .filter((chapter) => Number.isFinite(chapter))
+  );
+  let count = 0;
+  while (completedSet.has(startChapter + count)) {
+    count += 1;
+  }
+  return count;
+}
+
 export async function runChapterGenerationTaskInBackground(params: {
   env: Env;
   aiConfig: AIConfig;
@@ -1059,7 +1075,7 @@ export async function runChapterGenerationTaskInBackground(params: {
     }
 
     // 3. Check Task Status
-    const completedCount = task.completedChapters.length;
+    const completedCount = getContiguousCompletedCount(task.startChapter, task.completedChapters);
     const failedCount = task.failedChapters.length;
 
     const runtime = await handleTaskCancellationIfNeeded({
@@ -1335,7 +1351,9 @@ export async function runChapterGenerationTaskInBackground(params: {
 
     // 7. Check Completion & Relay to Next Step
     const freshTask = await getTaskById(env.DB, taskId, userId);
-    const newCompletedCount = freshTask?.completedChapters.length || 0;
+    const newCompletedCount = freshTask
+      ? getContiguousCompletedCount(freshTask.startChapter, freshTask.completedChapters)
+      : 0;
     const newFailedCount = freshTask?.failedChapters.length || 0;
 
     if (newCompletedCount >= task.targetCount || (chaptersToGenerate !== undefined && newCompletedCount >= chaptersToGenerate)) {
@@ -1443,6 +1461,29 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   `).bind(project.id).first() as { max_index: number | null } | null;
 
   const actualMaxChapter = maxChapterResult?.max_index || 0;
+  let firstMissingChapter: number | null = null;
+
+  if (actualMaxChapter > 1) {
+    const { results: chapterRows } = await c.env.DB.prepare(`
+      SELECT chapter_index
+      FROM chapters
+      WHERE project_id = ? AND deleted_at IS NULL
+      ORDER BY chapter_index ASC
+    `).bind(project.id).all();
+
+    let expectedChapter = 1;
+    for (const row of chapterRows as Array<{ chapter_index: number | string | null }>) {
+      const chapterIndex = Number(row.chapter_index);
+      if (!Number.isFinite(chapterIndex) || chapterIndex < expectedChapter) {
+        continue;
+      }
+      if (chapterIndex > expectedChapter) {
+        firstMissingChapter = expectedChapter;
+        break;
+      }
+      expectedChapter = chapterIndex + 1;
+    }
+  }
 
   let startingIndex = project.next_chapter_index;
   let chaptersToGenerate = requestedCount;
@@ -1457,20 +1498,34 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     startingIndex = targetIndex;
     chaptersToGenerate = 1; // When targeting a specific index, just generate 1
   } else {
-    const expectedNextIndex = actualMaxChapter + 1;
-    if (project.next_chapter_index !== expectedNextIndex) {
-      project.next_chapter_index = expectedNextIndex;
-      startingIndex = expectedNextIndex;
+    if (!regenerate && firstMissingChapter !== null) {
+      startingIndex = firstMissingChapter;
+      chaptersToGenerate = 1;
       await c.env.DB.prepare(`
         UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-      `).bind(expectedNextIndex, project.id).run();
+      `).bind(firstMissingChapter, project.id).run();
+      project.next_chapter_index = firstMissingChapter;
+      console.warn(
+        `[Gap Repair] project=${project.id} detected missing chapter ${firstMissingChapter}, forcing single-chapter repair`
+      );
     }
 
-    const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
-    if (remaining <= 0) {
-      return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
+    if (firstMissingChapter === null) {
+      const expectedNextIndex = actualMaxChapter + 1;
+      if (project.next_chapter_index !== expectedNextIndex) {
+        project.next_chapter_index = expectedNextIndex;
+        startingIndex = expectedNextIndex;
+        await c.env.DB.prepare(`
+          UPDATE states SET next_chapter_index = ? WHERE project_id = ?
+        `).bind(expectedNextIndex, project.id).run();
+      }
+
+      const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
+      if (remaining <= 0) {
+        return c.json({ success: false, error: '已达到目标章节数，无需继续生成' }, 400);
+      }
+      chaptersToGenerate = Math.min(requestedCount, remaining);
     }
-    chaptersToGenerate = Math.min(requestedCount, remaining);
   }
 
   const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
@@ -1484,7 +1539,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       `).bind(project.id, userId).first() as any;
 
     if (latestTask && (latestTask.status === 'failed' || latestTask.status === 'error')) {
-      const completed = JSON.parse(latestTask.completed_chapters || '[]').length;
+      const completed = Array.from(new Set(JSON.parse(latestTask.completed_chapters || '[]') as number[])).length;
       const target = latestTask.target_count;
 
       // Heuristic:
@@ -1523,6 +1578,12 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   const runningTaskFreshThresholdMs = 30 * 60 * 1000;
   const isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
   const isResumed = Boolean(runningTaskCheck.isRunning && runningTaskCheck.taskId && isRunningTaskFresh);
+  const runningTaskKickThresholdMs = 25 * 1000;
+  const shouldKickResumedTask = Boolean(
+    isResumed
+    && runningTaskUpdatedAt > 0
+    && (Date.now() - runningTaskUpdatedAt) >= runningTaskKickThresholdMs
+  );
 
   if (runningTaskCheck.isRunning && runningTaskCheck.taskId && !isRunningTaskFresh) {
     await completeTask(
@@ -1543,8 +1604,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       startingIndex
     );
 
-  // Always start/restart the chain — even on resume, the previous chain may have died silently
-  startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate);
+  // For resumed active tasks, avoid duplicate enqueue storms caused by reconnect.
+  // Only kick when the task looks stalled for a short period.
+  if (!isResumed || shouldKickResumedTask) {
+    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate);
+  }
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
   const encoder = new TextEncoder();
