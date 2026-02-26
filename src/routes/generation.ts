@@ -118,6 +118,107 @@ async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Pro
   }
 }
 
+function extractErrorMessage(error: unknown): string {
+  if (!error) return '';
+  if (error instanceof Error) return error.message || '';
+  return String(error);
+}
+
+function parseNestedErrorMessage(rawMessage: string): string {
+  const trimmed = rawMessage.trim();
+  if (!trimmed) return '';
+
+  let candidate = trimmed;
+  for (let depth = 0; depth < 2; depth++) {
+    if (!(candidate.startsWith('{') || candidate.startsWith('['))) {
+      break;
+    }
+    try {
+      const parsed = JSON.parse(candidate) as any;
+      const nested = parsed?.error?.message ?? parsed?.message;
+      if (typeof nested === 'string' && nested.trim()) {
+        candidate = nested.trim();
+        continue;
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+
+  return candidate;
+}
+
+function isGeminiLikeConfig(config: AIConfig): boolean {
+  const provider = String(config.provider || '').toLowerCase();
+  if (provider.includes('gemini') || provider === 'google') {
+    return true;
+  }
+  return /generativelanguage\.googleapis\.com/i.test(String(config.baseUrl || ''));
+}
+
+function isLocationUnsupportedError(error: unknown): boolean {
+  const message = parseNestedErrorMessage(extractErrorMessage(error)).toLowerCase();
+  return (
+    message.includes('user location is not supported for the api use') ||
+    (message.includes('failed_precondition') && message.includes('location'))
+  );
+}
+
+function formatGenerationError(error: unknown): string {
+  const parsed = parseNestedErrorMessage(extractErrorMessage(error));
+  const normalized = parsed || extractErrorMessage(error) || 'AI 生成失败';
+  const lower = normalized.toLowerCase();
+
+  if (
+    lower.includes('user location is not supported for the api use') ||
+    (lower.includes('failed_precondition') && lower.includes('location'))
+  ) {
+    return '当前模型受地区限制暂不可用，请切换到 OpenAI / DeepSeek / Qwen 等可用模型，或联系管理员调整默认模型。';
+  }
+
+  return normalized;
+}
+
+function isSameAIConfig(a: AIConfig, b: AIConfig): boolean {
+  return (
+    String(a.provider || '').toLowerCase() === String(b.provider || '').toLowerCase() &&
+    String(a.model || '').toLowerCase() === String(b.model || '').toLowerCase() &&
+    String(a.baseUrl || '').toLowerCase() === String(b.baseUrl || '').toLowerCase()
+  );
+}
+
+async function getNonGeminiFallbackAIConfig(db: D1Database, primary: AIConfig): Promise<AIConfig | null> {
+  try {
+    const { results } = await db.prepare(`
+      SELECT provider, model_name, api_key_encrypted, base_url, is_default, updated_at
+      FROM model_registry
+      WHERE is_active = 1
+        AND api_key_encrypted IS NOT NULL
+        AND TRIM(api_key_encrypted) != ''
+      ORDER BY is_default DESC, updated_at DESC
+    `).all();
+
+    for (const row of (results || []) as any[]) {
+      const candidate: AIConfig = {
+        provider: row.provider,
+        model: row.model_name,
+        apiKey: row.api_key_encrypted,
+        baseUrl: row.base_url || undefined,
+      };
+      if (!candidate.apiKey) continue;
+      if (isGeminiLikeConfig(candidate)) continue;
+      if (isSameAIConfig(candidate, primary)) continue;
+      return candidate;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('Failed to resolve non-Gemini fallback model:', extractErrorMessage(error));
+    return null;
+  }
+}
+
 // Normalize chapter data from LLM output to consistent structure
 function normalizeChapter(ch: any, fallbackIndex: number): { index: number; title: string; goal: string; hook: string } {
   return {
@@ -1951,11 +2052,37 @@ ${templateHint ? `${templateHint}\n` : ''}
 
 请基于以上信息，生成一个**能在番茄获得流量**的完整 Story Bible：`;
 
-    const bible = await generateText(aiConfig, { system, prompt, temperature: 0.9 });
+    let bible: string;
+    let fallbackModelUsed: { provider: string; model: string } | null = null;
+
+    try {
+      bible = await generateText(aiConfig, { system, prompt, temperature: 0.9 });
+    } catch (primaryError) {
+      if (isGeminiLikeConfig(aiConfig) && isLocationUnsupportedError(primaryError)) {
+        const fallbackConfig = await getNonGeminiFallbackAIConfig(c.env.DB, aiConfig);
+        if (!fallbackConfig) {
+          throw new Error(
+            '当前默认模型受地区限制，且未找到可用的非 Gemini 备用模型。请在管理员后台配置可用模型。'
+          );
+        }
+
+        console.warn(
+          `[generate-bible] primary model blocked by location, fallback to ${fallbackConfig.provider}/${fallbackConfig.model}`
+        );
+        bible = await generateText(fallbackConfig, { system, prompt, temperature: 0.9 });
+        fallbackModelUsed = {
+          provider: String(fallbackConfig.provider || ''),
+          model: String(fallbackConfig.model || ''),
+        };
+      } else {
+        throw primaryError;
+      }
+    }
 
     return c.json({
       success: true,
       bible,
+      fallbackModelUsed,
       templateApplied: resolvedTemplate ? {
         templateId: resolvedTemplate.id,
         templateName: resolvedTemplate.name,
@@ -1963,7 +2090,7 @@ ${templateHint ? `${templateHint}\n` : ''}
       } : null,
     });
   } catch (error) {
-    return c.json({ success: false, error: (error as Error).message }, 500);
+    return c.json({ success: false, error: formatGenerationError(error) }, 500);
   }
 });
 
