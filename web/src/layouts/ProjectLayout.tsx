@@ -98,8 +98,14 @@ function ProjectLayoutInner() {
 
       if (data.templates.length === 0) {
         setSelectedTemplateId('');
+        setAiGenre('');
+        setAiTheme('');
+        setAiKeywords('');
       } else if (!data.templates.some((item) => item.id === selectedTemplateId)) {
         setSelectedTemplateId('');
+        setAiGenre('');
+        setAiTheme('');
+        setAiKeywords('');
       }
     } catch (err) {
       setError(`加载模板失败：${(err as Error).message}`);
@@ -110,12 +116,24 @@ function ProjectLayoutInner() {
 
   const applyTemplate = (templateId: string) => {
     setSelectedTemplateId(templateId);
-    const selected = templateOptions.find((item) => item.id === templateId);
-    if (!selected) return;
+    if (!templateId) {
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+      return;
+    }
 
-    if (!aiGenre.trim()) setAiGenre(selected.genre);
-    if (!aiTheme.trim()) setAiTheme(selected.coreTheme);
-    if (!aiKeywords.trim()) setAiKeywords((selected.keywords || []).join('、'));
+    const selected = templateOptions.find((item) => item.id === templateId);
+    if (!selected) {
+      setAiGenre('');
+      setAiTheme('');
+      setAiKeywords('');
+      return;
+    }
+
+    setAiGenre(selected.genre || '');
+    setAiTheme(selected.coreTheme || '');
+    setAiKeywords((selected.keywords || []).join('、'));
   };
 
   const handleRefreshTemplates = async () => {
@@ -364,7 +382,7 @@ function ProjectLayoutInner() {
                   value={templateSnapshotDate}
                   onValueChange={(value) => {
                     setTemplateSnapshotDate(value);
-                    setSelectedTemplateId('');
+                    applyTemplate('');
                     void loadTemplates(value === 'latest' ? undefined : value);
                   }}
                   disabled={templateLoading}

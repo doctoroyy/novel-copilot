@@ -84,11 +84,17 @@ export function Header({
         <div className="flex items-center gap-1 lg:gap-2">
           {user && (
             <>
-              <span className="text-sm text-muted-foreground hidden sm:inline flex items-center gap-1">
-                <User className="h-3.5 w-3.5" />
-                {user.username}
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="max-w-[110px] truncate">{user.username}</span>
               </span>
-              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs lg:text-sm">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={logout}
+                title="退出登录"
+                className="text-sm font-medium text-foreground"
+              >
                 <LogOut className="h-4 w-4" />
                 <span className="hidden sm:inline ml-1">退出</span>
               </Button>
@@ -176,12 +182,19 @@ export function Header({
           {user && (
             <>
               <div className="w-px h-6 bg-border mx-0.5 hidden md:block" />
-              <div className="hidden lg:flex items-center gap-1 text-xs text-muted-foreground px-1">
-                <User className="h-4 w-4" />
-                <span className="max-w-[80px] truncate">{user.username}</span>
+              <div className="hidden lg:flex items-center gap-1.5 text-sm font-medium text-foreground px-1">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="max-w-[110px] truncate">{user.username}</span>
               </div>
-              <Button variant="ghost" size="sm" onClick={logout} title="退出登录" className="text-xs px-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={logout}
+                title="退出登录"
+                className="text-sm font-medium text-foreground px-2"
+              >
                 <LogOut className="h-4 w-4" />
+                <span className="hidden lg:inline ml-1">退出</span>
               </Button>
             </>
           )}
