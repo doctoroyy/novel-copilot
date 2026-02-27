@@ -178,6 +178,61 @@ tasksRoutes.get('/active-tasks', async (c) => {
   }
 });
 
+// Get task history for the current user (global endpoint)
+tasksRoutes.get('/history', async (c) => {
+  const userId = c.get('userId');
+  const limit = 50;
+
+  try {
+    // 1. Fetch history from generation_tasks
+    // Use LEFT JOIN to include tasks even if project was deleted
+    const { results: generationTasks } = await c.env.DB.prepare(`
+      SELECT t.*, p.name as project_name
+      FROM generation_tasks t
+      LEFT JOIN projects p ON t.project_id = p.id
+      WHERE t.user_id = ?
+      ORDER BY t.created_at DESC
+      LIMIT ?
+    `).bind(userId, limit).all();
+
+    const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
+
+    // 2. Fetch history from ai_imagine_template_jobs
+    try {
+      const { results: templateJobs } = await c.env.DB.prepare(`
+        SELECT
+          id,
+          snapshot_date,
+          requested_by_user_id,
+          max_templates,
+          status,
+          message,
+          error_message,
+          result_template_count,
+          created_at,
+          updated_at
+        FROM ai_imagine_template_jobs
+        WHERE requested_by_user_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).bind(userId, limit).all();
+
+      mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
+    } catch (error) {
+      // Ignore if table doesn't exist
+    }
+
+    // 3. Sort and limit combined results
+    mergedTasks.sort((a, b) => b.createdAt - a.createdAt);
+    const finalTasks = mergedTasks.slice(0, limit);
+
+    return c.json({ success: true, tasks: finalTasks });
+  } catch (error) {
+    console.error('Task history error:', error);
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 // Types
 export type GenerationTask = {
   id: number | string;
