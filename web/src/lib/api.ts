@@ -776,6 +776,15 @@ export async function getAllActiveTasks(): Promise<GenerationTask[]> {
   return data.tasks;
 }
 
+export async function getTaskHistory(): Promise<GenerationTask[]> {
+  const res = await fetch(`${API_BASE}/tasks/history`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) return [];
+  return data.tasks;
+}
+
 export async function fetchChapter(name: string, index: number): Promise<string> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/chapters/${index}`, {
     headers: defaultHeaders(),
