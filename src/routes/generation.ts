@@ -1542,7 +1542,49 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     }
   }
 
-  const runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
+  let runningTaskCheck = await checkRunningTask(c.env.DB, project.id, userId);
+
+  // Check for stale task (no progress for 30 minutes)
+  // We need to calculate this BEFORE deciding whether to kill the task,
+  // but also ensure it's available for the isResumed check later.
+  let isRunningTaskFresh = false;
+  let runningTaskUpdatedAt = 0;
+
+  if (runningTaskCheck.isRunning && runningTaskCheck.task) {
+    const rawUpdatedAt = runningTaskCheck.task.updated_at;
+    runningTaskUpdatedAt = (() => {
+      if (typeof rawUpdatedAt === 'number' && Number.isFinite(rawUpdatedAt)) {
+        return rawUpdatedAt;
+      }
+      if (typeof rawUpdatedAt === 'string') {
+        const trimmed = rawUpdatedAt.trim();
+        if (/^\d+$/.test(trimmed)) {
+          const numeric = Number(trimmed);
+          if (Number.isFinite(numeric)) return numeric;
+        }
+        const parsed = Date.parse(trimmed);
+        if (Number.isFinite(parsed)) return parsed;
+        const parsedUtc = Date.parse(`${trimmed}Z`);
+        if (Number.isFinite(parsedUtc)) return parsedUtc;
+      }
+      return 0;
+    })();
+
+    const runningTaskFreshThresholdMs = 30 * 60 * 1000;
+    isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
+
+    if (!isRunningTaskFresh) {
+      await completeTask(
+        c.env.DB,
+        runningTaskCheck.taskId!,
+        false,
+        '任务长时间无进展，已标记失败，请重新发起'
+      );
+      // Update local check so we can fall through to "Smart Resume" logic
+      // Note: isRunningTaskFresh remains FALSE, which correctly prevents isResumed=true later.
+      runningTaskCheck = { isRunning: false };
+    }
+  }
 
   // Smart Resume Logic: If no running task, check if we should resume a recently failed one
   if (!runningTaskCheck.isRunning) {
@@ -1571,26 +1613,7 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       }
     }
   }
-  const rawUpdatedAt = runningTaskCheck.task?.updated_at;
-  const runningTaskUpdatedAt = (() => {
-    if (typeof rawUpdatedAt === 'number' && Number.isFinite(rawUpdatedAt)) {
-      return rawUpdatedAt;
-    }
-    if (typeof rawUpdatedAt === 'string') {
-      const trimmed = rawUpdatedAt.trim();
-      if (/^\d+$/.test(trimmed)) {
-        const numeric = Number(trimmed);
-        if (Number.isFinite(numeric)) return numeric;
-      }
-      const parsed = Date.parse(trimmed);
-      if (Number.isFinite(parsed)) return parsed;
-      const parsedUtc = Date.parse(`${trimmed}Z`);
-      if (Number.isFinite(parsedUtc)) return parsedUtc;
-    }
-    return 0;
-  })();
-  const runningTaskFreshThresholdMs = 30 * 60 * 1000;
-  const isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
+
   const isResumed = Boolean(runningTaskCheck.isRunning && runningTaskCheck.taskId && isRunningTaskFresh);
   const runningTaskKickThresholdMs = 25 * 1000;
   const shouldKickResumedTask = Boolean(
@@ -1598,15 +1621,6 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     && runningTaskUpdatedAt > 0
     && (Date.now() - runningTaskUpdatedAt) >= runningTaskKickThresholdMs
   );
-
-  if (runningTaskCheck.isRunning && runningTaskCheck.taskId && !isRunningTaskFresh) {
-    await completeTask(
-      c.env.DB,
-      runningTaskCheck.taskId,
-      false,
-      '任务长时间无进展，已标记失败，请重新发起'
-    );
-  }
 
   const taskId = isResumed
     ? (runningTaskCheck.taskId as number)
