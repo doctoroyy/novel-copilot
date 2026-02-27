@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
-import { cancelAllActiveTasks, cancelTaskById, getAllActiveTasks, type GenerationTask } from '@/lib/api';
+import { cancelAllActiveTasks, cancelTaskById, getAllActiveTasks, getTaskHistory, type GenerationTask } from '@/lib/api';
 import {
   TASK_HISTORY_EVENT_NAME,
   getTaskHistorySnapshot,
@@ -22,8 +22,43 @@ export function FloatingProgressButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
+  const [serverHistory, setServerHistory] = useState<GenerationTask[]>([]);
   const [cancelingProjectName, setCancelingProjectName] = useState<string | null>(null);
   const [serverTasks, setServerTasks] = useState<ActiveTask[]>([]);
+
+  // Map server task to ActiveTask structure
+  const mapServerTask = (task: GenerationTask): ActiveTask => {
+    const type = (task.taskType || 'chapters') as TaskType;
+    const completedCount = Array.isArray(task.completedChapters) ? task.completedChapters.length : 0;
+    const current = type === 'chapters'
+      ? Math.max(0, completedCount)
+      : Math.max(0, task.currentProgress || 0);
+    const total = task.targetCount > 0 ? task.targetCount : undefined;
+    const numericTaskId = typeof task.id === 'number' ? task.id : undefined;
+    const fallbackTitle = task.projectName
+      ? `${task.projectName}: ${type === 'outline' ? '大纲生成中...' : '任务执行中...'}`
+      : '任务执行中...';
+
+    // Map server status to ActiveTask status
+    let status: ActiveTask['status'] = 'generating';
+    if (task.status === 'paused') status = 'preparing';
+    else if (task.status === 'completed') status = 'done';
+    else if (task.status === 'failed') status = 'error';
+
+    return {
+      id: `server-${task.id}`,
+      taskId: numericTaskId,
+      type,
+      title: task.currentMessage || fallbackTitle,
+      status,
+      current,
+      total,
+      startTime: task.createdAt || task.updatedAtMs || Date.now(),
+      projectName: task.projectName,
+      startChapter: task.startChapter,
+      message: task.currentMessage || undefined,
+    };
+  };
 
   // Listen for history updates
   useEffect(() => {
@@ -33,37 +68,17 @@ export function FloatingProgressButton() {
     return () => window.removeEventListener(TASK_HISTORY_EVENT_NAME, handler);
   }, []);
 
+  // Fetch server history when history panel is opened
+  useEffect(() => {
+    if (showHistory && isOpen) {
+      void getTaskHistory().then(setServerHistory).catch(() => {});
+    }
+  }, [showHistory, isOpen]);
+
   // Recover/poll running tasks from backend so refresh can restore task panel state
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setInterval> | undefined;
-
-    const mapServerTask = (task: GenerationTask): ActiveTask => {
-      const type = (task.taskType || 'chapters') as TaskType;
-      const completedCount = Array.isArray(task.completedChapters) ? task.completedChapters.length : 0;
-      const current = type === 'chapters'
-        ? Math.max(0, completedCount)
-        : Math.max(0, task.currentProgress || 0);
-      const total = task.targetCount > 0 ? task.targetCount : undefined;
-      const numericTaskId = typeof task.id === 'number' ? task.id : undefined;
-      const fallbackTitle = task.projectName
-        ? `${task.projectName}: ${type === 'outline' ? '大纲生成中...' : '任务执行中...'}`
-        : '任务执行中...';
-
-      return {
-        id: `server-${task.id}`,
-        taskId: numericTaskId,
-        type,
-        title: task.currentMessage || fallbackTitle,
-        status: task.status === 'paused' ? 'preparing' : 'generating',
-        current,
-        total,
-        startTime: task.createdAt || task.updatedAtMs || Date.now(),
-        projectName: task.projectName,
-        startChapter: task.startChapter,
-        message: task.currentMessage || undefined,
-      };
-    };
 
     const sync = async () => {
       try {
@@ -255,33 +270,62 @@ export function FloatingProgressButton() {
               onClick={() => setShowHistory(!showHistory)}
               className="w-full px-3 py-2 flex items-center justify-between text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
             >
-              <span>历史记录 ({history.length})</span>
+              <span>历史记录</span>
               {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
 
             {showHistory && (
               <div className="px-3 pb-3 space-y-2">
-                {history.length === 0 ? (
+                {serverHistory.length === 0 && history.length === 0 ? (
                   <div className="text-sm text-muted-foreground py-2 text-center">
                     暂无历史记录
                   </div>
                 ) : (
-                  history.map(item => (
-                    <div key={item.id} className="flex items-start gap-2 py-2 border-b border-border/50 last:border-0">
-                      {item.status === 'success' ? (
-                        <Check className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{item.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(item.startTime).toLocaleTimeString()}
-                          {item.details && ` · ${item.details}`}
-                        </p>
+                  <>
+                    {/* Local History (Deprecated/Transient) */}
+                    {history.map(item => (
+                      <div key={item.id} className="flex items-start gap-2 py-2 border-b border-border/50 last:border-0">
+                        {item.status === 'success' ? (
+                          <Check className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate" title={item.title}>{item.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(item.startTime).toLocaleTimeString()}
+                            {item.details && ` · ${item.details}`}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                    {/* Server History */}
+                    {serverHistory.map(task => {
+                      const isSuccess = task.status === 'completed';
+                      const taskTitle = task.projectName || '未命名任务';
+                      const subInfo = task.taskType === 'chapters'
+                        ? `已完成 ${task.completedChapters.length}/${task.targetCount} 章`
+                        : task.currentMessage || '任务已结束';
+
+                      return (
+                        <div key={`hist-${task.id}`} className="flex items-start gap-2 py-2 border-b border-border/50 last:border-0">
+                          {isSuccess ? (
+                            <Check className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate" title={taskTitle}>{taskTitle}</p>
+                            <p className="text-xs text-muted-foreground truncate" title={subInfo}>
+                              {new Date(task.createdAt || 0).toLocaleDateString()}
+                              {' · '}
+                              {subInfo}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
                 )}
               </div>
             )}
