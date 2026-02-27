@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GenerationTask } from '../types/domain';
-import { fetchActiveTasks } from '../lib/api';
+import { fetchActiveTasks, fetchTaskHistory } from '../lib/api';
 
 export function useActiveTasks(params: {
   apiBaseUrl: string;
@@ -10,6 +10,7 @@ export function useActiveTasks(params: {
 }) {
   const { apiBaseUrl, token, enabled = true, pollIntervalMs = 8000 } = params;
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
+  const [history, setHistory] = useState<GenerationTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -17,13 +18,19 @@ export function useActiveTasks(params: {
   const load = useCallback(async () => {
     if (!token || !enabled) {
       setTasks([]);
+      setHistory([]);
       return;
     }
 
     try {
       setLoading(true);
-      const result = await fetchActiveTasks(apiBaseUrl, token);
-      setTasks(result);
+      // Parallel fetch for active tasks and history
+      const [activeResult, historyResult] = await Promise.all([
+        fetchActiveTasks(apiBaseUrl, token),
+        fetchTaskHistory(apiBaseUrl, token),
+      ]);
+      setTasks(activeResult);
+      setHistory(historyResult);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -51,6 +58,7 @@ export function useActiveTasks(params: {
 
   return {
     tasks,
+    history,
     loading,
     error,
     refresh: load,
