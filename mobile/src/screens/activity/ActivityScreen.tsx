@@ -1,19 +1,24 @@
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, View, Pressable, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppConfig } from '../../contexts/AppConfigContext';
 import { useActiveTasks } from '../../hooks/useActiveTasks';
+import { cancelAllActiveTasks, cancelTaskById } from '../../lib/api';
 import { gradients, ui } from '../../theme/tokens';
 import type { GenerationTask } from '../../types/domain';
+
+type ViewMode = 'active' | 'history';
 
 export function ActivityScreen() {
   const { token } = useAuth();
   const { config } = useAppConfig();
   const insets = useSafeAreaInsets();
+  const [viewMode, setViewMode] = useState<ViewMode>('active');
 
-  const { tasks, loading, refresh, error } = useActiveTasks({
+  const { tasks, history, loading, refresh, error } = useActiveTasks({
     apiBaseUrl: config.apiBaseUrl,
     token,
     enabled: Boolean(token),
@@ -22,18 +27,43 @@ export function ActivityScreen() {
   const runningCount = tasks.filter((item) => item.status === 'running').length;
   const idleCount = Math.max(0, tasks.length - runningCount);
 
+  // Helper to cancel tasks
+  const handleCancelTask = async (task: GenerationTask) => {
+    if (!token) return;
+    Alert.alert('停止任务', '确定要停止这个生成任务吗？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '停止',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (typeof task.id === 'number') {
+              await cancelTaskById(config.apiBaseUrl, token, task.id);
+            } else if (task.projectName) {
+              await cancelAllActiveTasks(config.apiBaseUrl, token, task.projectName);
+            }
+            await refresh();
+          } catch (err) {
+            Alert.alert('操作失败', (err as Error).message);
+          }
+        },
+      },
+    ]);
+  };
+
+  const displayList = viewMode === 'active' ? tasks : history;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <LinearGradient colors={gradients.page} style={styles.bgGradient}>
         <FlatList
-          data={tasks}
-          keyExtractor={(item) => `${item.id}`}
+          data={displayList}
+          keyExtractor={(item) => `${item.id}-${item.status}`}
           contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 122 }]}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void refresh()} tintColor={ui.colors.primary} />}
           ListHeaderComponent={
             <View style={styles.headerWrap}>
               <Text style={styles.pageTitle}>任务中心</Text>
-              <Text style={styles.pageSubtitle}>生成任务与系统任务统一看板</Text>
               <View style={styles.summaryPanel}>
                 <View style={styles.summaryItem}>
                   <Text style={styles.summaryValue}>{runningCount}</Text>
@@ -50,16 +80,44 @@ export function ActivityScreen() {
                   <Text style={styles.summaryLabel}>总任务</Text>
                 </View>
               </View>
+
+              {/* Toggle Switch */}
+              <View style={styles.toggleRow}>
+                <Pressable
+                  style={[styles.toggleBtn, viewMode === 'active' && styles.toggleBtnActive]}
+                  onPress={() => setViewMode('active')}
+                >
+                  <Text style={[styles.toggleBtnText, viewMode === 'active' && styles.toggleBtnTextActive]}>
+                    活跃任务
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.toggleBtn, viewMode === 'history' && styles.toggleBtnActive]}
+                  onPress={() => setViewMode('history')}
+                >
+                  <Text style={[styles.toggleBtnText, viewMode === 'history' && styles.toggleBtnTextActive]}>
+                    历史记录
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons name="sparkles-outline" size={24} color={ui.colors.primary} />
-              <Text style={styles.emptyTitle}>当前没有活跃任务</Text>
-              <Text style={styles.emptyText}>去「项目」页发起生成，或触发模板刷新任务，会在这里实时展示。</Text>
+              <Text style={styles.emptyTitle}>
+                {viewMode === 'active' ? '当前没有活跃任务' : '暂无历史记录'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {viewMode === 'active'
+                  ? '去「项目」页发起生成，或触发模板刷新任务，会在这里实时展示。'
+                  : '完成的任务会显示在这里。'}
+              </Text>
             </View>
           }
-          renderItem={({ item }) => <TaskCard task={item} />}
+          renderItem={({ item }) => (
+            <TaskCard task={item} onCancel={() => handleCancelTask(item)} isHistory={viewMode === 'history'} />
+          )}
         />
 
         {error ? <Text style={[styles.errorBar, { bottom: insets.bottom + 86 }]}>{error}</Text> : null}
@@ -68,22 +126,32 @@ export function ActivityScreen() {
   );
 }
 
-function TaskCard({ task }: { task: GenerationTask }) {
+function TaskCard({
+  task,
+  onCancel,
+  isHistory,
+}: {
+  task: GenerationTask;
+  onCancel: () => void;
+  isHistory: boolean;
+}) {
   const taskType = task.taskType || 'chapters';
-  const taskLabel = taskType === 'chapters'
-    ? '章节生成'
-    : taskType === 'outline'
-      ? '大纲生成'
-      : taskType === 'bible'
-        ? 'Story Bible'
-        : '系统任务';
-  const statusLabel = task.status === 'running'
-    ? '运行中'
-    : task.status === 'paused'
-      ? '等待中'
-      : task.status === 'completed'
-        ? '已完成'
-        : '失败';
+  const taskLabel =
+    taskType === 'chapters'
+      ? '章节生成'
+      : taskType === 'outline'
+        ? '大纲生成'
+        : taskType === 'bible'
+          ? 'Story Bible'
+          : '系统任务';
+  const statusLabel =
+    task.status === 'running'
+      ? '运行中'
+      : task.status === 'paused'
+        ? '等待中'
+        : task.status === 'completed'
+          ? '已完成'
+          : '失败';
   const done = taskType === 'chapters' ? task.completedChapters.length : Math.max(0, task.currentProgress || 0);
   const total = taskType === 'chapters' ? Math.max(1, task.targetCount) : Math.max(0, task.targetCount);
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
@@ -96,7 +164,7 @@ function TaskCard({ task }: { task: GenerationTask }) {
         <Text style={styles.cardTitle}>{task.projectName || '未命名任务'}</Text>
         <View style={[styles.statusBadge, isRunning ? styles.statusRunning : styles.statusIdle]}>
           <Ionicons
-            name={isRunning ? 'sync-outline' : 'pause-outline'}
+            name={isRunning ? 'sync-outline' : task.status === 'completed' ? 'checkmark-circle-outline' : 'pause-outline'}
             size={11}
             color={isRunning ? ui.colors.success : ui.colors.textSecondary}
           />
@@ -108,7 +176,7 @@ function TaskCard({ task }: { task: GenerationTask }) {
 
       <Text style={styles.cardMessage}>{task.currentMessage || '任务处理中'}</Text>
 
-      {pct !== null ? (
+      {pct !== null && !isHistory ? (
         <View style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${pct}%` }]} />
         </View>
@@ -124,11 +192,22 @@ function TaskCard({ task }: { task: GenerationTask }) {
       </View>
 
       {taskType === 'chapters' ? (
-        <Text style={styles.metaText}>当前：第 {task.currentProgress || task.startChapter} 章</Text>
+        <Text style={styles.metaText}>
+          {isHistory ? '结束章节' : '当前'}：第 {task.currentProgress || task.startChapter} 章
+        </Text>
       ) : null}
 
       {taskType === 'chapters' && task.failedChapters.length > 0 ? (
         <Text style={styles.failText}>失败章节：{task.failedChapters.join(', ')}</Text>
+      ) : null}
+
+      {!isHistory && (task.status === 'running' || task.status === 'paused') ? (
+        <Pressable
+          style={({ pressed }) => [styles.cancelBtn, pressed && { opacity: 0.8 }]}
+          onPress={onCancel}
+        >
+          <Text style={styles.cancelBtnText}>停止任务</Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -152,12 +231,6 @@ const styles = StyleSheet.create({
     color: ui.colors.text,
     fontSize: 42,
     fontWeight: '800',
-  },
-  pageSubtitle: {
-    color: ui.colors.textSecondary,
-    fontSize: 14,
-    marginTop: 0,
-    fontWeight: '500',
   },
   summaryPanel: {
     borderRadius: ui.radius.lg,
@@ -188,6 +261,37 @@ const styles = StyleSheet.create({
     width: 1,
     alignSelf: 'stretch',
     backgroundColor: ui.colors.border,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    backgroundColor: ui.colors.bgMuted,
+    borderRadius: ui.radius.md,
+    padding: 3,
+    gap: 2,
+  },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: ui.radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleBtnActive: {
+    backgroundColor: ui.colors.card,
+    shadowColor: ui.colors.shadow,
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  toggleBtnText: {
+    fontSize: 13,
+    color: ui.colors.textTertiary,
+    fontWeight: '600',
+  },
+  toggleBtnTextActive: {
+    color: ui.colors.text,
+    fontWeight: '700',
   },
   listContent: {
     paddingBottom: 100,
@@ -290,6 +394,18 @@ const styles = StyleSheet.create({
   failText: {
     color: ui.colors.danger,
     fontSize: 12,
+  },
+  cancelBtn: {
+    alignSelf: 'flex-end',
+    backgroundColor: ui.colors.danger,
+    borderRadius: ui.radius.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  cancelBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   errorBar: {
     position: 'absolute',

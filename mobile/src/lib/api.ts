@@ -540,6 +540,19 @@ export async function fetchActiveTasks(
   return json.tasks || [];
 }
 
+export async function fetchTaskHistory(
+  apiBaseUrl: string,
+  token: string,
+): Promise<GenerationTask[]> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, '/tasks/history'), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ tasks: GenerationTask[] }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch task history');
+  return json.tasks || [];
+}
+
 export async function fetchProjectActiveTask(
   apiBaseUrl: string,
   token: string,
