@@ -23,7 +23,7 @@ export function FloatingProgressButton() {
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
   const [serverHistory, setServerHistory] = useState<GenerationTask[]>([]);
-  const [cancelingProjectName, setCancelingProjectName] = useState<string | null>(null);
+  const [cancelingTaskId, setCancelingTaskId] = useState<string | null>(null);
   const [serverTasks, setServerTasks] = useState<ActiveTask[]>([]);
 
   // Map server task to ActiveTask structure
@@ -130,19 +130,19 @@ export function FloatingProgressButton() {
 
   const hasActiveTasks = allTasks.length > 0;
 
-  const handleCancelTask = async (projectName?: string, taskId?: number) => {
-    if (!projectName || cancelingProjectName) return;
-    setCancelingProjectName(projectName);
+  const handleCancelTask = async (task: ActiveTask) => {
+    if (cancelingTaskId) return;
+    setCancelingTaskId(task.id);
     try {
-      if (typeof taskId === 'number') {
-        await cancelTaskById(taskId);
-      } else {
-        await cancelAllActiveTasks(projectName);
+      if (typeof task.taskId === 'number') {
+        await cancelTaskById(task.taskId);
+      } else if (task.projectName) {
+        await cancelAllActiveTasks(task.projectName);
       }
     } catch (error) {
       console.error('Failed to cancel generation task:', error);
     } finally {
-      setCancelingProjectName(null);
+      setCancelingTaskId(null);
     }
   };
 
@@ -223,14 +223,14 @@ export function FloatingProgressButton() {
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                          {task.type === 'chapters' && task.projectName && (
+                          {(task.status === 'generating' || task.status === 'preparing') && (
                             <button
-                              onClick={() => { void handleCancelTask(task.projectName, task.taskId); }}
-                              disabled={cancelingProjectName === task.projectName}
+                              onClick={() => { void handleCancelTask(task); }}
+                              disabled={cancelingTaskId === task.id}
                               className="p-1 rounded hover:bg-destructive/20 text-destructive disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                               title="取消任务"
                             >
-                              {cancelingProjectName === task.projectName
+                              {cancelingTaskId === task.id
                                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 : <Square className="w-3.5 h-3.5" />}
                             </button>
