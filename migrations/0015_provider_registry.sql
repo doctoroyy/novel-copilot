@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS model_registry_new (
 );
 
 -- 4. Copy data
-INSERT INTO model_registry_new (
+INSERT OR IGNORE INTO model_registry_new (
   id, provider_id, model_name, display_name, credit_multiplier, 
   capabilities, is_active, is_default, config_json, created_at, updated_at
 )
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS feature_model_mappings_new (
   updated_at INTEGER DEFAULT (unixepoch() * 1000)
 );
 
-INSERT INTO feature_model_mappings_new SELECT * FROM feature_model_mappings;
+INSERT OR IGNORE INTO feature_model_mappings_new SELECT * FROM feature_model_mappings;
 
 -- 6. Swap all tables
 DROP TABLE feature_model_mappings;
