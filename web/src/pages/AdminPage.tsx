@@ -1477,7 +1477,7 @@ export function AdminPage() {
                             }}
                           >
                             <Edit className="h-3 w-3 mr-1" />
-                            修改 Key
+                            编辑配置
                           </Button>
                         </div>
 
