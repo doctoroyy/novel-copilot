@@ -388,7 +388,7 @@ adminRoutes.delete('/credit-features/:key', async (c) => {
 adminRoutes.get('/feature-models', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(`
-      SELECT fmm.*, m.model_name, m.provider, cf.name as feature_name
+      SELECT fmm.*, m.model_name, m.provider_id as provider, cf.name as feature_name
       FROM feature_model_mappings fmm
       JOIN model_registry m ON fmm.model_id = m.id
       JOIN credit_features cf ON fmm.feature_key = cf.feature_key
