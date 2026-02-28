@@ -2347,6 +2347,221 @@ ${templateHint ? `${templateHint}\n` : ''}
 
 
 
+// Add volumes to existing outline - SSE streaming
+generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
+  const name = c.req.param('name');
+  const userId = c.get('userId') as string | null;
+  if (!userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
+  const aiConfig = await getAIConfig(c, c.env.DB, 'refine_outline');
+
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  let bodyParsed: { newVolumeCount?: number; chaptersPerVolume?: number; minChapterWords?: number } = {};
+  try {
+    bodyParsed = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: 'Invalid request body' }, 400);
+  }
+
+  const { newVolumeCount = 1, chaptersPerVolume = 80, minChapterWords } = bodyParsed;
+
+  if (!Number.isInteger(newVolumeCount) || newVolumeCount <= 0 || newVolumeCount > 20) {
+    return c.json({ success: false, error: 'newVolumeCount must be 1-20' }, 400);
+  }
+  if (!Number.isInteger(chaptersPerVolume) || chaptersPerVolume <= 0 || chaptersPerVolume > 200) {
+    return c.json({ success: false, error: 'chaptersPerVolume must be 1-200' }, 400);
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendEvent = (type: string, data: any) => {
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch (e) {
+          console.error('Error sending SSE event', e);
+        }
+      };
+
+      const heartbeatInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      try {
+        // 获取项目
+        const project = await c.env.DB.prepare(`
+          SELECT p.id, p.bible, p.name, s.min_chapter_words
+          FROM projects p
+          LEFT JOIN states s ON p.id = s.project_id
+          WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
+          ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+          LIMIT 1
+        `).bind(name, name, userId, name).first();
+
+        if (!project) {
+          sendEvent('error', { error: 'Project not found' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        const projectId = (project as any).id;
+        const bible = (project as any).bible;
+        const effectiveMinChapterWords = minChapterWords
+          ?? (Number.isFinite(Number((project as any).min_chapter_words))
+            ? Number((project as any).min_chapter_words)
+            : DEFAULT_MIN_CHAPTER_WORDS);
+
+        // 读取现有大纲
+        const outlineRecord = await c.env.DB.prepare(`
+          SELECT outline_json FROM outlines WHERE project_id = ?
+        `).bind(projectId).first();
+
+        if (!outlineRecord) {
+          sendEvent('error', { error: '当前项目没有大纲，无法追加卷。请先生成大纲。' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        const existingOutline = JSON.parse((outlineRecord as any).outline_json);
+        const existingVolumes = existingOutline.volumes || [];
+
+        sendEvent('start', {
+          totalVolumes: newVolumeCount,
+          existingVolumeCount: existingVolumes.length,
+          message: `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷...`,
+        });
+
+        // 生成新卷骨架
+        sendEvent('progress', {
+          current: 0,
+          total: newVolumeCount,
+          message: '正在生成新卷骨架...',
+        });
+
+        const newVolumesResult = await generateAdditionalVolumes(aiConfig, {
+          bible,
+          existingOutline: {
+            mainGoal: existingOutline.mainGoal || '',
+            milestones: existingOutline.milestones || [],
+            volumes: existingVolumes,
+            totalChapters: existingOutline.totalChapters || 0,
+            targetWordCount: existingOutline.targetWordCount || 0,
+          },
+          newVolumeCount,
+          chaptersPerVolume,
+          minChapterWords: effectiveMinChapterWords,
+        });
+
+        const newVolumeSkeletons = newVolumesResult.volumes || [];
+        if (newVolumeSkeletons.length === 0) {
+          sendEvent('error', { error: 'AI 未能生成新卷骨架' });
+          clearInterval(heartbeatInterval);
+          controller.close();
+          return;
+        }
+
+        // 逐卷填充章节
+        const filledVolumes = [];
+        for (let i = 0; i < newVolumeSkeletons.length; i++) {
+          const vol = newVolumeSkeletons[i];
+          const globalVolIndex = existingVolumes.length + i;
+
+          sendEvent('progress', {
+            current: i + 1,
+            total: newVolumeSkeletons.length,
+            volumeIndex: globalVolIndex,
+            volumeTitle: vol.title,
+            message: `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (${i + 1}/${newVolumeSkeletons.length})`,
+          });
+
+          // 构建上一卷摘要
+          let previousVolumeSummary: string | undefined;
+          if (i === 0 && existingVolumes.length > 0) {
+            const lastExisting = existingVolumes[existingVolumes.length - 1];
+            previousVolumeSummary = lastExisting.volumeEndState ||
+              `${lastExisting.climax}（主角已达成：${lastExisting.goal}）`;
+          } else if (i > 0) {
+            const prevNew = newVolumeSkeletons[i - 1];
+            previousVolumeSummary = `${prevNew.climax}（主角已达成：${prevNew.goal}）`;
+          }
+
+          const chapters = await generateVolumeChapters(aiConfig, {
+            bible,
+            masterOutline: { mainGoal: existingOutline.mainGoal || '', milestones: existingOutline.milestones || [] },
+            volume: vol,
+            previousVolumeSummary,
+            minChapterWords: effectiveMinChapterWords,
+          });
+
+          const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);
+          filledVolumes.push(normalizedVolume);
+
+          sendEvent('volume_complete', {
+            current: i + 1,
+            total: newVolumeSkeletons.length,
+            volumeIndex: globalVolIndex,
+            volumeTitle: vol.title,
+            chapterCount: chapters.length,
+            message: `第 ${globalVolIndex + 1} 卷「${vol.title}」完成 (${chapters.length} 章)`,
+          });
+        }
+
+        // 更新大纲和 states
+        const addedChapters = filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0);
+        const newTotalChapters = (existingOutline.totalChapters || 0) + addedChapters;
+
+        const finalOutline = {
+          ...existingOutline,
+          totalChapters: newTotalChapters,
+          volumes: [...existingVolumes, ...filledVolumes],
+        };
+
+        await c.env.DB.prepare(`
+          UPDATE outlines SET outline_json = ? WHERE project_id = ?
+        `).bind(JSON.stringify(finalOutline), projectId).run();
+
+        await c.env.DB.prepare(`
+          UPDATE states SET total_chapters = ? WHERE project_id = ?
+        `).bind(newTotalChapters, projectId).run();
+
+        sendEvent('done', {
+          success: true,
+          message: `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`,
+          outline: finalOutline,
+        });
+
+        clearInterval(heartbeatInterval);
+        controller.close();
+      } catch (error) {
+        console.error('Add volumes error:', error);
+        sendEvent('error', { error: (error as Error).message });
+        clearInterval(heartbeatInterval);
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
+
 // Refine outline (regenerate missing/incomplete volumes) - SSE streaming
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
