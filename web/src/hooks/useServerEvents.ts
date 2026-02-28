@@ -22,20 +22,27 @@ export interface ProgressEvent {
   message?: string;
 }
 
-export type ServerEvent = LogEvent | ProgressEvent;
+export type ServerEvent = LogEvent | ProgressEvent | TaskUpdateEvent;
+
+// 任务状态变更信号事件
+export interface TaskUpdateEvent {
+  type: 'task_update';
+}
 
 interface UseServerEventsOptions {
   onLog?: (event: LogEvent) => void;
   onProgress?: (event: ProgressEvent) => void;
+  onTaskUpdate?: () => void;
   enabled?: boolean;
 }
 
-export function useServerEvents({ onLog, onProgress, enabled = true }: UseServerEventsOptions) {
+export function useServerEvents({ onLog, onProgress, onTaskUpdate, enabled = true }: UseServerEventsOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const enabledRef = useRef(enabled);
   const onLogRef = useRef(onLog);
   const onProgressRef = useRef(onProgress);
+  const onTaskUpdateRef = useRef(onTaskUpdate);
   const connectRef = useRef<() => void>(() => {});
 
   const [connected, setConnected] = useState(false);
@@ -51,6 +58,10 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
   useEffect(() => {
     onProgressRef.current = onProgress;
   }, [onProgress]);
+
+  useEffect(() => {
+    onTaskUpdateRef.current = onTaskUpdate;
+  }, [onTaskUpdate]);
 
   const connect = useCallback(() => {
     if (!enabledRef.current) return;
@@ -83,6 +94,8 @@ export function useServerEvents({ onLog, onProgress, enabled = true }: UseServer
           onLogRef.current(data);
         } else if (data.type === 'progress' && onProgressRef.current) {
           onProgressRef.current(data);
+        } else if (data.type === 'task_update' && onTaskUpdateRef.current) {
+          onTaskUpdateRef.current();
         }
       } catch (err) {
         console.error('Failed to parse SSE event:', err);

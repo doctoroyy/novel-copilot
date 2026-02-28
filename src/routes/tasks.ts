@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
+import { eventBus } from '../eventBus.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
@@ -587,7 +588,9 @@ export async function createGenerationTask(
     VALUES (?, ?, ?, ?, 0, 'chapters')
   `).bind(projectId, userId, targetCount, startChapter).run();
 
-  return result.meta.last_row_id as number;
+  const newTaskId = result.meta.last_row_id as number;
+  eventBus.taskUpdate();
+  return newTaskId;
 }
 
 export async function createBackgroundTask(
@@ -608,6 +611,7 @@ export async function createBackgroundTask(
   `).bind(projectId, userId, taskType).first() as { id: number } | null;
 
   if (existing?.id) {
+    eventBus.taskUpdate();
     return { taskId: existing.id, created: false };
   }
 
@@ -624,7 +628,9 @@ export async function createBackgroundTask(
     VALUES (?, ?, ?, ?, 0, ?, ?)
   `).bind(projectId, userId, targetCount, startChapter, taskType, initialMessage).run();
 
-  return { taskId: result.meta.last_row_id as number, created: true };
+  const newTaskId = result.meta.last_row_id as number;
+  eventBus.taskUpdate();
+  return { taskId: newTaskId, created: true };
 }
 
 export async function updateTaskProgress(
@@ -659,6 +665,7 @@ export async function updateTaskProgress(
       WHERE id = ?
     `).bind(JSON.stringify(normalizedCompletedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
+  eventBus.taskUpdate();
 }
 
 export async function completeTask(
@@ -677,6 +684,7 @@ export async function completeTask(
     success ? '任务完成' : (errorMessage || '任务失败'),
     taskId
   ).run();
+  eventBus.taskUpdate();
 }
 
 // Check if there is a running task for a project (optionally scoped to a user)
@@ -741,6 +749,7 @@ export async function updateTaskMessage(
       WHERE id = ?
     `).bind(message, taskId).run();
   }
+  eventBus.taskUpdate();
 }
 
 export async function getTaskById(
