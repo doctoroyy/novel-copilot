@@ -555,6 +555,74 @@ adminRoutes.put('/model-registry/:id', async (c) => {
 });
 
 // Delete model
+
+// Batch update models
+adminRoutes.put('/model-registry/batch', async (c) => {
+  try {
+    const { ids, updates } = await c.req.json();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return c.json({ success: false, error: '未选择任何模型' }, 400);
+    }
+
+    const updateClauses: string[] = [];
+    const values: any[] = [];
+
+    if (updates.apiKey !== undefined) { updateClauses.push('api_key_encrypted = ?'); values.push(updates.apiKey || null); }
+    if (updates.baseUrl !== undefined) { updateClauses.push('base_url = ?'); values.push(updates.baseUrl || null); }
+    if (updates.creditMultiplier !== undefined) { updateClauses.push('credit_multiplier = ?'); values.push(updates.creditMultiplier); }
+    if (updates.isActive !== undefined) { updateClauses.push('is_active = ?'); values.push(updates.isActive ? 1 : 0); }
+
+    if (updateClauses.length === 0) {
+      return c.json({ success: true, count: 0 });
+    }
+
+    updateClauses.push("updated_at = (unixepoch() * 1000)");
+
+    let updatedCount = 0;
+    // Process in chunks of 20 to avoid DB limits
+    for (let i = 0; i < ids.length; i += 20) {
+      const chunk = ids.slice(i, i + 20);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const chunkValues = [...values, ...chunk];
+
+      const { meta } = await c.env.DB.prepare(`
+        UPDATE model_registry SET ${updateClauses.join(', ')} WHERE id IN (${placeholders})
+      `).bind(...chunkValues).run();
+      updatedCount += meta.changes || 0;
+    }
+
+    return c.json({ success: true, count: updatedCount });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Batch delete models
+adminRoutes.delete('/model-registry/batch', async (c) => {
+  try {
+    const { ids } = await c.req.json();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return c.json({ success: false, error: '未选择任何模型' }, 400);
+    }
+
+    let deletedCount = 0;
+    // Process in chunks of 20 to avoid DB limits
+    for (let i = 0; i < ids.length; i += 20) {
+      const chunk = ids.slice(i, i + 20);
+      const placeholders = chunk.map(() => '?').join(', ');
+
+      const { meta } = await c.env.DB.prepare(`
+        DELETE FROM model_registry WHERE id IN (${placeholders})
+      `).bind(...chunk).run();
+      deletedCount += meta.changes || 0;
+    }
+
+    return c.json({ success: true, count: deletedCount });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
 adminRoutes.delete('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
