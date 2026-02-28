@@ -221,6 +221,108 @@ ${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` :
 }
 
 /**
+ * 基于已有大纲生成额外的卷骨架（不含章节细节）
+ * 章节需要后续调用 generateVolumeChapters 逐卷填充
+ */
+export async function generateAdditionalVolumes(
+  aiConfig: AIConfig,
+  args: {
+    bible: string;
+    existingOutline: {
+      mainGoal: string;
+      milestones: string[];
+      volumes: Omit<VolumeOutline, 'chapters'>[];
+      totalChapters: number;
+      targetWordCount: number;
+    };
+    newVolumeCount: number;
+    chaptersPerVolume: number;
+    minChapterWords?: number;
+  }
+): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[] }> {
+  const { bible, existingOutline, newVolumeCount, chaptersPerVolume, minChapterWords = 2500 } = args;
+
+  // 计算新卷的起始章节号
+  const lastVolume = existingOutline.volumes[existingOutline.volumes.length - 1];
+  const startChapterBase = lastVolume ? lastVolume.endChapter + 1 : 1;
+
+  // 构建已有卷的摘要
+  const existingVolumesSummary = existingOutline.volumes.map((vol, i) =>
+    `第${i + 1}卷「${vol.title}」: 第${vol.startChapter}-${vol.endChapter}章 | 目标: ${vol.goal} | 高潮: ${vol.climax}`
+  ).join('\n');
+
+  const system = `
+你是一个起点白金级网文大纲策划专家。你需要为一部已有大纲的小说追加新卷。
+
+已有大纲的信息会提供给你，你必须确保新卷与已有内容自然衔接，冲突递进。
+
+大纲设计原则：
+1. 冲突递进：新卷的核心冲突必须比已有卷更大、更紧迫
+2. 衔接连贯：新卷的开头必须自然承接上一卷的结局
+3. 爽点节奏：每 3-5 章安排一个大爽点
+4. 人物弧线：主角在每卷必须有明确的内在成长
+5. 悬念管理：每卷结尾必须留大悬念
+6. 禁止水卷：每卷都要有明确的核心矛盾和高潮
+7. 篇幅规划：每章不少于 ${minChapterWords} 字
+
+输出严格的 JSON 格式，不要有其他文字。
+
+JSON 结构：
+{
+  "volumes": [
+    {
+      "title": "第X卷：xxx",
+      "startChapter": 起始章节号,
+      "endChapter": 结束章节号,
+      "goal": "本卷要完成什么（30字以内）",
+      "conflict": "本卷核心冲突（30字以内）",
+      "climax": "本卷高潮（30字以内）"
+    },
+    ...
+  ]
+}
+`.trim();
+
+  const prompt = `
+【Story Bible】
+${bible}
+
+【主线目标】${existingOutline.mainGoal}
+
+【已有卷目（${existingOutline.volumes.length}卷，共${existingOutline.totalChapters}章）】
+${existingVolumesSummary}
+
+【上一卷结尾状态】
+${lastVolume ? `${lastVolume.climax}（目标达成：${lastVolume.goal}）` : '这是第一卷'}
+
+【追加要求】
+- 新增 ${newVolumeCount} 卷
+- 每卷 ${chaptersPerVolume} 章
+- 起始章节号: 第${startChapterBase}章
+- 每章最低字数: ${minChapterWords} 字
+
+请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）：
+`.trim();
+
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
+  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
+
+  try {
+    const result = JSON.parse(jsonText);
+    // 修正章节范围，确保连续
+    let currentStart = startChapterBase;
+    for (const vol of result.volumes) {
+      vol.startChapter = currentStart;
+      vol.endChapter = currentStart + chaptersPerVolume - 1;
+      currentStart = vol.endChapter + 1;
+    }
+    return result;
+  } catch {
+    throw new Error('Failed to parse additional volumes JSON');
+  }
+}
+
+/**
  * 一键生成完整大纲
  */
 export async function generateFullOutline(args: {
