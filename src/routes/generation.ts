@@ -59,27 +59,21 @@ function normalizeMinChapterWords(value: unknown): number | null {
 async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise<AIConfig | null> {
   const userId = c.get('userId');
 
-  // 1. Check if user has permission for custom provider
   if (userId) {
-    const user = await db.prepare('SELECT allow_custom_provider FROM users WHERE id = ?').bind(userId).first() as any;
-    if (user?.allow_custom_provider) {
-      // 2. Try to get config from headers
-      // Note: headers in Hono are accessible via c.req.header()
-      // We map x-custom-* headers to what getAIConfigFromHeaders expects (x-ai-*) or just read them directly here
-      const headers = c.req.header();
-      const customProvider = headers['x-custom-provider'];
-      const customModel = headers['x-custom-model'];
-      const customBaseUrl = headers['x-custom-base-url'];
-      const customApiKey = headers['x-custom-api-key'];
+    // 允许所有登录用户通过请求头提供自定义配置
+    const headers = c.req.header();
+    const customProvider = headers['x-custom-provider'];
+    const customModel = headers['x-custom-model'];
+    const customBaseUrl = headers['x-custom-base-url'];
+    const customApiKey = headers['x-custom-api-key'];
 
-      if (customProvider && customModel && customApiKey) {
-        return {
-          provider: customProvider as any,
-          model: customModel,
-          apiKey: customApiKey,
-          baseUrl: customBaseUrl,
-        };
-      }
+    if (customProvider && customModel && customApiKey) {
+      return {
+        provider: customProvider as any,
+        model: customModel,
+        apiKey: customApiKey,
+        baseUrl: customBaseUrl,
+      };
     }
   }
 
