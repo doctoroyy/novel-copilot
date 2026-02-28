@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Sparkles, RotateCw, FileText, Target, Trophy, Library, Edit2, Save, X, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
-import { type ProjectDetail, type NovelOutline, refineOutline, updateOutline } from '@/lib/api';
+import { type ProjectDetail, type NovelOutline, refineOutline, updateOutline, addVolumes } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import {
   Dialog,
@@ -21,11 +21,9 @@ import { Label } from '@/components/ui/label';
 interface OutlineViewProps {
   project: ProjectDetail;
   onRefresh?: () => void;
-  onAddVolumes?: (chapters: string, wordCount: string, minChapterWords: string, customPrompt: string, appendOptions?: { appendMode: boolean; newVolumeCount: number; chaptersPerVolume: number }) => Promise<void>;
-  addingVolumes?: boolean;
 }
 
-export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }: OutlineViewProps) {
+export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -38,6 +36,7 @@ export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }:
   const [showAddVolumeDialog, setShowAddVolumeDialog] = useState(false);
   const [addVolumeCount, setAddVolumeCount] = useState('1');
   const [addChaptersPerVolume, setAddChaptersPerVolume] = useState('80');
+  const [isAddingVolumes, setIsAddingVolumes] = useState(false);
   
   const { config, isConfigured } = useAIConfig();
 
@@ -193,11 +192,11 @@ export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }:
 
   // Use editedOutline if editing, otherwise project.outline
   const outline = isEditing && editedOutline ? editedOutline : project.outline;
-  const isBusy = isRefining || refiningVolIdx !== null || isSaving || addingVolumes;
+  const isBusy = isRefining || refiningVolIdx !== null || isSaving || isAddingVolumes;
 
   // 新增卷处理
   const handleAddVolumes = async () => {
-    if (!onAddVolumes || !project.outline) return;
+    if (!project.outline) return;
     const volumeCount = Number.parseInt(addVolumeCount, 10);
     const chaptersPerVolume = Number.parseInt(addChaptersPerVolume, 10);
     if (!Number.isInteger(volumeCount) || volumeCount <= 0 || volumeCount > 20) {
@@ -210,21 +209,30 @@ export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }:
     }
     setShowAddVolumeDialog(false);
     setActionError(null);
+    setIsAddingVolumes(true);
+    setRefineMessage('正在准备追加新卷...');
     try {
-      await onAddVolumes(
-        String(project.outline.totalChapters),
-        String(project.outline.targetWordCount),
-        String(project.state.minChapterWords || 2500),
-        '',
+      await addVolumes(
+        project.id,
         {
-          appendMode: true,
           newVolumeCount: volumeCount,
           chaptersPerVolume,
+          minChapterWords: project.state.minChapterWords || 2500,
+        },
+        {
+          onStart: (data) => setRefineMessage(data.message),
+          onProgress: (data) => setRefineMessage(data.message),
+          onVolumeComplete: (data) => setRefineMessage(data.message),
+          onDone: (_outline, message) => setRefineMessage(message),
+          onError: (error) => setActionError(error),
         }
       );
       onRefresh?.();
     } catch (error) {
       setActionError(`追加卷失败：${(error as Error).message}`);
+    } finally {
+      setIsAddingVolumes(false);
+      setTimeout(() => setRefineMessage(''), 3000);
     }
   };
 
@@ -377,20 +385,36 @@ export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }:
             <span>卷目结构</span>
           </h3>
           {!isEditing && (
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleRefine}
-              disabled={isBusy}
-              className="h-8 text-xs lg:text-sm"
-            >
-              {isRefining ? (
-                <Loader2 className="mr-2 h-3 w-3 lg:h-4 lg:w-4 animate-spin" />
-              ) : (
-                <Sparkles className="mr-2 h-3 w-3 lg:h-4 lg:w-4 text-yellow-500" />
-              )}
-              完善缺失章节
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddVolumeDialog(true)}
+                disabled={isBusy}
+                className="h-8 text-xs lg:text-sm"
+              >
+                {isAddingVolumes ? (
+                  <Loader2 className="mr-2 h-3 w-3 lg:h-4 lg:w-4 animate-spin" />
+                ) : (
+                  <Plus className="mr-2 h-3 w-3 lg:h-4 lg:w-4" />
+                )}
+                新增卷
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleRefine}
+                disabled={isBusy}
+                className="h-8 text-xs lg:text-sm"
+              >
+                {isRefining ? (
+                  <Loader2 className="mr-2 h-3 w-3 lg:h-4 lg:w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-2 h-3 w-3 lg:h-4 lg:w-4 text-yellow-500" />
+                )}
+                完善缺失章节
+              </Button>
+            </div>
           )}
         </div>
 
