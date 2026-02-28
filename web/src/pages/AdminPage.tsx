@@ -10,6 +10,8 @@ import {
   fetchAdminCreditFeatures,
   updateCreditFeature,
   fetchModelRegistry,
+  fetchAdminProviders,
+  updateAdminProvider,
   fetchRemoteModels,
   fetchProviderPresets,
   fetchAdminBibleTemplateSummary,
@@ -17,8 +19,6 @@ import {
   createModel,
   updateModel,
   deleteModel,
-  batchUpdateModels,
-  batchDeleteModels,
   rechargeUserCredit,
   type AdminBibleTemplateSummary,
   type ProviderPreset,
@@ -96,6 +96,7 @@ export function AdminPage() {
   // Credit features & model registry state
   const [creditFeatures, setCreditFeatures] = useState<any[]>([]);
   const [models, setModels] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
   const [editingFeature, setEditingFeature] = useState<string | null>(null);
   const [newModelForm, setNewModelForm] = useState<any>(null);
   const [rechargeUserId, setRechargeUserId] = useState('');
@@ -114,7 +115,6 @@ export function AdminPage() {
   const [showFetchPanel, setShowFetchPanel] = useState(false);
   const [batchRegistering, setBatchRegistering] = useState(false);
   const [selectedRegisteredModels, setSelectedRegisteredModels] = useState<Set<string>>(new Set());
-  const [batchEditForm, setBatchEditForm] = useState<any>(null);
   // provider 维度编辑
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [editProviderForm, setEditProviderForm] = useState<{ apiKey: string; baseUrl: string } | null>(null);
@@ -152,25 +152,20 @@ export function AdminPage() {
   };
 
   const openManualAddForm = (prefill?: Partial<{
-    provider: string;
+    providerId: string;
     modelName: string;
     displayName: string;
-    apiKey: string;
-    baseUrl: string;
     creditMultiplier: number;
   }>) => {
     const openaiPreset = providerPresets.find((p) => p.id === 'openai');
     const fallbackPreset = openaiPreset || providerPresets[0];
-    const provider = prefill?.provider || fetchProvider || fallbackPreset?.id || 'openai';
-    const preset = findPreset(provider);
+    const providerId = prefill?.providerId || fetchProvider || fallbackPreset?.id || 'openai';
     setFetchModelsError(null);
     setShowFetchPanel(false);
     setNewModelForm({
-      provider,
+      providerId,
       modelName: prefill?.modelName || '',
       displayName: prefill?.displayName || '',
-      apiKey: prefill?.apiKey || '',
-      baseUrl: String(prefill?.baseUrl || '').trim() || preset?.defaultBaseUrl || '',
       creditMultiplier: prefill?.creditMultiplier ?? 1.0,
     });
   };
@@ -208,15 +203,17 @@ export function AdminPage() {
         console.warn('Template summary fetch failed:', e);
       }
 
-      // Fetch credit features and models
+      // Fetch credit features, models and providers
       try {
-        const [features, modelList, presets] = await Promise.all([
+        const [features, modelList, providerList, presets] = await Promise.all([
           fetchAdminCreditFeatures(),
           fetchModelRegistry(),
+          fetchAdminProviders(),
           fetchProviderPresets(),
         ]);
         setCreditFeatures(features);
         setModels(modelList);
+        setProviders(providerList);
         setProviderPresets(presets);
         // Clean up selected registered models if they were deleted
         setSelectedRegisteredModels(prev => {
@@ -1066,9 +1063,7 @@ export function AdminPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => openManualAddForm({
-                              provider: fetchProvider,
-                              apiKey: fetchApiKey,
-                              baseUrl: fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl || '',
+                              providerId: fetchProvider,
                             })}
                           >
                             <Plus className="h-3.5 w-3.5 mr-1" />
@@ -1176,7 +1171,7 @@ export function AdminPage() {
                             })}
                         </div>
 
-                        {/* 批量注册按钮 */}
+                      {/* 批量注册按钮 */}
                         <Button
                           onClick={async () => {
                             if (selectedRemoteModels.size === 0) return;
@@ -1185,13 +1180,10 @@ export function AdminPage() {
                             try {
                               const toRegister = remoteModels.filter(m => selectedRemoteModels.has(m.id));
                               for (const m of toRegister) {
-                                const effectiveBaseUrl = fetchBaseUrl || findPreset(fetchProvider)?.defaultBaseUrl;
                                 await createModel({
-                                  provider: fetchProvider,
+                                  providerId: fetchProvider,
                                   modelName: m.name,
                                   displayName: m.displayName || m.name,
-                                  apiKey: fetchApiKey,
-                                  baseUrl: effectiveBaseUrl,
                                   creditMultiplier: 1.0,
                                 });
                               }
@@ -1225,13 +1217,11 @@ export function AdminPage() {
                       <div>
                         <label className="text-xs text-muted-foreground">提供商</label>
                         <Select
-                          value={newModelForm.provider}
+                          value={newModelForm.providerId}
                           onValueChange={(value) => {
-                            const preset = providerPresets.find((p) => p.id === value);
                             setNewModelForm({
                               ...newModelForm,
-                              provider: value,
-                              baseUrl: preset?.defaultBaseUrl || '',
+                              providerId: value,
                             });
                           }}
                         >
@@ -1242,9 +1232,6 @@ export function AdminPage() {
                             {providerPresets.map((item) => (
                               <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
                             ))}
-                            {providerPresets.length === 0 && (
-                              <SelectItem value="openai">OpenAI</SelectItem>
-                            )}
                           </SelectContent>
                         </Select>
                       </div>
@@ -1260,18 +1247,6 @@ export function AdminPage() {
                         <label className="text-xs text-muted-foreground">能量倍率</label>
                         <Input type="number" step="0.1" value={newModelForm.creditMultiplier} onChange={(e) => setNewModelForm({ ...newModelForm, creditMultiplier: parseFloat(e.target.value) })} />
                       </div>
-                      <div className="col-span-2">
-                        <label className="text-xs text-muted-foreground">API Key</label>
-                        <Input type="password" value={newModelForm.apiKey} onChange={(e) => setNewModelForm({ ...newModelForm, apiKey: e.target.value })} />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-xs text-muted-foreground">Base URL（可选，留空将使用预设）</label>
-                        <Input
-                          placeholder={findPreset(newModelForm.provider)?.defaultBaseUrl || 'https://api.example.com/v1'}
-                          value={newModelForm.baseUrl}
-                          onChange={(e) => setNewModelForm({ ...newModelForm, baseUrl: e.target.value })}
-                        />
-                      </div>
                     </div>
                     <div className="flex gap-2">
                       <Button onClick={async () => {
@@ -1286,7 +1261,6 @@ export function AdminPage() {
                             ...newModelForm,
                             modelName: normalizedModelName,
                             displayName: String(newModelForm.displayName || normalizedModelName).trim(),
-                            baseUrl: String(newModelForm.baseUrl || '').trim() || preset?.defaultBaseUrl || '',
                           });
                           setNewModelForm(null);
                           fetchData();
@@ -1316,7 +1290,9 @@ export function AdminPage() {
                           size="sm" variant="ghost" className="h-7 text-xs"
                           onClick={async () => {
                             try {
-                              await batchUpdateModels(Array.from(selectedRegisteredModels), { isActive: true });
+                              for (const id of Array.from(selectedRegisteredModels)) {
+                                await updateModel(id, { isActive: true });
+                              }
                               fetchData();
                             } catch (e) { setError((e as Error).message); }
                           }}
@@ -1327,104 +1303,33 @@ export function AdminPage() {
                           size="sm" variant="ghost" className="h-7 text-xs"
                           onClick={async () => {
                             try {
-                              await batchUpdateModels(Array.from(selectedRegisteredModels), { isActive: false });
+                              for (const id of Array.from(selectedRegisteredModels)) {
+                                await updateModel(id, { isActive: false });
+                              }
                               fetchData();
                             } catch (e) { setError((e as Error).message); }
                           }}
                         >
                           批量禁用
                         </Button>
-                        <Button
-                          size="sm" variant="ghost" className="h-7 text-xs"
-                          onClick={() => setBatchEditForm({})}
-                        >
-                          批量修改
-                        </Button>
-                        <Button
-                          size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive"
-                          onClick={async () => {
-                            if (!confirm(`确定要删除选中的 ${selectedRegisteredModels.size} 个模型吗？`)) return;
-                            try {
-                              await batchDeleteModels(Array.from(selectedRegisteredModels));
-                              fetchData();
-                            } catch (e) { setError((e as Error).message); }
-                          }}
-                        >
-                          批量删除
-                        </Button>
                       </div>
                     )}
                   </div>
 
-                  {batchEditForm && (
-                    <div className="p-4 rounded-lg border bg-card space-y-3">
-                      <h4 className="font-medium">批量修改 {selectedRegisteredModels.size} 个模型</h4>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-muted-foreground">能量倍率（留空不修改）</label>
-                          <Input
-                            type="number" step="0.1"
-                            value={batchEditForm.creditMultiplier || ''}
-                            onChange={(e) => setBatchEditForm({ ...batchEditForm, creditMultiplier: e.target.value ? parseFloat(e.target.value) : undefined })}
-                            placeholder="如：1.0"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <label className="text-xs text-muted-foreground">API Key（留空不修改）</label>
-                          <Input
-                            type="password"
-                            value={batchEditForm.apiKey || ''}
-                            onChange={(e) => setBatchEditForm({ ...batchEditForm, apiKey: e.target.value })}
-                            placeholder="统一设置相同的 API Key"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <label className="text-xs text-muted-foreground">Base URL（留空不修改）</label>
-                          <Input
-                            placeholder="统一设置相同的 Base URL"
-                            value={batchEditForm.baseUrl || ''}
-                            onChange={(e) => setBatchEditForm({ ...batchEditForm, baseUrl: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button onClick={async () => {
-                          try {
-                            const updates: any = {};
-                            if (batchEditForm.creditMultiplier !== undefined) updates.creditMultiplier = batchEditForm.creditMultiplier;
-                            if (batchEditForm.apiKey) updates.apiKey = batchEditForm.apiKey;
-                            if (batchEditForm.baseUrl) updates.baseUrl = batchEditForm.baseUrl;
-
-                            if (Object.keys(updates).length === 0) {
-                              setBatchEditForm(null);
-                              return;
-                            }
-
-                            await batchUpdateModels(Array.from(selectedRegisteredModels), updates);
-                            setBatchEditForm(null);
-                            fetchData();
-                          } catch (e) { setError((e as Error).message); }
-                        }}>
-                          <Save className="h-4 w-4 mr-1" /> 保存修改
-                        </Button>
-                        <Button variant="ghost" onClick={() => setBatchEditForm(null)}>
-                          取消
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+                  {/* 移除批量编辑表单，现在直接修改 Provider 即可 */}
 
                   {models.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-4">暂无模型，请点击上方按钮添加</p>
                   )}
 
                   {/* 按 Provider 分组显示 */}
-                  {Array.from(new Set(models.map(m => m.provider))).map(provider => {
-                    const providerModels = models.filter(m => m.provider === provider);
+                  {Array.from(new Set(models.map(m => m.provider_id))).map(providerId => {
+                    const providerModels = models.filter(m => m.provider_id === providerId);
+                    const providerInfo = providers.find(p => p.id === providerId);
                     const allProviderSelected = providerModels.length > 0 && providerModels.every(m => selectedRegisteredModels.has(m.id));
 
                     return (
-                      <div key={String(provider)} className="space-y-2 mb-4">
+                      <div key={String(providerId)} className="space-y-2 mb-4">
                         {/* Provider 标题行 */}
                         <div className="flex items-center justify-between bg-muted/30 p-2 rounded-lg border-b">
                           <div className="flex items-center gap-2">
@@ -1449,7 +1354,7 @@ export function AdminPage() {
                               )}
                             </div>
                             <h5 className="font-semibold text-sm capitalize">
-                              {providerPresets.find(p => p.id === provider)?.label || provider}
+                              {providerPresets.find(p => p.id === providerId)?.label || providerId}
                             </h5>
                             <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                               {providerModels.length}
@@ -1458,20 +1363,18 @@ export function AdminPage() {
                           {/* Provider 级别编辑按钮 */}
                           <Button
                             size="sm"
-                            variant={editingProvider === provider ? 'default' : 'ghost'}
+                            variant={editingProvider === providerId ? 'default' : 'ghost'}
                             className="h-7 text-xs"
                             title="修改此 Provider 的 API Key 和 Base URL"
                             onClick={() => {
-                              if (editingProvider === provider) {
+                              if (editingProvider === providerId) {
                                 setEditingProvider(null);
                                 setEditProviderForm(null);
                               } else {
-                                // 取第一个模型的 base_url 作为默认值（同 provider 应该相同）
-                                const firstModel = providerModels[0];
-                                setEditingProvider(String(provider));
+                                setEditingProvider(String(providerId));
                                 setEditProviderForm({
                                   apiKey: '',
-                                  baseUrl: firstModel?.base_url || findPreset(String(provider))?.defaultBaseUrl || '',
+                                  baseUrl: providerInfo?.baseUrl || findPreset(String(providerId))?.defaultBaseUrl || '',
                                 });
                               }
                             }}
@@ -1482,10 +1385,10 @@ export function AdminPage() {
                         </div>
 
                         {/* Provider 编辑表单 */}
-                        {editingProvider === provider && editProviderForm && (
+                        {editingProvider === providerId && editProviderForm && (
                           <div className="mx-2 mb-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
                             <p className="text-xs font-medium text-muted-foreground">
-                              修改后将批量更新 {providerModels.length} 个模型的配置
+                              直接修改 Provider 注册表信息
                             </p>
                             <div className="space-y-2">
                               <div>
@@ -1502,15 +1405,15 @@ export function AdminPage() {
                                 <label className="text-xs text-muted-foreground">Base URL</label>
                                 <Input
                                   className="mt-1"
-                                  placeholder={findPreset(String(provider))?.defaultBaseUrl || 'https://api.example.com/v1'}
+                                  placeholder={findPreset(String(providerId))?.defaultBaseUrl || 'https://api.example.com/v1'}
                                   value={editProviderForm.baseUrl}
                                   onChange={(e) => setEditProviderForm({ ...editProviderForm, baseUrl: e.target.value })}
                                 />
-                                {findPreset(String(provider))?.defaultBaseUrl && (
+                                {findPreset(String(providerId))?.defaultBaseUrl && (
                                   <button
                                     type="button"
                                     className="text-[11px] text-primary underline underline-offset-2 mt-1"
-                                    onClick={() => setEditProviderForm({ ...editProviderForm, baseUrl: findPreset(String(provider))?.defaultBaseUrl || '' })}
+                                    onClick={() => setEditProviderForm({ ...editProviderForm, baseUrl: findPreset(String(providerId))?.defaultBaseUrl || '' })}
                                   >
                                     填入默认地址
                                   </button>
@@ -1525,20 +1428,15 @@ export function AdminPage() {
                                     const updates: any = {};
                                     if (editProviderForm.apiKey) updates.apiKey = editProviderForm.apiKey;
                                     if (editProviderForm.baseUrl) updates.baseUrl = editProviderForm.baseUrl;
-                                    if (Object.keys(updates).length === 0) {
-                                      setEditingProvider(null);
-                                      setEditProviderForm(null);
-                                      return;
-                                    }
-                                    const ids = providerModels.map((m: any) => m.id);
-                                    await batchUpdateModels(ids, updates);
+                                    
+                                    await updateAdminProvider(String(providerId), updates);
                                     setEditingProvider(null);
                                     setEditProviderForm(null);
                                     fetchData();
                                   } catch (e) { setError((e as Error).message); }
                                 }}
                               >
-                                <Save className="h-3 w-3 mr-1" /> 保存并更新 {providerModels.length} 个模型
+                                <Save className="h-3 w-3 mr-1" /> 保存 Provider 配置
                               </Button>
                               <Button
                                 size="sm"

@@ -1286,26 +1286,23 @@ export async function updateModel(id: string, updates: any): Promise<void> {
 }
 
 
-export async function batchUpdateModels(ids: string[], updates: any): Promise<number> {
-  const res = await fetch(`${API_BASE}/admin/model-registry/batch`, {
-    method: 'PUT',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ ids, updates }),
+export async function fetchAdminProviders(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry`, {
+    headers: defaultHeaders(),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
-  return data.count;
+  return data.providers;
 }
 
-export async function batchDeleteModels(ids: string[]): Promise<number> {
-  const res = await fetch(`${API_BASE}/admin/model-registry/batch`, {
-    method: 'DELETE',
+export async function updateAdminProvider(id: string, updates: any): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry/${id}`, {
+    method: 'PUT',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify(updates),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
-  return data.count;
 }
 
 export async function deleteModel(id: string): Promise<void> {
