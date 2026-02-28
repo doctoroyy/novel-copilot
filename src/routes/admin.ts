@@ -611,6 +611,11 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
       const chunk = ids.slice(i, i + 20);
       const placeholders = chunk.map(() => '?').join(', ');
 
+      // Delete related feature_model_mappings first to avoid FK constraint
+      await c.env.DB.prepare(
+        `DELETE FROM feature_model_mappings WHERE model_id IN (${placeholders})`
+      ).bind(...chunk).run();
+
       const { meta } = await c.env.DB.prepare(`
         DELETE FROM model_registry WHERE id IN (${placeholders})
       `).bind(...chunk).run();
@@ -626,6 +631,8 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
 adminRoutes.delete('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
+    // Delete related feature_model_mappings first to avoid FK constraint
+    await c.env.DB.prepare('DELETE FROM feature_model_mappings WHERE model_id = ?').bind(id).run();
     await c.env.DB.prepare('DELETE FROM model_registry WHERE id = ?').bind(id).run();
     return c.json({ success: true });
   } catch (error) {
