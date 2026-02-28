@@ -1256,7 +1256,7 @@ export function AdminPage() {
                             setError('模型名称不能为空');
                             return;
                           }
-                          const preset = findPreset(newModelForm.provider);
+
                           await createModel({
                             ...newModelForm,
                             modelName: normalizedModelName,
