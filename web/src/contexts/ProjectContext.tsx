@@ -139,11 +139,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setGenerationState,
     startGeneration,
     completeGeneration,
+    activeTasks,
     startTask,
     updateTask,
     completeTask,
   } = useGeneration();
-  const [generatingOutline, setGeneratingOutline] = useState(false);
+  const generatingOutline = useMemo(() => {
+    return activeTasks.some(t => t.type === 'outline' && t.projectName === selectedProject?.name && t.status !== 'done' && t.status !== 'error');
+  }, [activeTasks, selectedProject?.name]);
   const [cancelingGeneration, setCancelingGeneration] = useState(false);
   const streamMonitorAbortRef = useRef<AbortController | null>(null);
   const streamMonitorTaskIdRef = useRef<number | null>(null);
@@ -314,11 +317,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
                 : [...prev.chapters, chapterFile].sort((a, b) => Number(a.replace('.md', '')) - Number(b.replace('.md', ''))),
             };
           });
-          setGenerationState((prev) => ({
-            ...prev,
-            currentChapterTitle: title,
-            current: Math.max(prev.current, Math.min(prev.total || task.targetCount, prev.current + 1)),
-          }));
+          setGenerationState((prev) => {
+            if (prev.projectName && prev.projectName !== project.name) return prev;
+            return {
+              ...prev,
+              currentChapterTitle: title,
+              current: Math.max(prev.current, Math.min(prev.total || task.targetCount, prev.current + 1)),
+              projectName: project.name,
+            };
+          });
         },
         onDone: (results, failedChapters) => {
           if (streamMonitorTaskIdRef.current === taskId) {
@@ -488,7 +495,11 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   // Sync SSE progress to GenerationContext
   useEffect(() => {
-    if (!generationProgress) return;
+    if (!generationProgress || !selectedProject?.name) return;
+
+    if (generationProgress.projectName !== selectedProject.name) {
+      return;
+    }
 
     if (generationProgress.status === 'done' || generationProgress.status === 'error') {
       setGenerationState(prev => {
@@ -648,7 +659,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       return false;
     };
 
-    setGeneratingOutline(true);
     try {
       const { taskId } = await startOutlineGeneration(
         selectedProject.id,
@@ -755,7 +765,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         details: message,
       });
     } finally {
-      setGeneratingOutline(false);
+      // Use generation logic will handle state through activeTasks
     }
   }, [selectedProject, isConfigured, loadProject, startTask, updateTask, completeTask]);
 
