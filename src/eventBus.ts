@@ -23,7 +23,12 @@ export interface ProgressEvent {
   message?: string;
 }
 
-export type ServerEvent = LogEvent | ProgressEvent;
+// 任务状态变更信号事件（前端收到后拉取最新任务列表）
+export interface TaskUpdateEvent {
+  type: 'task_update';
+}
+
+export type ServerEvent = LogEvent | ProgressEvent | TaskUpdateEvent;
 
 // Global event bus
 class ServerEventBus extends EventEmitter {
@@ -33,6 +38,13 @@ class ServerEventBus extends EventEmitter {
     super();
     // Set max listeners to avoid warnings
     this.setMaxListeners(20);
+  }
+
+  // 推送任务状态变更信号，前端收到后会拉取最新任务列表
+  taskUpdate() {
+    const event: TaskUpdateEvent = { type: 'task_update' };
+    this.queue.push(event);
+    this.emit('event', event);
   }
 
   log(level: LogLevel, message: string, project?: string) {

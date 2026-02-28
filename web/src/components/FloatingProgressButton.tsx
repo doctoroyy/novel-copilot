@@ -8,6 +8,7 @@ import {
   getTaskHistorySnapshot,
   type TaskHistoryItem,
 } from '@/lib/taskHistory';
+import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 
 // Task type icons and labels
 const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = {
@@ -19,6 +20,7 @@ const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = 
 
 export function FloatingProgressButton() {
   const { generationState, activeTasks } = useGeneration();
+  const { taskUpdateCounter } = useServerEventsContext();
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
@@ -75,10 +77,10 @@ export function FloatingProgressButton() {
     }
   }, [showHistory, isOpen]);
 
-  // Recover/poll running tasks from backend so refresh can restore task panel state
+  // 通过 SSE 信号驱动拉取任务列表（替代轮询）
+  // taskUpdateCounter 变化时（后端推送 task_update 事件）或首次 mount 时拉取
   useEffect(() => {
     let disposed = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
 
     const sync = async () => {
       try {
@@ -87,20 +89,16 @@ export function FloatingProgressButton() {
         setServerTasks(tasks.map(mapServerTask));
       } catch {
         if (disposed) return;
-        // Keep previous snapshot on transient network/auth failures
+        // 网络/认证失败时保留上一次快照
       }
     };
 
     void sync();
-    timer = setInterval(() => {
-      void sync();
-    }, 2500);
 
     return () => {
       disposed = true;
-      if (timer) clearInterval(timer);
     };
-  }, []);
+  }, [taskUpdateCounter]);
 
   const allTasks = useMemo(() => {
     const merged: ActiveTask[] = [
