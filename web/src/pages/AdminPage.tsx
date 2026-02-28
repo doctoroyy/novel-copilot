@@ -115,6 +115,8 @@ export function AdminPage() {
   const [batchRegistering, setBatchRegistering] = useState(false);
   const [selectedRegisteredModels, setSelectedRegisteredModels] = useState<Set<string>>(new Set());
   const [batchEditForm, setBatchEditForm] = useState<any>(null);
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [editModelForm, setEditModelForm] = useState<any>(null);
   const [templateSummary, setTemplateSummary] = useState<AdminBibleTemplateSummary | null>(null);
   const [refreshingTemplates, setRefreshingTemplates] = useState(false);
   const [templateSnapshotView, setTemplateSnapshotView] = useState('latest');
@@ -1456,90 +1458,243 @@ export function AdminPage() {
                         <div className="space-y-2 pl-2 border-l-2 ml-2">
                           {providerModels.map((m: any) => {
                             const isSelected = selectedRegisteredModels.has(m.id);
+                            const isEditing = editingModelId === m.id;
                             return (
                               <div
                                 key={m.id}
-                                className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                                className={`rounded-lg border transition-colors ${
+                                  isEditing ? 'border-primary/40 bg-primary/5' :
                                   isSelected ? 'border-primary/30 bg-primary/5' : 'bg-muted/50 border-transparent hover:bg-muted/80'
                                 }`}
                               >
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    className="cursor-pointer flex-shrink-0"
-                                    onClick={() => {
-                                      setSelectedRegisteredModels(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(m.id)) next.delete(m.id);
-                                        else next.add(m.id);
-                                        return next;
-                                      });
-                                    }}
-                                  >
-                                    {isSelected ? (
-                                      <CheckSquare className="h-4 w-4 text-primary" />
+                                {/* 模型行 */}
+                                <div className="flex items-center justify-between p-3">
+                                  <div className="flex items-center gap-3">
+                                    <div
+                                      className="cursor-pointer flex-shrink-0"
+                                      onClick={() => {
+                                        setSelectedRegisteredModels(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(m.id)) next.delete(m.id);
+                                          else next.add(m.id);
+                                          return next;
+                                        });
+                                      }}
+                                    >
+                                      {isSelected ? (
+                                        <CheckSquare className="h-4 w-4 text-primary" />
+                                      ) : (
+                                        <Square className="h-4 w-4 text-muted-foreground" />
+                                      )}
+                                    </div>
+
+                                    {m.is_default ? (
+                                      <Star className="h-4 w-4 text-amber-500 fill-amber-500 flex-shrink-0" />
                                     ) : (
-                                      <Square className="h-4 w-4 text-muted-foreground" />
+                                      <Bot className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                                     )}
-                                  </div>
 
-                                  {m.is_default ? (
-                                    <Star className="h-4 w-4 text-amber-500 fill-amber-500 flex-shrink-0" />
-                                  ) : (
-                                    <Bot className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                  )}
-
-                                  <div className="min-w-0">
-                                    <p className="font-medium text-sm flex items-center gap-2 flex-wrap">
-                                      {m.display_name}
-                                      {!!m.is_default && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
-                                      {!m.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500">已禁用</span>}
-                                    </p>
-                                    <p className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[400px]" title={m.model_name}>
-                                      {m.model_name} · 倍率 {m.credit_multiplier}x
-                                    </p>
+                                    <div className="min-w-0">
+                                      <p className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                        {m.display_name}
+                                        {!!m.is_default && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
+                                        {!m.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500">已禁用</span>}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[400px]" title={m.model_name}>
+                                        {m.model_name} · 倍率 {m.credit_multiplier}x
+                                        {m.api_key_encrypted ? ` · Key: ${m.api_key_encrypted}` : ' · 无 Key'}
+                                      </p>
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="flex items-center gap-1 flex-shrink-0">
-                                  {!m.is_default && (
-                                    <Button size="sm" variant="ghost" onClick={async () => {
-                                      try {
-                                        await updateModel(m.id, { isDefault: true });
-                                        fetchData();
-                                      } catch (e) { setError((e as Error).message); }
-                                    }} title="设为默认">
-                                      <Star className="h-3 w-3" />
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    {/* 编辑按钮 */}
+                                    <Button
+                                      size="sm"
+                                      variant={isEditing ? 'default' : 'ghost'}
+                                      title="编辑模型"
+                                      onClick={() => {
+                                        if (isEditing) {
+                                          setEditingModelId(null);
+                                          setEditModelForm(null);
+                                        } else {
+                                          setEditingModelId(m.id);
+                                          setEditModelForm({
+                                            provider: m.provider,
+                                            modelName: m.model_name,
+                                            displayName: m.display_name,
+                                            apiKey: '',
+                                            baseUrl: m.base_url || '',
+                                            creditMultiplier: m.credit_multiplier,
+                                          });
+                                        }
+                                      }}
+                                    >
+                                      <Edit className="h-3 w-3" />
                                     </Button>
-                                  )}
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={async () => {
-                                      try {
-                                        await updateModel(m.id, { isActive: !m.is_active });
-                                        fetchData();
-                                      } catch (e) { setError((e as Error).message); }
-                                    }}
-                                  >
-                                    {m.is_active ? (
-                                      <ToggleRight className="h-4 w-4 text-green-500" />
-                                    ) : (
-                                      <ToggleLeft className="h-4 w-4 text-muted-foreground" />
+                                    {!m.is_default && (
+                                      <Button size="sm" variant="ghost" onClick={async () => {
+                                        try {
+                                          await updateModel(m.id, { isDefault: true });
+                                          fetchData();
+                                        } catch (e) { setError((e as Error).message); }
+                                      }} title="设为默认">
+                                        <Star className="h-3 w-3" />
+                                      </Button>
                                     )}
-                                  </Button>
-                                  <Button
-                                    size="sm" variant="ghost"
-                                    className="text-destructive hover:text-destructive"
-                                    onClick={async () => {
-                                      if (!confirm(`确定删除模型 ${m.display_name}？`)) return;
-                                      try {
-                                        await deleteModel(m.id);
-                                        fetchData();
-                                      } catch (e) { setError((e as Error).message); }
-                                    }}
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title={m.is_active ? '禁用' : '启用'}
+                                      onClick={async () => {
+                                        try {
+                                          await updateModel(m.id, { isActive: !m.is_active });
+                                          fetchData();
+                                        } catch (e) { setError((e as Error).message); }
+                                      }}
+                                    >
+                                      {m.is_active ? (
+                                        <ToggleRight className="h-4 w-4 text-green-500" />
+                                      ) : (
+                                        <ToggleLeft className="h-4 w-4 text-muted-foreground" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm" variant="ghost"
+                                      className="text-destructive hover:text-destructive"
+                                      onClick={async () => {
+                                        if (!confirm(`确定删除模型 ${m.display_name}？`)) return;
+                                        try {
+                                          await deleteModel(m.id);
+                                          fetchData();
+                                        } catch (e) { setError((e as Error).message); }
+                                      }}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
                                 </div>
+
+                                {/* 内联编辑表单 */}
+                                {isEditing && editModelForm && (
+                                  <div className="px-4 pb-4 pt-1 border-t border-primary/20 space-y-3">
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div>
+                                        <label className="text-xs text-muted-foreground">提供商</label>
+                                        <Select
+                                          value={editModelForm.provider}
+                                          onValueChange={(value) => {
+                                            const preset = providerPresets.find((p) => p.id === value);
+                                            setEditModelForm({
+                                              ...editModelForm,
+                                              provider: value,
+                                              baseUrl: preset?.defaultBaseUrl || editModelForm.baseUrl,
+                                            });
+                                          }}
+                                        >
+                                          <SelectTrigger className="mt-1">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {providerPresets.map((item) => (
+                                              <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
+                                            ))}
+                                            {providerPresets.length === 0 && (
+                                              <SelectItem value="openai">OpenAI</SelectItem>
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-muted-foreground">模型名称</label>
+                                        <Input
+                                          className="mt-1"
+                                          value={editModelForm.modelName}
+                                          onChange={(e) => setEditModelForm({ ...editModelForm, modelName: e.target.value })}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-muted-foreground">显示名称</label>
+                                        <Input
+                                          className="mt-1"
+                                          value={editModelForm.displayName}
+                                          onChange={(e) => setEditModelForm({ ...editModelForm, displayName: e.target.value })}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-muted-foreground">能量倍率</label>
+                                        <Input
+                                          className="mt-1"
+                                          type="number" step="0.1"
+                                          value={editModelForm.creditMultiplier}
+                                          onChange={(e) => setEditModelForm({ ...editModelForm, creditMultiplier: parseFloat(e.target.value) })}
+                                        />
+                                      </div>
+                                      <div className="col-span-2">
+                                        <label className="text-xs text-muted-foreground">API Key（留空保持不变）</label>
+                                        <Input
+                                          className="mt-1"
+                                          type="password"
+                                          placeholder="留空则不修改现有 Key"
+                                          value={editModelForm.apiKey}
+                                          onChange={(e) => setEditModelForm({ ...editModelForm, apiKey: e.target.value })}
+                                        />
+                                      </div>
+                                      <div className="col-span-2">
+                                        <label className="text-xs text-muted-foreground">Base URL</label>
+                                        <Input
+                                          className="mt-1"
+                                          placeholder={findPreset(editModelForm.provider)?.defaultBaseUrl || 'https://api.example.com/v1'}
+                                          value={editModelForm.baseUrl}
+                                          onChange={(e) => setEditModelForm({ ...editModelForm, baseUrl: e.target.value })}
+                                        />
+                                        {findPreset(editModelForm.provider)?.defaultBaseUrl && (
+                                          <button
+                                            type="button"
+                                            className="text-[11px] text-primary underline underline-offset-2 mt-1"
+                                            onClick={() => setEditModelForm({ ...editModelForm, baseUrl: findPreset(editModelForm.provider)?.defaultBaseUrl || '' })}
+                                          >
+                                            填入默认地址
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            const updates: any = {
+                                              provider: editModelForm.provider,
+                                              modelName: editModelForm.modelName,
+                                              displayName: editModelForm.displayName,
+                                              baseUrl: editModelForm.baseUrl,
+                                              creditMultiplier: editModelForm.creditMultiplier,
+                                            };
+                                            if (editModelForm.apiKey) {
+                                              updates.apiKey = editModelForm.apiKey;
+                                            }
+                                            await updateModel(m.id, updates);
+                                            setEditingModelId(null);
+                                            setEditModelForm(null);
+                                            fetchData();
+                                          } catch (e) { setError((e as Error).message); }
+                                        }}
+                                      >
+                                        <Save className="h-3 w-3 mr-1" /> 保存
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => {
+                                          setEditingModelId(null);
+                                          setEditModelForm(null);
+                                        }}
+                                      >
+                                        <X className="h-3 w-3 mr-1" /> 取消
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
