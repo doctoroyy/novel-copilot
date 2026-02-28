@@ -88,16 +88,17 @@ async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise
 async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Promise<AIConfig | null> {
   try {
     const mapping = await db.prepare(`
-      SELECT m.provider, m.model_name, m.api_key_encrypted, m.base_url
+      SELECT m.model_name, p.api_key_encrypted, p.base_url, p.id as provider_id
       FROM feature_model_mappings fmm
       JOIN model_registry m ON fmm.model_id = m.id
+      JOIN provider_registry p ON m.provider_id = p.id
       WHERE fmm.feature_key = ? AND m.is_active = 1
       LIMIT 1
     `).bind(featureKey).first() as {
-      provider: string;
       model_name: string;
       api_key_encrypted: string | null;
       base_url: string | null;
+      provider_id: string;
     } | null;
 
     if (!mapping || !mapping.api_key_encrypted) {
@@ -105,7 +106,7 @@ async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Pro
     }
 
     return {
-      provider: mapping.provider as any,
+      provider: mapping.provider_id as any,
       model: mapping.model_name,
       apiKey: mapping.api_key_encrypted,
       baseUrl: mapping.base_url || undefined,
@@ -189,12 +190,13 @@ function isSameAIConfig(a: AIConfig, b: AIConfig): boolean {
 async function getNonGeminiFallbackAIConfig(db: D1Database, primary: AIConfig): Promise<AIConfig | null> {
   try {
     const { results } = await db.prepare(`
-      SELECT provider, model_name, api_key_encrypted, base_url, is_default, updated_at
-      FROM model_registry
-      WHERE is_active = 1
-        AND api_key_encrypted IS NOT NULL
-        AND TRIM(api_key_encrypted) != ''
-      ORDER BY is_default DESC, updated_at DESC
+      SELECT p.id as provider, m.model_name, p.api_key_encrypted, p.base_url, m.is_default, m.updated_at
+      FROM model_registry m
+      JOIN provider_registry p ON m.provider_id = p.id
+      WHERE m.is_active = 1
+        AND p.api_key_encrypted IS NOT NULL
+        AND TRIM(p.api_key_encrypted) != ''
+      ORDER BY m.is_default DESC, m.updated_at DESC
     `).all();
 
     for (const row of (results || []) as any[]) {

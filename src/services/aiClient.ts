@@ -404,9 +404,10 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
 
     if (featureKey) {
       const mapping = await db.prepare(
-        `SELECT m.*, fmm.temperature as override_temperature 
+        `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id, fmm.temperature as override_temperature 
        FROM feature_model_mappings fmm
        JOIN model_registry m ON fmm.model_id = m.id
+       JOIN provider_registry p ON m.provider_id = p.id
        WHERE fmm.feature_key = ? AND m.is_active = 1`
       ).bind(featureKey).first();
 
@@ -417,23 +418,29 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
 
     if (!model) {
       model = await db.prepare(
-        'SELECT * FROM model_registry WHERE is_default = 1 AND is_active = 1 LIMIT 1'
+        `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
+         FROM model_registry m
+         JOIN provider_registry p ON m.provider_id = p.id
+         WHERE m.is_default = 1 AND m.is_active = 1 LIMIT 1`
       ).first();
     }
 
     if (!model) {
       model = await db.prepare(
-        'SELECT * FROM model_registry WHERE is_active = 1 LIMIT 1'
+        `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
+         FROM model_registry m
+         JOIN provider_registry p ON m.provider_id = p.id
+         WHERE m.is_active = 1 LIMIT 1`
       ).first();
 
       if (!model) return null;
     }
 
     return {
-      provider: normalizeProviderId(model.provider) as AIProvider,
+      provider: normalizeProviderId(model.provider_id) as AIProvider,
       model: model.model_name,
-      apiKey: model.api_key_encrypted || '',
-      baseUrl: model.base_url || undefined,
+      apiKey: model.provider_api_key || '',
+      baseUrl: model.provider_base_url || undefined,
     };
   } catch (error) {
     console.error('Failed to get AI config from registry:', error);
