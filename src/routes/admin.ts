@@ -427,18 +427,82 @@ adminRoutes.post('/feature-models', async (c) => {
 // Model Registry Management
 // ==========================================
 
-// Get all models
-adminRoutes.get('/model-registry', async (c) => {
+// ==========================================
+// Provider Registry API
+// ==========================================
+
+// Get all providers
+adminRoutes.get('/provider-registry', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      'SELECT * FROM model_registry ORDER BY is_default DESC, provider, model_name'
+      'SELECT * FROM provider_registry ORDER BY id ASC'
     ).all();
+    
     // Mask API keys for display
+    const masked = (results || []).map((p: any) => ({
+      ...p,
+      api_key_encrypted: p.api_key_encrypted
+        ? `${p.api_key_encrypted.slice(0, 8)}...${p.api_key_encrypted.slice(-4)}`
+        : null,
+    }));
+    return c.json({ success: true, providers: masked });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Update provider
+adminRoutes.put('/provider-registry/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const { apiKey, baseUrl, configJson } = await c.req.json();
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(apiKey || null); }
+    if (baseUrl !== undefined) { 
+      const normalizedBaseUrl = id === 'gemini' ? (normalizeGeminiBaseUrl(baseUrl) || null) : (baseUrl || null);
+      updates.push('base_url = ?'); 
+      values.push(normalizedBaseUrl); 
+    }
+    if (configJson !== undefined) { updates.push('config_json = ?'); values.push(JSON.stringify(configJson)); }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = (unixepoch() * 1000)");
+      values.push(id);
+      await c.env.DB.prepare(`
+        UPDATE provider_registry SET ${updates.join(', ')} WHERE id = ?
+      `).bind(...values).run();
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
+// Model Registry API
+// ==========================================
+
+// Get all models (joined with providers)
+adminRoutes.get('/model-registry', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(`
+      SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
+      FROM model_registry m
+      JOIN provider_registry p ON m.provider_id = p.id
+      ORDER BY m.is_default DESC, p.id, m.model_name
+    `).all();
+    
+    // Mask provider keys for display
     const masked = (results || []).map((m: any) => ({
       ...m,
-      api_key_encrypted: m.api_key_encrypted
-        ? `${m.api_key_encrypted.slice(0, 8)}...${m.api_key_encrypted.slice(-4)}`
+      provider: m.provider_id, // Backward compatibility for UI
+      api_key_encrypted: m.provider_api_key
+        ? `${m.provider_api_key.slice(0, 8)}...${m.provider_api_key.slice(-4)}`
         : null,
+      base_url: m.provider_base_url
     }));
     return c.json({ success: true, models: masked });
   } catch (error) {
@@ -449,37 +513,32 @@ adminRoutes.get('/model-registry', async (c) => {
 // Create model
 adminRoutes.post('/model-registry', async (c) => {
   try {
-    const { provider, modelName, displayName, apiKey, baseUrl, creditMultiplier, capabilities, configJson } = await c.req.json();
-    if (!provider || !modelName) {
-      return c.json({ success: false, error: 'provider, modelName 不能为空' }, 400);
+    const { providerId, modelName, displayName, creditMultiplier, capabilities, configJson } = await c.req.json();
+    if (!providerId || !modelName) {
+      return c.json({ success: false, error: 'providerId, modelName 不能为空' }, 400);
     }
 
-    const normalizedProvider = normalizeProviderId(String(provider));
-    const preset = getProviderPreset(normalizedProvider);
-    const normalizedModelName = String(modelName).trim();
-    const normalizedDisplayName = String(displayName || normalizedModelName).trim();
-    const initialBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl || null;
-    const resolvedBaseUrl = normalizedProvider === 'gemini'
-      ? (normalizeGeminiBaseUrl(initialBaseUrl || undefined) || null)
-      : initialBaseUrl;
-
-    if (!normalizedModelName) {
-      return c.json({ success: false, error: 'modelName 不能为空' }, 400);
-    }
-    if (!normalizedDisplayName) {
-      return c.json({ success: false, error: 'displayName 不能为空' }, 400);
-    }
-    if (!resolvedBaseUrl && (normalizedProvider === 'custom' || !preset)) {
-      return c.json({ success: false, error: '该 provider 需要填写 Base URL' }, 400);
+    // Ensure provider exists
+    const provider = await c.env.DB.prepare('SELECT id FROM provider_registry WHERE id = ?').bind(providerId).first();
+    if (!provider) {
+      // Auto-create provider if it's a known preset
+      const preset = getProviderPreset(providerId);
+      if (preset) {
+        await c.env.DB.prepare(`
+          INSERT INTO provider_registry (id, name, protocol, base_url)
+          VALUES (?, ?, ?, ?)
+        `).bind(preset.id, preset.label, preset.protocol, preset.defaultBaseUrl || null).run();
+      } else {
+        return c.json({ success: false, error: 'Provider 不存在且非预设' }, 400);
+      }
     }
 
     const id = crypto.randomUUID();
     await c.env.DB.prepare(`
-      INSERT INTO model_registry (id, provider, model_name, display_name, api_key_encrypted, base_url, credit_multiplier, capabilities, config_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO model_registry (id, provider_id, model_name, display_name, credit_multiplier, capabilities, config_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      id, normalizedProvider, normalizedModelName, normalizedDisplayName,
-      apiKey || null, resolvedBaseUrl,
+      id, providerId, modelName.trim(), (displayName || modelName).trim(),
       creditMultiplier || 1.0,
       JSON.stringify(capabilities || []),
       JSON.stringify(configJson || {})
@@ -491,78 +550,21 @@ adminRoutes.post('/model-registry', async (c) => {
   }
 });
 
-// Batch update models — 必须在 PUT /:id 之前注册
-adminRoutes.put('/model-registry/batch', async (c) => {
-  try {
-    const { ids, updates } = await c.req.json();
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return c.json({ success: false, error: '未选择任何模型' }, 400);
-    }
-    const updateClauses: string[] = [];
-    const values: any[] = [];
-    if (updates.apiKey !== undefined) { updateClauses.push('api_key_encrypted = ?'); values.push(updates.apiKey || null); }
-    if (updates.baseUrl !== undefined) { updateClauses.push('base_url = ?'); values.push(updates.baseUrl || null); }
-    if (updates.creditMultiplier !== undefined) { updateClauses.push('credit_multiplier = ?'); values.push(updates.creditMultiplier); }
-    if (updates.isActive !== undefined) { updateClauses.push('is_active = ?'); values.push(updates.isActive ? 1 : 0); }
-    if (updateClauses.length === 0) return c.json({ success: true, count: 0 });
-    updateClauses.push("updated_at = (unixepoch() * 1000)");
-    let updatedCount = 0;
-    for (let i = 0; i < ids.length; i += 20) {
-      const chunk = ids.slice(i, i + 20);
-      const placeholders = chunk.map(() => '?').join(', ');
-      const { meta } = await c.env.DB.prepare(
-        `UPDATE model_registry SET ${updateClauses.join(', ')} WHERE id IN (${placeholders})`
-      ).bind(...[...values, ...chunk]).run();
-      updatedCount += meta.changes || 0;
-    }
-    return c.json({ success: true, count: updatedCount });
-  } catch (error) {
-    return c.json({ success: false, error: (error as Error).message }, 500);
-  }
-});
-
 // Update model
 adminRoutes.put('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
     const body = await c.req.json();
-    const existing = await c.env.DB.prepare(
-      'SELECT provider, base_url FROM model_registry WHERE id = ? LIMIT 1'
-    ).bind(id).first() as { provider?: string; base_url?: string | null } | null;
-
-    if (!existing) {
-      return c.json({ success: false, error: '模型不存在' }, 404);
-    }
-
-    // Build dynamic update
     const updates: string[] = [];
     const values: any[] = [];
-    const nextProvider = body.provider !== undefined
-      ? normalizeProviderId(String(body.provider))
-      : String(existing.provider || '');
 
     if (body.displayName !== undefined) { updates.push('display_name = ?'); values.push(String(body.displayName || '').trim()); }
-    if (body.provider !== undefined) { updates.push('provider = ?'); values.push(nextProvider); }
-    if (body.modelName !== undefined) { updates.push('model_name = ?'); values.push(body.modelName); }
-    if (body.apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(body.apiKey || null); }
-    if (body.baseUrl !== undefined) {
-      const rawBaseUrl = String(body.baseUrl || '').trim();
-      const normalizedBaseUrl = nextProvider === 'gemini'
-        ? (normalizeGeminiBaseUrl(rawBaseUrl || undefined) || null)
-        : (rawBaseUrl || null);
-      updates.push('base_url = ?');
-      values.push(normalizedBaseUrl);
-    } else if (body.provider !== undefined && nextProvider === 'gemini') {
-      const normalizedExistingBaseUrl = normalizeGeminiBaseUrl(String(existing.base_url || '')) || 'https://generativelanguage.googleapis.com/v1beta';
-      updates.push('base_url = ?');
-      values.push(normalizedExistingBaseUrl);
-    }
-    if (body.creditMultiplier !== undefined) { updates.push('credit_multiplier = ?'); values.push(body.creditMultiplier); }
+    if (body.modelName !== undefined) { updates.push('model_name = ?'); values.push(String(body.modelName || '').trim()); }
+    if (body.creditMultiplier !== undefined) { updates.push('credit_multiplier = ?'); values.push(Number(body.creditMultiplier)); }
     if (body.capabilities !== undefined) { updates.push('capabilities = ?'); values.push(JSON.stringify(body.capabilities)); }
     if (body.isActive !== undefined) { updates.push('is_active = ?'); values.push(body.isActive ? 1 : 0); }
     if (body.configJson !== undefined) { updates.push('config_json = ?'); values.push(JSON.stringify(body.configJson)); }
-
-    // Handle default model: only one can be default
+    
     if (body.isDefault !== undefined) {
       if (body.isDefault) {
         await c.env.DB.prepare('UPDATE model_registry SET is_default = 0').run();
@@ -571,20 +573,19 @@ adminRoutes.put('/model-registry/:id', async (c) => {
       values.push(body.isDefault ? 1 : 0);
     }
 
-    updates.push("updated_at = (unixepoch() * 1000)");
-    values.push(id);
-
-    await c.env.DB.prepare(`
-      UPDATE model_registry SET ${updates.join(', ')} WHERE id = ?
-    `).bind(...values).run();
+    if (updates.length > 0) {
+      updates.push("updated_at = (unixepoch() * 1000)");
+      values.push(id);
+      await c.env.DB.prepare(`
+        UPDATE model_registry SET ${updates.join(', ')} WHERE id = ?
+      `).bind(...values).run();
+    }
 
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
-
-// Delete model
 
 // Batch delete models
 adminRoutes.delete('/model-registry/batch', async (c) => {
@@ -595,19 +596,12 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
     }
 
     let deletedCount = 0;
-    // Process in chunks of 20 to avoid DB limits
     for (let i = 0; i < ids.length; i += 20) {
       const chunk = ids.slice(i, i + 20);
       const placeholders = chunk.map(() => '?').join(', ');
 
-      // Delete related feature_model_mappings first to avoid FK constraint
-      await c.env.DB.prepare(
-        `DELETE FROM feature_model_mappings WHERE model_id IN (${placeholders})`
-      ).bind(...chunk).run();
-
-      const { meta } = await c.env.DB.prepare(`
-        DELETE FROM model_registry WHERE id IN (${placeholders})
-      `).bind(...chunk).run();
+      await c.env.DB.prepare(`DELETE FROM feature_model_mappings WHERE model_id IN (${placeholders})`).bind(...chunk).run();
+      const { meta } = await c.env.DB.prepare(`DELETE FROM model_registry WHERE id IN (${placeholders})`).bind(...chunk).run();
       deletedCount += meta.changes || 0;
     }
 
@@ -617,10 +611,10 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
   }
 });
 
+// Delete model
 adminRoutes.delete('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
-    // Delete related feature_model_mappings first to avoid FK constraint
     await c.env.DB.prepare('DELETE FROM feature_model_mappings WHERE model_id = ?').bind(id).run();
     await c.env.DB.prepare('DELETE FROM model_registry WHERE id = ?').bind(id).run();
     return c.json({ success: true });
