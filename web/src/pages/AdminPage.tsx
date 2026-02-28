@@ -17,6 +17,8 @@ import {
   createModel,
   updateModel,
   deleteModel,
+  batchUpdateModels,
+  batchDeleteModels,
   rechargeUserCredit,
   type AdminBibleTemplateSummary,
   type ProviderPreset,
@@ -111,6 +113,8 @@ export function AdminPage() {
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [showFetchPanel, setShowFetchPanel] = useState(false);
   const [batchRegistering, setBatchRegistering] = useState(false);
+  const [selectedRegisteredModels, setSelectedRegisteredModels] = useState<Set<string>>(new Set());
+  const [batchEditForm, setBatchEditForm] = useState<any>(null);
   const [templateSummary, setTemplateSummary] = useState<AdminBibleTemplateSummary | null>(null);
   const [refreshingTemplates, setRefreshingTemplates] = useState(false);
   const [templateSnapshotView, setTemplateSnapshotView] = useState('latest');
@@ -211,6 +215,14 @@ export function AdminPage() {
         setCreditFeatures(features);
         setModels(modelList);
         setProviderPresets(presets);
+        // Clean up selected registered models if they were deleted
+        setSelectedRegisteredModels(prev => {
+          const valid = new Set<string>();
+          modelList.forEach((m: any) => {
+            if (prev.has(m.id)) valid.add(m.id);
+          });
+          return valid;
+        });
         if (presets.length > 0) {
           const openaiPreset = presets.find((p) => p.id === 'openai');
           const first = openaiPreset || presets[0];
@@ -1287,73 +1299,254 @@ export function AdminPage() {
                 )}
 
                 {/* ===== 已注册模型列表 ===== */}
-                <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-muted-foreground">已注册模型 ({models.length})</h4>
-                  {models.map((m: any) => (
-                    <div key={m.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        {m.is_default ? (
-                          <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                        ) : (
-                          <Bot className="h-4 w-4 text-muted-foreground" />
-                        )}
-                        <div>
-                          <p className="font-medium text-sm">
-                            {m.display_name}
-                            {!!m.is_default && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
-                            {!m.is_active && <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-500">已禁用</span>}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {m.provider} / {m.model_name} · 倍率 {m.credit_multiplier}x
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {!m.is_default && (
-                          <Button size="sm" variant="ghost" onClick={async () => {
-                            try {
-                              await updateModel(m.id, { isDefault: true });
-                              fetchData();
-                            } catch (e) { setError((e as Error).message); }
-                          }} title="设为默认">
-                            <Star className="h-3 w-3" />
-                          </Button>
-                        )}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-muted-foreground">已注册模型 ({models.length})</h4>
+
+                    {selectedRegisteredModels.size > 0 && (
+                      <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-lg border">
+                        <span className="text-xs text-muted-foreground px-2">
+                          已选 {selectedRegisteredModels.size} 项
+                        </span>
+                        <div className="h-4 w-px bg-border" />
                         <Button
-                          size="sm"
-                          variant="ghost"
+                          size="sm" variant="ghost" className="h-7 text-xs"
                           onClick={async () => {
                             try {
-                              await updateModel(m.id, { isActive: !m.is_active });
+                              await batchUpdateModels(Array.from(selectedRegisteredModels), { isActive: true });
                               fetchData();
                             } catch (e) { setError((e as Error).message); }
                           }}
                         >
-                          {m.is_active ? (
-                            <ToggleRight className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <ToggleLeft className="h-4 w-4 text-muted-foreground" />
-                          )}
+                          批量启用
                         </Button>
                         <Button
-                          size="sm" variant="ghost"
-                          className="text-destructive hover:text-destructive"
+                          size="sm" variant="ghost" className="h-7 text-xs"
                           onClick={async () => {
-                            if (!confirm(`确定删除模型 ${m.display_name}？`)) return;
                             try {
-                              await deleteModel(m.id);
+                              await batchUpdateModels(Array.from(selectedRegisteredModels), { isActive: false });
                               fetchData();
                             } catch (e) { setError((e as Error).message); }
                           }}
                         >
-                          <Trash2 className="h-3 w-3" />
+                          批量禁用
+                        </Button>
+                        <Button
+                          size="sm" variant="ghost" className="h-7 text-xs"
+                          onClick={() => setBatchEditForm({})}
+                        >
+                          批量修改
+                        </Button>
+                        <Button
+                          size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive"
+                          onClick={async () => {
+                            if (!confirm(`确定要删除选中的 ${selectedRegisteredModels.size} 个模型吗？`)) return;
+                            try {
+                              await batchDeleteModels(Array.from(selectedRegisteredModels));
+                              fetchData();
+                            } catch (e) { setError((e as Error).message); }
+                          }}
+                        >
+                          批量删除
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {batchEditForm && (
+                    <div className="p-4 rounded-lg border bg-card space-y-3">
+                      <h4 className="font-medium">批量修改 {selectedRegisteredModels.size} 个模型</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs text-muted-foreground">能量倍率（留空不修改）</label>
+                          <Input
+                            type="number" step="0.1"
+                            value={batchEditForm.creditMultiplier || ''}
+                            onChange={(e) => setBatchEditForm({ ...batchEditForm, creditMultiplier: e.target.value ? parseFloat(e.target.value) : undefined })}
+                            placeholder="如：1.0"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-muted-foreground">API Key（留空不修改）</label>
+                          <Input
+                            type="password"
+                            value={batchEditForm.apiKey || ''}
+                            onChange={(e) => setBatchEditForm({ ...batchEditForm, apiKey: e.target.value })}
+                            placeholder="统一设置相同的 API Key"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-xs text-muted-foreground">Base URL（留空不修改）</label>
+                          <Input
+                            placeholder="统一设置相同的 Base URL"
+                            value={batchEditForm.baseUrl || ''}
+                            onChange={(e) => setBatchEditForm({ ...batchEditForm, baseUrl: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button onClick={async () => {
+                          try {
+                            const updates: any = {};
+                            if (batchEditForm.creditMultiplier !== undefined) updates.creditMultiplier = batchEditForm.creditMultiplier;
+                            if (batchEditForm.apiKey) updates.apiKey = batchEditForm.apiKey;
+                            if (batchEditForm.baseUrl) updates.baseUrl = batchEditForm.baseUrl;
+
+                            if (Object.keys(updates).length === 0) {
+                              setBatchEditForm(null);
+                              return;
+                            }
+
+                            await batchUpdateModels(Array.from(selectedRegisteredModels), updates);
+                            setBatchEditForm(null);
+                            fetchData();
+                          } catch (e) { setError((e as Error).message); }
+                        }}>
+                          <Save className="h-4 w-4 mr-1" /> 保存修改
+                        </Button>
+                        <Button variant="ghost" onClick={() => setBatchEditForm(null)}>
+                          取消
                         </Button>
                       </div>
                     </div>
-                  ))}
+                  )}
+
                   {models.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-4">暂无模型，请点击上方按钮添加</p>
                   )}
+
+                  {/* 按 Provider 分组显示 */}
+                  {Array.from(new Set(models.map(m => m.provider))).map(provider => {
+                    const providerModels = models.filter(m => m.provider === provider);
+                    const allProviderSelected = providerModels.length > 0 && providerModels.every(m => selectedRegisteredModels.has(m.id));
+
+                    return (
+                      <div key={String(provider)} className="space-y-2 mb-4">
+                        <div className="flex items-center justify-between bg-muted/30 p-2 rounded-lg border-b">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="cursor-pointer"
+                              onClick={() => {
+                                setSelectedRegisteredModels(prev => {
+                                  const next = new Set(prev);
+                                  if (allProviderSelected) {
+                                    providerModels.forEach(m => next.delete(m.id));
+                                  } else {
+                                    providerModels.forEach(m => next.add(m.id));
+                                  }
+                                  return next;
+                                });
+                              }}
+                            >
+                              {allProviderSelected ? (
+                                <CheckSquare className="h-4 w-4 text-primary" />
+                              ) : (
+                                <Square className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </div>
+                            <h5 className="font-semibold text-sm capitalize">
+                              {providerPresets.find(p => p.id === provider)?.label || provider}
+                            </h5>
+                            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                              {providerModels.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 pl-2 border-l-2 ml-2">
+                          {providerModels.map((m: any) => {
+                            const isSelected = selectedRegisteredModels.has(m.id);
+                            return (
+                              <div
+                                key={m.id}
+                                className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                                  isSelected ? 'border-primary/30 bg-primary/5' : 'bg-muted/50 border-transparent hover:bg-muted/80'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className="cursor-pointer flex-shrink-0"
+                                    onClick={() => {
+                                      setSelectedRegisteredModels(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(m.id)) next.delete(m.id);
+                                        else next.add(m.id);
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    {isSelected ? (
+                                      <CheckSquare className="h-4 w-4 text-primary" />
+                                    ) : (
+                                      <Square className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                  </div>
+
+                                  {m.is_default ? (
+                                    <Star className="h-4 w-4 text-amber-500 fill-amber-500 flex-shrink-0" />
+                                  ) : (
+                                    <Bot className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                  )}
+
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-sm flex items-center gap-2 flex-wrap">
+                                      {m.display_name}
+                                      {!!m.is_default && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">默认</span>}
+                                      {!m.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500">已禁用</span>}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[400px]" title={m.model_name}>
+                                      {m.model_name} · 倍率 {m.credit_multiplier}x
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {!m.is_default && (
+                                    <Button size="sm" variant="ghost" onClick={async () => {
+                                      try {
+                                        await updateModel(m.id, { isDefault: true });
+                                        fetchData();
+                                      } catch (e) { setError((e as Error).message); }
+                                    }} title="设为默认">
+                                      <Star className="h-3 w-3" />
+                                    </Button>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={async () => {
+                                      try {
+                                        await updateModel(m.id, { isActive: !m.is_active });
+                                        fetchData();
+                                      } catch (e) { setError((e as Error).message); }
+                                    }}
+                                  >
+                                    {m.is_active ? (
+                                      <ToggleRight className="h-4 w-4 text-green-500" />
+                                    ) : (
+                                      <ToggleLeft className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    size="sm" variant="ghost"
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={async () => {
+                                      if (!confirm(`确定删除模型 ${m.display_name}？`)) return;
+                                      try {
+                                        await deleteModel(m.id);
+                                        fetchData();
+                                      } catch (e) { setError((e as Error).message); }
+                                    }}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
