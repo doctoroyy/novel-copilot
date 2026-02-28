@@ -304,9 +304,22 @@ export function useAIConfig() {
   return context;
 }
 
-// AI config is now managed server-side via Model Registry.
-// This function returns empty headers to maintain backward compatibility
-// with existing call sites across the frontend.
+// 将自定义 AI 配置转换为后端 getAIConfig 识别的请求头 (x-custom-*)
 export function getAIConfigHeaders(_config?: AIConfig): Record<string, string> {
-  return {};
+  let target = _config;
+  if (!target) {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) target = JSON.parse(stored);
+    } catch (e) { /* ignore */ }
+  }
+
+  if (!target || !target.apiKey) return {};
+
+  return {
+    'x-custom-provider': target.provider || '',
+    'x-custom-model': target.model || '',
+    'x-custom-api-key': target.apiKey || '',
+    'x-custom-base-url': target.baseUrl || '',
+  };
 }

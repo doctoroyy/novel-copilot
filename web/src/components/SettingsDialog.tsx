@@ -44,24 +44,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsList>
           
           <TabsContent value="general" className="space-y-4 py-4">
-            {/* Custom AI Config (Only for whitelisted users) */}
-            {user?.allowCustomProvider && (
-              <AIConfigSection />
-            )}
+            {/* 自定义 AI 配置（对所有用户开放） */}
+            <AIConfigSection />
 
-            {/* AI Status (Default - only show if NOT using custom or for non-whitelisted) */}
-            {(!user?.allowCustomProvider) && (
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <div className="flex items-center gap-3 mb-2">
-                  <Bot className="h-5 w-5 text-primary" />
-                  <span className="font-medium text-sm">AI 模型配置</span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  AI 模型和 API Key 由管理员在后台统一配置，
-                  无需手动设置。如需调整模型，请联系管理员。
-                </p>
+            {/* AI 状态说明 */}
+            <div className="p-4 rounded-lg border bg-muted/30">
+              <div className="flex items-center gap-3 mb-2">
+                <Bot className="h-5 w-5 text-primary" />
+                <span className="font-medium text-sm">AI 模型配置</span>
               </div>
-            )}
+              <p className="text-xs text-muted-foreground">
+                系统默认提供的模型由管理员配置。您也可以在上方填写自己的 API Key 和代理地址进行覆盖。
+              </p>
+            </div>
 
             {/* Credit Info */}
             <div className="p-4 rounded-lg border bg-muted/30">
