@@ -8,13 +8,24 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Sparkles, RotateCw, FileText, Target, Trophy, Library, Edit2, Save, X, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { type ProjectDetail, type NovelOutline, refineOutline, updateOutline } from '@/lib/api';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 interface OutlineViewProps {
   project: ProjectDetail;
   onRefresh?: () => void;
+  onAddVolumes?: (chapters: string, wordCount: string, minChapterWords: string, customPrompt: string, appendOptions?: { appendMode: boolean; newVolumeCount: number; chaptersPerVolume: number }) => Promise<void>;
+  addingVolumes?: boolean;
 }
 
-export function OutlineView({ project, onRefresh }: OutlineViewProps) {
+export function OutlineView({ project, onRefresh, onAddVolumes, addingVolumes }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -23,6 +34,10 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [refineMessage, setRefineMessage] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [milestonesExpanded, setMilestonesExpanded] = useState(false);
+  // 新增卷对话框状态
+  const [showAddVolumeDialog, setShowAddVolumeDialog] = useState(false);
+  const [addVolumeCount, setAddVolumeCount] = useState('1');
+  const [addChaptersPerVolume, setAddChaptersPerVolume] = useState('80');
   
   const { config, isConfigured } = useAIConfig();
 
@@ -178,7 +193,41 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
   // Use editedOutline if editing, otherwise project.outline
   const outline = isEditing && editedOutline ? editedOutline : project.outline;
-  const isBusy = isRefining || refiningVolIdx !== null || isSaving;
+  const isBusy = isRefining || refiningVolIdx !== null || isSaving || addingVolumes;
+
+  // 新增卷处理
+  const handleAddVolumes = async () => {
+    if (!onAddVolumes || !project.outline) return;
+    const volumeCount = Number.parseInt(addVolumeCount, 10);
+    const chaptersPerVolume = Number.parseInt(addChaptersPerVolume, 10);
+    if (!Number.isInteger(volumeCount) || volumeCount <= 0 || volumeCount > 20) {
+      setActionError('卷数必须是 1-20 的整数');
+      return;
+    }
+    if (!Number.isInteger(chaptersPerVolume) || chaptersPerVolume <= 0 || chaptersPerVolume > 200) {
+      setActionError('每卷章节数必须是 1-200 的整数');
+      return;
+    }
+    setShowAddVolumeDialog(false);
+    setActionError(null);
+    try {
+      await onAddVolumes(
+        String(project.outline.totalChapters),
+        String(project.outline.targetWordCount),
+        String(project.state.minChapterWords || 2500),
+        '',
+        {
+          appendMode: true,
+          newVolumeCount: volumeCount,
+          chaptersPerVolume,
+        }
+      );
+      onRefresh?.();
+    } catch (error) {
+      setActionError(`追加卷失败：${(error as Error).message}`);
+    }
+  };
+
   const milestoneItems = (outline.milestones || []).map((milestone, index) => ({
     index,
     text:
@@ -190,6 +239,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const shouldShowMilestones = isEditing || milestonesExpanded;
 
   return (
+    <>
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
       {actionError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -474,5 +524,55 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
         </ScrollArea>
       </div>
     </div>
+
+    {/* 新增卷对话框 */}
+    <Dialog open={showAddVolumeDialog} onOpenChange={setShowAddVolumeDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>新增卷</DialogTitle>
+          <DialogDescription>
+            基于已有大纲追加新卷，AI 将自动衔接已有剧情。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label className="text-sm">新增卷数</Label>
+            <Input
+              type="number"
+              min={1}
+              max={20}
+              value={addVolumeCount}
+              onChange={(e) => setAddVolumeCount(e.target.value)}
+              className="bg-muted/50"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm">每卷章节数</Label>
+            <Input
+              type="number"
+              min={1}
+              max={200}
+              value={addChaptersPerVolume}
+              onChange={(e) => setAddChaptersPerVolume(e.target.value)}
+              className="bg-muted/50"
+            />
+          </div>
+          {project.outline && (
+            <div className="text-xs text-muted-foreground p-3 rounded-lg bg-muted/30">
+              当前：{project.outline.volumes.length} 卷 / {project.outline.totalChapters} 章
+              <br />
+              追加后预计：{project.outline.volumes.length + Number.parseInt(addVolumeCount, 10) || 0} 卷 / {project.outline.totalChapters + (Number.parseInt(addVolumeCount, 10) || 0) * (Number.parseInt(addChaptersPerVolume, 10) || 0)} 章
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowAddVolumeDialog(false)}>取消</Button>
+          <Button onClick={handleAddVolumes} className="gradient-bg hover:opacity-90">
+            <Plus className="mr-1 h-4 w-4" /> 开始生成
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

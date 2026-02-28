@@ -217,6 +217,9 @@ export default {
             targetWordCount: payload.targetWordCount,
             customPrompt: payload.customPrompt,
             minChapterWords: payload.minChapterWords,
+            appendMode: payload.appendMode,
+            newVolumeCount: payload.newVolumeCount,
+            chaptersPerVolume: payload.chaptersPerVolume,
           });
         } else {
           await runChapterGenerationTaskInBackground({

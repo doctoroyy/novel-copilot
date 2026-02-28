@@ -300,11 +300,26 @@ export async function startOutlineGeneration(
   minChapterWords?: number,
   customPrompt?: string,
   aiHeaders?: Record<string, string>,
+  options?: {
+    appendMode?: boolean;
+    newVolumeCount?: number;
+    chaptersPerVolume?: number;
+  },
 ): Promise<{ taskId: number; message: string }> {
   const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/outline`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }, aiHeaders),
-    body: JSON.stringify({ targetChapters, targetWordCount, customPrompt, minChapterWords }),
+    body: JSON.stringify({
+      targetChapters,
+      targetWordCount,
+      customPrompt,
+      minChapterWords,
+      ...(options?.appendMode ? {
+        appendMode: true,
+        newVolumeCount: options.newVolumeCount,
+        chaptersPerVolume: options.chaptersPerVolume,
+      } : {}),
+    }),
   });
 
   const data = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));

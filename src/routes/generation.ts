@@ -3,7 +3,7 @@ import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
 import { writeOneChapter } from '../generateChapter.js';
-import { generateMasterOutline, generateVolumeChapters } from '../generateOutline.js';
+import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
 import type { CharacterStateRegistry } from '../types/characterState.js';
 import type { PlotGraph } from '../types/plotGraph.js';
@@ -310,6 +310,10 @@ type OutlineQueuePayload = {
   customPrompt?: string;
   minChapterWords?: number;
   aiConfig: AIConfig;
+  // 追加卷模式
+  appendMode?: boolean;
+  newVolumeCount?: number;
+  chaptersPerVolume?: number;
 };
 
 const OUTLINE_TASK_PROGRESS_TOTAL = 100;
@@ -355,6 +359,10 @@ export async function runOutlineGenerationTaskInBackground(params: {
   customPrompt?: string;
   minChapterWords?: number;
   aiConfig: AIConfig;
+  // 追加卷模式
+  appendMode?: boolean;
+  newVolumeCount?: number;
+  chaptersPerVolume?: number;
 }) {
   const {
     env,
@@ -366,6 +374,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
     customPrompt,
     minChapterWords,
     aiConfig,
+    appendMode,
+    newVolumeCount,
+    chaptersPerVolume,
   } = params;
 
   try {
@@ -402,10 +413,10 @@ export async function runOutlineGenerationTaskInBackground(params: {
         ? Number(project.min_chapter_words)
         : DEFAULT_MIN_CHAPTER_WORDS);
 
-    await updateTaskMessage(env.DB, taskId, '正在准备大纲生成...', 5);
+    await updateTaskMessage(env.DB, taskId, appendMode ? '正在准备追加卷...' : '正在准备大纲生成...', 5);
 
     try {
-      await consumeCredit(env.DB, userId, 'generate_outline', `生成大纲: ${project.name}`);
+      await consumeCredit(env.DB, userId, 'generate_outline', appendMode ? `追加卷: ${project.name}` : `生成大纲: ${project.name}`);
     } catch (creditError) {
       await completeTask(env.DB, taskId, false, (creditError as Error).message);
       return;
@@ -421,6 +432,16 @@ export async function runOutlineGenerationTaskInBackground(params: {
     `).bind(project.id).first() as { characters_json?: string } | null;
     const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json) : undefined;
 
+    // ---- 追加卷模式 ----
+    if (appendMode && newVolumeCount && chaptersPerVolume) {
+      await runAppendVolumesMode({
+        env, taskId, project, bible, aiConfig,
+        effectiveMinChapterWords, newVolumeCount, chaptersPerVolume,
+      });
+      return;
+    }
+
+    // ---- 全量生成模式（原有逻辑）----
     await updateTaskMessage(
       env.DB,
       taskId,
@@ -519,6 +540,137 @@ export async function runOutlineGenerationTaskInBackground(params: {
   }
 }
 
+/**
+ * 追加卷模式：基于已有大纲追加新卷
+ */
+async function runAppendVolumesMode(params: {
+  env: Env;
+  taskId: number;
+  project: { id: string; bible: string; name: string };
+  bible: string;
+  aiConfig: AIConfig;
+  effectiveMinChapterWords: number;
+  newVolumeCount: number;
+  chaptersPerVolume: number;
+}) {
+  const { env, taskId, project, bible, aiConfig, effectiveMinChapterWords, newVolumeCount, chaptersPerVolume } = params;
+
+  // 读取现有大纲
+  const outlineRecord = await env.DB.prepare(`
+    SELECT outline_json FROM outlines WHERE project_id = ?
+  `).bind(project.id).first() as { outline_json?: string } | null;
+
+  if (!outlineRecord?.outline_json) {
+    await completeTask(env.DB, taskId, false, '当前项目没有大纲，无法追加卷。请先生成大纲。');
+    return;
+  }
+
+  const existingOutline = JSON.parse(outlineRecord.outline_json);
+  const existingVolumes = existingOutline.volumes || [];
+
+  await updateTaskMessage(env.DB, taskId, `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷的骨架...`, 10);
+
+  // 生成新卷骨架
+  const newVolumesResult = await generateAdditionalVolumes(aiConfig, {
+    bible,
+    existingOutline: {
+      mainGoal: existingOutline.mainGoal || '',
+      milestones: existingOutline.milestones || [],
+      volumes: existingVolumes,
+      totalChapters: existingOutline.totalChapters || 0,
+      targetWordCount: existingOutline.targetWordCount || 0,
+    },
+    newVolumeCount,
+    chaptersPerVolume,
+    minChapterWords: effectiveMinChapterWords,
+  });
+
+  const newVolumeSkeletons = newVolumesResult.volumes || [];
+  if (newVolumeSkeletons.length === 0) {
+    await completeTask(env.DB, taskId, false, 'AI 未能生成新卷骨架');
+    return;
+  }
+
+  // 逐卷填充章节
+  const filledVolumes = [];
+  for (let i = 0; i < newVolumeSkeletons.length; i++) {
+    const currentRuntime = await getTaskRuntimeControl(env.DB, taskId);
+    if (!currentRuntime.exists || currentRuntime.status !== 'running') return;
+    if (currentRuntime.cancelRequested) {
+      await completeTask(env.DB, taskId, false, '任务已取消');
+      return;
+    }
+
+    const vol = newVolumeSkeletons[i];
+    const globalVolIndex = existingVolumes.length + i;
+
+    await updateTaskMessage(
+      env.DB, taskId,
+      `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (新增 ${i + 1}/${newVolumeSkeletons.length})`,
+      computeOutlineProgress(i, newVolumeSkeletons.length)
+    );
+
+    // 构建上一卷摘要（可能是已有卷的最后一卷或新生成的上一卷）
+    let previousVolumeSummary: string | undefined;
+    if (i === 0 && existingVolumes.length > 0) {
+      const lastExisting = existingVolumes[existingVolumes.length - 1];
+      previousVolumeSummary = lastExisting.volumeEndState ||
+        `${lastExisting.climax}（主角已达成：${lastExisting.goal}）`;
+    } else if (i > 0) {
+      const prevNew = newVolumeSkeletons[i - 1];
+      previousVolumeSummary = `${prevNew.climax}（主角已达成：${prevNew.goal}）`;
+    }
+
+    const chapters = await generateVolumeChapters(aiConfig, {
+      bible,
+      masterOutline: { mainGoal: existingOutline.mainGoal || '', milestones: existingOutline.milestones || [] },
+      volume: vol,
+      previousVolumeSummary,
+      minChapterWords: effectiveMinChapterWords,
+    });
+
+    const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);
+    filledVolumes.push(normalizedVolume);
+
+    // 增量保存：将新卷追加到大纲中
+    const updatedOutline = {
+      ...existingOutline,
+      totalChapters: existingOutline.totalChapters + filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0),
+      volumes: [...existingVolumes, ...filledVolumes],
+    };
+    await env.DB.prepare(`
+      UPDATE outlines SET outline_json = ? WHERE project_id = ?
+    `).bind(JSON.stringify(updatedOutline), project.id).run();
+
+    await updateTaskMessage(
+      env.DB, taskId,
+      `第 ${globalVolIndex + 1} 卷已生成并保存，可在「大纲/章节」页预览`,
+      computeOutlineProgress(i, newVolumeSkeletons.length)
+    );
+  }
+
+  // 最终更新大纲和 states
+  const addedChapters = filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0);
+  const newTotalChapters = (existingOutline.totalChapters || 0) + addedChapters;
+
+  const finalOutline = {
+    ...existingOutline,
+    totalChapters: newTotalChapters,
+    volumes: [...existingVolumes, ...filledVolumes],
+  };
+
+  await env.DB.prepare(`
+    UPDATE outlines SET outline_json = ? WHERE project_id = ?
+  `).bind(JSON.stringify(finalOutline), project.id).run();
+
+  await env.DB.prepare(`
+    UPDATE states SET total_chapters = ? WHERE project_id = ?
+  `).bind(newTotalChapters, project.id).run();
+
+  await updateTaskMessage(env.DB, taskId, `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`, OUTLINE_TASK_PROGRESS_TOTAL);
+  await completeTask(env.DB, taskId, true, undefined);
+}
+
 // Generate outline (queue-backed, returns immediately)
 generationRoutes.post('/projects/:name/outline', async (c) => {
   const name = c.req.param('name');
@@ -533,7 +685,7 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
   }
 
   try {
-    const { targetChapters = 400, targetWordCount = 100, customPrompt, minChapterWords } = await c.req.json();
+    const { targetChapters = 400, targetWordCount = 100, customPrompt, minChapterWords, appendMode, newVolumeCount, chaptersPerVolume } = await c.req.json();
     const hasMinChapterWords = minChapterWords !== undefined && minChapterWords !== null && minChapterWords !== '';
     const parsedMinChapterWords = normalizeMinChapterWords(minChapterWords);
     if (hasMinChapterWords && parsedMinChapterWords === null) {
@@ -576,6 +728,9 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
         customPrompt,
         minChapterWords: parsedMinChapterWords ?? undefined,
         aiConfig,
+        appendMode: appendMode || false,
+        newVolumeCount: newVolumeCount || undefined,
+        chaptersPerVolume: chaptersPerVolume || undefined,
       });
     }
 

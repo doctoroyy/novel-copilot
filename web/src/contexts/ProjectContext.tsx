@@ -80,7 +80,7 @@ interface ProjectContextType {
   handleRefresh: () => Promise<void>;
 
   // Generation handlers
-  handleGenerateOutline: (chapters: string, wordCount: string, minChapterWords: string, customPrompt: string) => Promise<void>;
+  handleGenerateOutline: (chapters: string, wordCount: string, minChapterWords: string, customPrompt: string, appendOptions?: { appendMode: boolean; newVolumeCount: number; chaptersPerVolume: number }) => Promise<void>;
   handleGenerateChapters: (count: string, index?: number, regenerate?: boolean, minChapterWords?: string) => Promise<void>;
   handleCancelGeneration: (projectNameOverride?: string) => Promise<void>;
   cancelingGeneration: boolean;
@@ -625,7 +625,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     chapters: string,
     wordCount: string,
     minChapterWords: string,
-    customPrompt: string
+    customPrompt: string,
+    appendOptions?: { appendMode: boolean; newVolumeCount: number; chaptersPerVolume: number }
   ) => {
     if (!selectedProject || !isConfigured) return;
     const targetChapters = Number.parseInt(chapters, 10);
@@ -644,8 +645,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const isAppend = !!appendOptions?.appendMode;
     const outlineStartAt = Date.now();
-    const localTaskId = startTask('outline', `${selectedProject.name}: 大纲生成`, selectedProject.name, 100);
+    const localTaskId = startTask('outline', `${selectedProject.name}: ${isAppend ? '追加卷' : '大纲生成'}`, selectedProject.name, 100);
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const isNetworkError = (err: unknown): boolean => {
       if (err instanceof Error) {
@@ -665,7 +667,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         targetChapters,
         targetWordCount,
         parsedMinChapterWords,
-        customPrompt
+        customPrompt,
+        undefined,
+        isAppend ? {
+          appendMode: true,
+          newVolumeCount: appendOptions!.newVolumeCount,
+          chaptersPerVolume: appendOptions!.chaptersPerVolume,
+        } : undefined,
       );
 
       updateTask(localTaskId, {
@@ -723,7 +731,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             completeTask(localTaskId, true);
             addTaskToHistory({
               type: 'outline',
-              title: `${selectedProject.name}: 大纲生成完成`,
+              title: `${selectedProject.name}: ${isAppend ? '追加卷完成' : '大纲生成完成'}`,
               status: 'success',
               startTime: outlineStartAt,
               endTime: Date.now(),
