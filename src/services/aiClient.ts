@@ -157,7 +157,8 @@ function getRetryDelay(errorType: ErrorType, attempt: number): number {
     return 0;
   }
   if (errorType === 'rate_limit') {
-    return 10000 * Math.pow(2, attempt);
+    // 降低 Rate limit 等待时间：3s, 6s, 12s, 避免在 CF worker 内部无意义死等数分钟
+    return 3000 * Math.pow(2, attempt);
   }
   if (errorType === 'server_error') {
     return 3000 * (attempt + 1);
@@ -195,7 +196,7 @@ function getNextExpandedMaxTokens(current: number | undefined, cap: number): num
 export async function generateTextWithRetry(
   config: AIConfig,
   args: Parameters<typeof generateText>[1],
-  maxRetries = 5
+  maxRetries = 3
 ): Promise<string> {
   let lastError: Error | undefined;
   const requestArgs: Parameters<typeof generateText>[1] = { ...args };
@@ -230,6 +231,7 @@ export async function generateTextWithRetry(
 
   throw new Error(`Failed after ${maxRetries} retries: ${lastError?.message}`);
 }
+
 
 /**
  * Fallback configuration for multi-provider redundancy
