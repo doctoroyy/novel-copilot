@@ -737,6 +737,7 @@ export async function generateChaptersWithProgress(
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         // User cancelled, don't retry
+        callbacks.onError?.('任务已取消');
         return results;
       }
 

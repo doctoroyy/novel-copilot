@@ -810,6 +810,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     stopStreamMonitor();
     startGeneration(selectedProject.name, chapterCount);
+    streamMonitorAbortRef.current = new AbortController();
 
     try {
       await generateChaptersWithProgress(
@@ -922,7 +923,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
         },
         undefined,
-        undefined,
+        streamMonitorAbortRef.current.signal,
         { index, regenerate, minChapterWords: parsedMinChapterWords }
       );
       await loadProject(selectedProject.id);
