@@ -28,11 +28,8 @@ export interface ProgressEvent extends BaseServerEvent {
   message?: string;
 }
 
-export interface TaskUpdateEvent extends BaseServerEvent {
-  type: 'task_update';
-}
-
-export type ServerEvent = LogEvent | ProgressEvent | TaskUpdateEvent;
+export type ServerEvent = LogEvent | ProgressEvent;
+type EmittableServerEvent = Omit<LogEvent, 'id' | 'createdAt'> | Omit<ProgressEvent, 'id' | 'createdAt'>;
 
 class ServerEventBus extends EventEmitter {
   private history: ServerEvent[] = [];
@@ -44,12 +41,12 @@ class ServerEventBus extends EventEmitter {
     this.setMaxListeners(20);
   }
 
-  private pushEvent<T extends Omit<ServerEvent, 'id' | 'createdAt'>>(event: T): ServerEvent {
+  private pushEvent(event: EmittableServerEvent): ServerEvent {
     const enriched = {
       ...event,
       id: this.nextId++,
       createdAt: Date.now(),
-    } as ServerEvent;
+    } as unknown as ServerEvent;
 
     this.history.push(enriched);
     if (this.history.length > this.maxHistory) {
@@ -58,10 +55,6 @@ class ServerEventBus extends EventEmitter {
 
     this.emit('event', enriched);
     return enriched;
-  }
-
-  taskUpdate(userId: EventUserId = null) {
-    this.pushEvent({ type: 'task_update', userId });
   }
 
   log(level: LogLevel, message: string, project?: string, userId: EventUserId = null) {

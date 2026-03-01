@@ -13,7 +13,6 @@ interface ServerEventsContextType {
   enabled: boolean;
   logs: string[];
   lastProgress: ProgressEvent | null;
-  taskUpdateCounter: number;
   clearLogs: () => void;
   toggleEnabled: (val?: boolean) => void;
 }
@@ -23,7 +22,6 @@ const ServerEventsContext = createContext<ServerEventsContextType | undefined>(u
 export function ServerEventsProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<string[]>([]);
   const [lastProgress, setLastProgress] = useState<ProgressEvent | null>(null);
-  const [taskUpdateCounter, setTaskUpdateCounter] = useState(0);
   // Enable SSE by default for real-time progress updates
   const [enabled, setEnabled] = useState(true);
 
@@ -49,10 +47,6 @@ export function ServerEventsProvider({ children }: { children: ReactNode }) {
         }, 3000);
       }
     }, []),
-
-    onTaskUpdate: useCallback(() => {
-      setTaskUpdateCounter(prev => prev + 1);
-    }, []),
   });
 
   const clearLogs = useCallback(() => setLogs([]), []);
@@ -61,7 +55,7 @@ export function ServerEventsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ServerEventsContext.Provider value={{ connected, enabled, logs, lastProgress, taskUpdateCounter, clearLogs, toggleEnabled }}>
+    <ServerEventsContext.Provider value={{ connected, enabled, logs, lastProgress, clearLogs, toggleEnabled }}>
       {children}
     </ServerEventsContext.Provider>
   );
@@ -74,4 +68,3 @@ export function useServerEventsContext() {
   }
   return context;
 }
-

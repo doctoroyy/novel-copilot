@@ -2,13 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
-import { cancelAllActiveTasks, cancelTaskById, getAllActiveTasks, getTaskHistory, type GenerationTask } from '@/lib/api';
+import { cancelAllActiveTasks, cancelTaskById, getTaskHistory, type GenerationTask } from '@/lib/api';
 import {
   TASK_HISTORY_EVENT_NAME,
   getTaskHistorySnapshot,
   type TaskHistoryItem,
 } from '@/lib/taskHistory';
-import { useServerEventsContext } from '@/contexts/ServerEventsContext';
+import { useActiveTasksStream } from '@/hooks/useActiveTasksStream';
 
 // Task type icons and labels
 const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = {
@@ -20,13 +20,12 @@ const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = 
 
 export function FloatingProgressButton() {
   const { generationState, activeTasks, setGenerationState } = useGeneration();
-  const { taskUpdateCounter } = useServerEventsContext();
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
   const [serverHistory, setServerHistory] = useState<GenerationTask[]>([]);
   const [cancelingTaskId, setCancelingTaskId] = useState<string | null>(null);
-  const [serverTasks, setServerTasks] = useState<ActiveTask[]>([]);
+  const streamedTasks = useActiveTasksStream();
 
   // Map server task to ActiveTask structure
   const mapServerTask = (task: GenerationTask): ActiveTask => {
@@ -77,32 +76,9 @@ export function FloatingProgressButton() {
     }
   }, [showHistory, isOpen]);
 
-  // 通过 SSE 信号驱动拉取任务列表（替代轮询）
-  // taskUpdateCounter 变化时（后端推送 task_update 事件）或首次 mount 时拉取
-  useEffect(() => {
-    let disposed = false;
-
-    const sync = async () => {
-      try {
-        const tasks = await getAllActiveTasks();
-        if (disposed) return;
-        setServerTasks(tasks.map(mapServerTask));
-      } catch {
-        if (disposed) return;
-        // 网络/认证失败时保留上一次快照
-      }
-    };
-
-    void sync();
-
-    return () => {
-      disposed = true;
-    };
-  }, [taskUpdateCounter]);
-
   const allTasks = useMemo(() => {
     const merged: ActiveTask[] = [
-      ...serverTasks,
+      ...streamedTasks.map(mapServerTask),
       ...activeTasks,
       ...(generationState.isGenerating ? [{
         id: 'legacy-chapters',
@@ -124,7 +100,7 @@ export function FloatingProgressButton() {
       seen.add(key);
       return true;
     });
-  }, [serverTasks, activeTasks, generationState]);
+  }, [streamedTasks, activeTasks, generationState]);
 
   const hasActiveTasks = allTasks.length > 0;
 
