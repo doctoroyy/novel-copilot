@@ -851,8 +851,9 @@ export async function cancelAllActiveTasks(name: string): Promise<void> {
 
 // Get all active generation tasks for the current user (global)
 export async function getAllActiveTasks(): Promise<GenerationTask[]> {
-  const res = await fetch(`${API_BASE}/active-tasks`, {
+  const res = await fetch(`${API_BASE}/active-tasks?t=${Date.now()}`, {
     headers: defaultHeaders(),
+    cache: 'no-store',
   });
   const data = await res.json();
   if (!data.success) return [];
@@ -860,8 +861,9 @@ export async function getAllActiveTasks(): Promise<GenerationTask[]> {
 }
 
 export async function getTaskHistory(): Promise<GenerationTask[]> {
-  const res = await fetch(`${API_BASE}/tasks/history`, {
+  const res = await fetch(`${API_BASE}/tasks/history?t=${Date.now()}`, {
     headers: defaultHeaders(),
+    cache: 'no-store',
   });
   const data = await res.json();
   if (!data.success) return [];
