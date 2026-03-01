@@ -312,6 +312,24 @@ export function optimizePlotContext(
     const section = `【近期事件】\n${recentEvents.map((e) => `• 第${e.introducedAt}章: ${e.content}`).join('\n')}`;
     if (currentLength + section.length <= maxChars) {
       parts.push(section);
+      currentLength += section.length;
+    }
+  }
+
+  // 4. 关键历史里程碑（解决长距离遗忘）
+  const milestones = graph.nodes
+    .filter((n) => n.importance >= 8 && chapterIndex - n.introducedAt >= 15)
+    .sort((a, b) => {
+      if (b.importance !== a.importance) return b.importance - a.importance;
+      return a.introducedAt - b.introducedAt;
+    })
+    .slice(0, 3);
+
+  if (milestones.length > 0 && currentLength < maxChars * 0.95) {
+    const section = `【关键历史里程碑】\n${milestones.map((m) => `• 第${m.introducedAt}章: ${m.content}`).join('\n')}`;
+    if (currentLength + section.length <= maxChars) {
+      parts.push(section);
+      currentLength += section.length;
     }
   }
 
