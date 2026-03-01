@@ -24,14 +24,34 @@ export function useActiveTasks(params: {
 
     try {
       setLoading(true);
-      // Parallel fetch for active tasks and history
-      const [activeResult, historyResult] = await Promise.all([
+      const [activeResult, historyResult] = await Promise.allSettled([
         fetchActiveTasks(apiBaseUrl, token),
         fetchTaskHistory(apiBaseUrl, token),
       ]);
-      setTasks(activeResult);
-      setHistory(historyResult);
-      setError(null);
+
+      let nextError: string | null = null;
+
+      if (activeResult.status === 'fulfilled') {
+        setTasks(activeResult.value);
+      } else {
+        setTasks([]);
+        nextError = activeResult.reason instanceof Error
+          ? activeResult.reason.message
+          : 'Failed to fetch active tasks';
+      }
+
+      if (historyResult.status === 'fulfilled') {
+        setHistory(historyResult.value);
+      } else {
+        setHistory([]);
+        if (!nextError) {
+          nextError = historyResult.reason instanceof Error
+            ? historyResult.reason.message
+            : 'Failed to fetch task history';
+        }
+      }
+
+      setError(nextError);
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -25,27 +25,52 @@ import {
   cancelAllActiveTasks,
   cancelTaskById,
   fetchChapterContent,
+  fetchCharacters,
   fetchProject,
   fetchProjectActiveTask,
+  generateCharacters,
   generateChaptersStream,
   generateOutlineStream,
   resetProject,
+  updateProject,
 } from '../../lib/api';
-import type { GenerationTask, ProjectDetail } from '../../types/domain';
+import type {
+  CharacterProfile,
+  CharacterRelationGraph,
+  GenerationTask,
+  ProjectDetail,
+} from '../../types/domain';
 // isAIConfigured import removed
 import { gradients, ui } from '../../theme/tokens';
 
 type ScreenRoute = RouteProp<ProjectsStackParamList, 'ProjectDetail'>;
-type DetailPanel = 'hub' | 'outline' | 'chapters' | 'bible' | 'summary' | 'studio';
+type DetailPanel = 'hub' | 'settings' | 'outline' | 'chapters' | 'bible' | 'summary' | 'characters' | 'studio';
+type SettingsPanelTab = 'bible' | 'background' | 'roles' | 'chapter-prompt';
 
 const PANELS: { id: DetailPanel; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'hub', label: '书籍主页', hint: '总览与导航', icon: 'home-outline' },
+  { id: 'settings', label: '项目设定', hint: '编辑核心规则', icon: 'settings-outline' },
   { id: 'outline', label: '大纲中心', hint: '卷章结构', icon: 'library-outline' },
   { id: 'chapters', label: '章节库', hint: '正文与复制', icon: 'document-text-outline' },
-  { id: 'bible', label: '小说设定', hint: '世界观与角色', icon: 'book-outline' },
+  { id: 'bible', label: '设定预览', hint: '世界观与角色', icon: 'book-outline' },
   { id: 'summary', label: '剧情摘要', hint: '脉络与待办', icon: 'newspaper-outline' },
+  { id: 'characters', label: '人物关系', hint: '角色图谱', icon: 'people-outline' },
   { id: 'studio', label: '创作台', hint: '生成与控制', icon: 'sparkles-outline' },
 ];
+
+const SETTINGS_TABS: { id: SettingsPanelTab; label: string; hint: string }[] = [
+  { id: 'bible', label: 'Story Bible', hint: '核心主设' },
+  { id: 'background', label: '世界观', hint: '规则与背景' },
+  { id: 'roles', label: '角色设定', hint: '人物约束' },
+  { id: 'chapter-prompt', label: '正文提示词', hint: '文风与节奏' },
+];
+
+const DEFAULT_CHAPTER_PROMPT_PROFILE = 'web_novel_light';
+const CHAPTER_PROMPT_PROFILE_OPTIONS = [
+  { id: 'web_novel_light', label: '轻快网文', description: '阅读顺滑，少修饰，适合日更连载。' },
+  { id: 'plot_first', label: '剧情推进', description: '冲突密度更高，强调事件推进与爽点。' },
+  { id: 'cinematic', label: '电影感', description: '保留画面感，但避免辞藻堆叠。' },
+] as const;
 
 function normalizeChapterTitle(rawTitle: string): string {
   const trimmed = rawTitle.trim().replace(/^#+\s*/, '');
@@ -101,6 +126,33 @@ function normalizeMilestone(rawMilestone: unknown): string {
   return '';
 }
 
+function normalizeChapterPromptProfile(value: string | undefined): string {
+  if (!value) return DEFAULT_CHAPTER_PROMPT_PROFILE;
+  return CHAPTER_PROMPT_PROFILE_OPTIONS.some((option) => option.id === value)
+    ? value
+    : DEFAULT_CHAPTER_PROMPT_PROFILE;
+}
+
+function characterRoleLabel(role: CharacterProfile['role']): string {
+  if (role === 'protagonist') return '主角';
+  if (role === 'deuteragonist') return '次主角';
+  if (role === 'antagonist') return '反派';
+  if (role === 'supporting') return '重要配角';
+  return '配角';
+}
+
+function summarizeCharacter(character: CharacterProfile): string {
+  const fragments = [
+    character.basic.identity,
+    character.personality.traits?.slice(0, 2).join(' / '),
+    character.abilities?.slice(0, 2).join('、'),
+  ]
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+
+  return fragments.join(' · ') || '暂无详细摘要';
+}
+
 export function ProjectDetailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ProjectsStackParamList>>();
   const route = useRoute<ScreenRoute>();
@@ -115,6 +167,14 @@ export function ProjectDetailScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const [activePanel, setActivePanel] = useState<DetailPanel>('hub');
+  const [settingsTab, setSettingsTab] = useState<SettingsPanelTab>('bible');
+
+  const [settingsBible, setSettingsBible] = useState('');
+  const [settingsBackground, setSettingsBackground] = useState('');
+  const [settingsRoleSettings, setSettingsRoleSettings] = useState('');
+  const [settingsChapterPromptProfile, setSettingsChapterPromptProfile] = useState(DEFAULT_CHAPTER_PROMPT_PROFILE);
+  const [settingsChapterPromptCustom, setSettingsChapterPromptCustom] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const [outlineModal, setOutlineModal] = useState(false);
   const [outlineChapters, setOutlineChapters] = useState('120');
@@ -139,6 +199,10 @@ export function ProjectDetailScreen() {
   const [expandedVolumes, setExpandedVolumes] = useState<number[]>([]);
   const [outlineMilestonesExpanded, setOutlineMilestonesExpanded] = useState(false);
   const [chapterTitleCache, setChapterTitleCache] = useState<Record<number, string>>({});
+  const [characterGraph, setCharacterGraph] = useState<CharacterRelationGraph | null>(null);
+  const [characterLoading, setCharacterLoading] = useState(false);
+  const [characterGenerating, setCharacterGenerating] = useState(false);
+  const [characterError, setCharacterError] = useState<string | null>(null);
 
   const taskPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -178,6 +242,15 @@ export function ProjectDetailScreen() {
   }, [loadProject, loadTask]);
 
   useEffect(() => {
+    if (!project) return;
+    setSettingsBible(project.bible || '');
+    setSettingsBackground(project.background || '');
+    setSettingsRoleSettings(project.role_settings || '');
+    setSettingsChapterPromptProfile(normalizeChapterPromptProfile(project.chapter_prompt_profile));
+    setSettingsChapterPromptCustom(project.chapter_prompt_custom || '');
+  }, [project]);
+
+  useEffect(() => {
     if (!token) return;
 
     taskPollTimer.current = setInterval(() => {
@@ -191,6 +264,13 @@ export function ProjectDetailScreen() {
       }
     };
   }, [loadTask, token]);
+
+  useEffect(() => {
+    setCharacterGraph(null);
+    setCharacterError(null);
+    setCharacterLoading(false);
+    setCharacterGenerating(false);
+  }, [projectId]);
 
   const progressPct = useMemo(() => {
     if (!project) return 0;
@@ -255,6 +335,35 @@ export function ProjectDetailScreen() {
     () => PANELS.find((panel) => panel.id === activePanel)?.label || '书籍主页',
     [activePanel],
   );
+  const settingsDirty = useMemo(
+    () =>
+      settingsBible !== (project?.bible || '') ||
+      settingsBackground !== (project?.background || '') ||
+      settingsRoleSettings !== (project?.role_settings || '') ||
+      settingsChapterPromptProfile !== normalizeChapterPromptProfile(project?.chapter_prompt_profile) ||
+      settingsChapterPromptCustom !== (project?.chapter_prompt_custom || ''),
+    [
+      project,
+      settingsBackground,
+      settingsBible,
+      settingsChapterPromptCustom,
+      settingsChapterPromptProfile,
+      settingsRoleSettings,
+    ],
+  );
+  const activePromptProfile = useMemo(
+    () =>
+      CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === settingsChapterPromptProfile) ||
+      CHAPTER_PROMPT_PROFILE_OPTIONS[0],
+    [settingsChapterPromptProfile],
+  );
+  const characterProfiles = useMemo(
+    () => [
+      ...(characterGraph?.protagonists || []).map((item) => ({ ...item, _group: 'protagonist' as const })),
+      ...(characterGraph?.mainCharacters || []).map((item) => ({ ...item, _group: 'main' as const })),
+    ],
+    [characterGraph],
+  );
 
   const ensureReady = useCallback(() => {
     if (!token) {
@@ -264,6 +373,85 @@ export function ProjectDetailScreen() {
     // AI config check removed as it is now server-side
     return true;
   }, [token]);
+
+  const loadCharacters = useCallback(
+    async (force: boolean = false) => {
+      if (!project || !token) return;
+      if (characterLoading && !force) return;
+
+      setCharacterLoading(true);
+      setCharacterError(null);
+      try {
+        const data = await fetchCharacters(config.apiBaseUrl, token, project.id);
+        setCharacterGraph(data);
+      } catch (err) {
+        setCharacterError((err as Error).message);
+      } finally {
+        setCharacterLoading(false);
+      }
+    },
+    [characterLoading, config.apiBaseUrl, project, token],
+  );
+
+  const handleSaveSettings = useCallback(async () => {
+    if (!project || !token) return;
+
+    setSavingSettings(true);
+    setError(null);
+    try {
+      await updateProject(config.apiBaseUrl, token, project.id, {
+        bible: settingsBible,
+        background: settingsBackground,
+        role_settings: settingsRoleSettings,
+        chapter_prompt_profile: settingsChapterPromptProfile,
+        chapter_prompt_custom: settingsChapterPromptCustom,
+      });
+      await loadProject();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingSettings(false);
+    }
+  }, [
+    config.apiBaseUrl,
+    loadProject,
+    project,
+    settingsBackground,
+    settingsBible,
+    settingsChapterPromptCustom,
+    settingsChapterPromptProfile,
+    settingsRoleSettings,
+    token,
+  ]);
+
+  const handleGenerateCharacters = useCallback(async () => {
+    if (!project || !token || !ensureReady()) return;
+
+    setCharacterGenerating(true);
+    setCharacterError(null);
+    try {
+      const data = await generateCharacters(
+        config.apiBaseUrl,
+        token,
+        project.id,
+        config.ai,
+        {
+          targetChapters: project.state.totalChapters || 200,
+        },
+      );
+      setCharacterGraph(data);
+    } catch (err) {
+      setCharacterError((err as Error).message);
+    } finally {
+      setCharacterGenerating(false);
+    }
+  }, [config.ai, config.apiBaseUrl, ensureReady, project, token]);
+
+  useEffect(() => {
+    if (activePanel !== 'characters' || !project || !token) return;
+    if (characterGraph || characterLoading) return;
+    void loadCharacters();
+  }, [activePanel, characterGraph, characterLoading, loadCharacters, project, token]);
 
   const handleGenerateOutline = async () => {
     if (!project || !ensureReady() || !token) return;
@@ -522,6 +710,9 @@ export function ProjectDetailScreen() {
         <ScrollView
           contentInsetAdjustmentBehavior="never"
           automaticallyAdjustContentInsets={false}
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}
         >
           <View style={styles.headerCard}>
@@ -621,11 +812,25 @@ export function ProjectDetailScreen() {
                   onPress={() => setActivePanel('summary')}
                 />
                 <ModuleEntry
+                  icon="settings-outline"
+                  title="项目设定"
+                  desc="编辑 Story Bible、世界观与正文提示词"
+                  tone="primary"
+                  onPress={() => setActivePanel('settings')}
+                />
+                <ModuleEntry
                   icon="book-outline"
-                  title="小说设定"
+                  title="设定预览"
                   desc={project.bible?.trim() ? '查看世界观与角色设定' : '当前没有设定内容'}
                   tone="accent"
                   onPress={() => setActivePanel('bible')}
+                />
+                <ModuleEntry
+                  icon="people-outline"
+                  title="人物关系"
+                  desc={characterGraph ? '查看角色图谱与关系' : '生成并查看角色关系图谱'}
+                  tone="sun"
+                  onPress={() => setActivePanel('characters')}
                 />
                 <ModuleEntry
                   icon="sparkles-outline"
@@ -668,6 +873,164 @@ export function ProjectDetailScreen() {
                     onPress={() => void loadProject()}
                   >
                     <Text style={styles.ghostButtonText}>刷新数据</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {activePanel === 'settings' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionBibleCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionSummaryIcon]}>
+                    <Ionicons name="settings-outline" size={13} color={ui.colors.primaryStrong} />
+                  </View>
+                  <Text style={styles.sectionTitle}>项目设定</Text>
+                </View>
+                <Text style={styles.sectionHint}>移动端已补齐可编辑设定，保存后会直接影响后续大纲、正文与人物生成。</Text>
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.editorTabRow}
+                >
+                  {SETTINGS_TABS.map((tab) => {
+                    const active = tab.id === settingsTab;
+                    return (
+                      <Pressable
+                        key={tab.id}
+                        style={({ pressed }) => [
+                          styles.editorTab,
+                          active && styles.editorTabActive,
+                          pressed && styles.pressed,
+                        ]}
+                        onPress={() => setSettingsTab(tab.id)}
+                      >
+                        <Text style={[styles.editorTabText, active && styles.editorTabTextActive]}>{tab.label}</Text>
+                        <Text style={[styles.editorTabHint, active && styles.editorTabHintActive]}>{tab.hint}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {settingsTab === 'bible' ? (
+                  <View style={styles.settingsField}>
+                    <Text style={styles.cardTitle}>Story Bible</Text>
+                    <Text style={styles.settingsHelpText}>核心概念、主线卖点、升级路线与整体钩子。</Text>
+                    <TextInput
+                      value={settingsBible}
+                      onChangeText={setSettingsBible}
+                      style={[styles.input, styles.settingsInputTall]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="补全主设、节奏、类型融合与关键爽点"
+                      placeholderTextColor={ui.colors.textTertiary}
+                    />
+                  </View>
+                ) : null}
+
+                {settingsTab === 'background' ? (
+                  <View style={styles.settingsField}>
+                    <Text style={styles.cardTitle}>世界观与背景</Text>
+                    <Text style={styles.settingsHelpText}>补充阵营、规则、资源体系、社会结构与历史背景。</Text>
+                    <TextInput
+                      value={settingsBackground}
+                      onChangeText={setSettingsBackground}
+                      style={[styles.input, styles.settingsInputTall]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="例如：修炼体系、科技树、势力版图、时代背景"
+                      placeholderTextColor={ui.colors.textTertiary}
+                    />
+                  </View>
+                ) : null}
+
+                {settingsTab === 'roles' ? (
+                  <View style={styles.settingsField}>
+                    <Text style={styles.cardTitle}>角色设定</Text>
+                    <Text style={styles.settingsHelpText}>定义核心角色的人设边界、动机、关系和语言风格。</Text>
+                    <TextInput
+                      value={settingsRoleSettings}
+                      onChangeText={setSettingsRoleSettings}
+                      style={[styles.input, styles.settingsInputTall]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="主角/反派/关键配角的人物卡都放这里"
+                      placeholderTextColor={ui.colors.textTertiary}
+                    />
+                  </View>
+                ) : null}
+
+                {settingsTab === 'chapter-prompt' ? (
+                  <View style={styles.settingsField}>
+                    <Text style={styles.cardTitle}>正文提示词</Text>
+                    <Text style={styles.settingsHelpText}>先选模板，再叠加你自己的补充约束。</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.promptProfileRow}
+                    >
+                      {CHAPTER_PROMPT_PROFILE_OPTIONS.map((option) => {
+                        const active = option.id === settingsChapterPromptProfile;
+                        return (
+                          <Pressable
+                            key={option.id}
+                            style={({ pressed }) => [
+                              styles.promptProfileChip,
+                              active && styles.promptProfileChipActive,
+                              pressed && styles.pressed,
+                            ]}
+                            onPress={() => setSettingsChapterPromptProfile(option.id)}
+                          >
+                            <Text style={[styles.promptProfileTitle, active && styles.promptProfileTitleActive]}>
+                              {option.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                    <Text style={styles.settingsHelpText}>{activePromptProfile.description}</Text>
+                    <TextInput
+                      value={settingsChapterPromptCustom}
+                      onChangeText={setSettingsChapterPromptCustom}
+                      style={[styles.input, styles.settingsInputTall]}
+                      multiline
+                      textAlignVertical="top"
+                      placeholder="例如：减少形容词密度，多写动作与决策，不要机械承接上一章尾句。"
+                      placeholderTextColor={ui.colors.textTertiary}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={styles.inlineRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                    onPress={() => {
+                      setSettingsBible(project.bible || '');
+                      setSettingsBackground(project.background || '');
+                      setSettingsRoleSettings(project.role_settings || '');
+                      setSettingsChapterPromptProfile(normalizeChapterPromptProfile(project.chapter_prompt_profile));
+                      setSettingsChapterPromptCustom(project.chapter_prompt_custom || '');
+                    }}
+                    disabled={savingSettings}
+                  >
+                    <Text style={styles.ghostButtonText}>重置未保存</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryButtonCompact,
+                      (!settingsDirty || savingSettings) && styles.disabledButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => void handleSaveSettings()}
+                    disabled={!settingsDirty || savingSettings}
+                  >
+                    {savingSettings ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>{settingsDirty ? '保存设定' : '已同步'}</Text>
+                    )}
                   </Pressable>
                 </View>
               </View>
@@ -903,9 +1266,15 @@ export function ProjectDetailScreen() {
                   <View style={[styles.sectionIconBadge, styles.sectionBibleIcon]}>
                     <Ionicons name="book-outline" size={13} color={ui.colors.accent} />
                   </View>
-                  <Text style={styles.sectionTitle}>小说设定</Text>
+                  <Text style={styles.sectionTitle}>设定预览</Text>
                 </View>
-                <Text style={styles.sectionHint}>用于约束世界观、角色行为与章节风格一致性</Text>
+                <Text style={styles.sectionHint}>这里只读预览当前生效规则；需要修改时，切到「项目设定」。</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.ghostButton, styles.previewJumpBtn, pressed && styles.pressed]}
+                  onPress={() => setActivePanel('settings')}
+                >
+                  <Text style={styles.ghostButtonText}>去编辑设定</Text>
+                </Pressable>
 
                 <View style={styles.bibleBlock}>
                   <Text style={styles.bibleBlockTitle}>Story Bible</Text>
@@ -929,6 +1298,139 @@ export function ProjectDetailScreen() {
                   </Text>
                   <Text style={styles.bibleBlockText}>{project.chapter_prompt_custom?.trim() || '暂无自定义补充要求'}</Text>
                 </View>
+              </View>
+            </View>
+          ) : null}
+
+          {activePanel === 'characters' ? (
+            <View style={styles.sectionStack}>
+              <View style={[styles.sectionCard, styles.sectionSummaryCard]}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionIconBadge, styles.sectionSummaryIcon]}>
+                    <Ionicons name="people-outline" size={13} color={ui.colors.primaryStrong} />
+                  </View>
+                  <Text style={styles.sectionTitle}>人物关系</Text>
+                </View>
+                <Text style={styles.sectionHint}>对齐 Web 端人物关系页，支持查看已有图谱并在移动端直接触发重新生成。</Text>
+
+                <View style={styles.inlineRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}
+                    onPress={() => void loadCharacters(true)}
+                    disabled={characterLoading || characterGenerating}
+                  >
+                    <Text style={styles.ghostButtonText}>刷新图谱</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryButtonCompact,
+                      (characterLoading || characterGenerating) && styles.disabledButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => void handleGenerateCharacters()}
+                    disabled={characterLoading || characterGenerating}
+                  >
+                    {characterGenerating ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>{characterGraph ? '重新生成' : '生成图谱'}</Text>
+                    )}
+                  </Pressable>
+                </View>
+
+                {characterError ? <Text style={styles.characterInlineError}>{characterError}</Text> : null}
+
+                {characterLoading && !characterGraph ? (
+                  <View style={styles.characterLoadingBox}>
+                    <ActivityIndicator color={ui.colors.primary} />
+                    <Text style={styles.centerText}>正在加载人物关系...</Text>
+                  </View>
+                ) : null}
+
+                {!characterLoading && !characterGraph ? (
+                  <View style={styles.reviewCard}>
+                    <Text style={styles.reviewTitle}>还没有人物关系图谱</Text>
+                    <Text style={styles.reviewText}>先根据 Story Bible 和大纲生成一份角色网络，再回来查看。</Text>
+                  </View>
+                ) : null}
+
+                {characterGraph ? (
+                  <>
+                    <View style={styles.characterStatRow}>
+                      <CharacterStat label="主角" value={characterGraph.protagonists.length} />
+                      <CharacterStat label="主要角色" value={characterGraph.mainCharacters.length} />
+                      <CharacterStat label="关系" value={characterGraph.relationships.length} />
+                    </View>
+
+                    <View style={styles.characterCardList}>
+                      {characterProfiles.map((character) => (
+                        <View key={character.id} style={styles.characterCard}>
+                          <View style={styles.characterCardTop}>
+                            <View style={styles.characterNameWrap}>
+                              <Text style={styles.characterName}>{character.name}</Text>
+                              <Text style={styles.characterMeta}>第 {character.debutChapter || 0} 章登场</Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.characterRoleBadge,
+                                character._group === 'protagonist'
+                                  ? styles.characterRoleBadgePrimary
+                                  : styles.characterRoleBadgeAlt,
+                              ]}
+                            >
+                              <Text style={styles.characterRoleBadgeText}>{characterRoleLabel(character.role)}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.characterSummary}>{summarizeCharacter(character)}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <View style={styles.sectionCard}>
+                      <Text style={styles.cardTitle}>关系链路</Text>
+                      {characterGraph.relationships.length === 0 ? (
+                        <Text style={styles.emptyText}>暂无关系数据。</Text>
+                      ) : (
+                        <View style={styles.relationshipList}>
+                          {characterGraph.relationships.map((relation) => (
+                            <View key={relation.id} style={styles.relationshipCard}>
+                              <View style={styles.relationshipTop}>
+                                <Text style={styles.relationshipRoute}>
+                                  {relation.from} → {relation.to}
+                                </Text>
+                                <Text style={styles.relationshipType}>{relation.type || '未命名关系'}</Text>
+                              </View>
+                              <View style={styles.relationshipMeterTrack}>
+                                <View
+                                  style={[
+                                    styles.relationshipMeterFill,
+                                    { width: `${Math.min(100, Math.max(8, relation.bondStrength * 10))}%` },
+                                  ]}
+                                />
+                              </View>
+                              <Text style={styles.relationshipText}>{relation.dynamic || relation.tension || '暂无关系描述'}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+
+                    {characterGraph.factions.length > 0 ? (
+                      <View style={styles.sectionCard}>
+                        <Text style={styles.cardTitle}>阵营</Text>
+                        <View style={styles.factionList}>
+                          {characterGraph.factions.map((faction) => (
+                            <View key={faction.id} style={styles.factionCard}>
+                              <Text style={styles.factionTitle}>{faction.name}</Text>
+                              <Text style={styles.factionText}>{faction.description || '暂无描述'}</Text>
+                              <Text style={styles.factionMeta}>成员 {faction.members.length} 人</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
               </View>
             </View>
           ) : null}
@@ -1167,6 +1669,15 @@ function Meta({ label, value }: { label: string; value: string }) {
     <View style={styles.metaItem}>
       <Text style={styles.metaLabel}>{label}</Text>
       <Text style={styles.metaValue}>{value}</Text>
+    </View>
+  );
+}
+
+function CharacterStat({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.characterStatCard}>
+      <Text style={styles.characterStatValue}>{value}</Text>
+      <Text style={styles.characterStatLabel}>{label}</Text>
     </View>
   );
 }
@@ -1919,6 +2430,241 @@ const styles = StyleSheet.create({
     color: ui.colors.accent,
     fontSize: 12,
     marginTop: 2,
+  },
+  editorTabRow: {
+    gap: 8,
+    paddingBottom: 2,
+  },
+  editorTab: {
+    minWidth: 106,
+    minHeight: 56,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  editorTabActive: {
+    backgroundColor: ui.colors.primarySoft,
+    borderColor: ui.colors.primary,
+  },
+  editorTabText: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  editorTabTextActive: {
+    color: ui.colors.primaryStrong,
+  },
+  editorTabHint: {
+    color: ui.colors.textTertiary,
+    fontSize: 11,
+  },
+  editorTabHintActive: {
+    color: ui.colors.primaryStrong,
+  },
+  settingsField: {
+    gap: 6,
+  },
+  settingsHelpText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  settingsInputTall: {
+    minHeight: 180,
+    paddingTop: 12,
+  },
+  promptProfileRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  promptProfileChip: {
+    minHeight: 40,
+    borderRadius: ui.radius.pill,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promptProfileChipActive: {
+    backgroundColor: ui.colors.primary,
+    borderColor: ui.colors.primary,
+  },
+  promptProfileTitle: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  promptProfileTitleActive: {
+    color: '#fff',
+  },
+  previewJumpBtn: {
+    marginTop: 4,
+  },
+  disabledButton: {
+    opacity: 0.55,
+  },
+  characterInlineError: {
+    color: ui.colors.danger,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  characterLoadingBox: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  characterStatRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  characterStatCard: {
+    flex: 1,
+    minHeight: 72,
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  characterStatValue: {
+    color: ui.colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  characterStatLabel: {
+    color: ui.colors.textSecondary,
+    fontSize: 11,
+  },
+  characterCardList: {
+    gap: 8,
+  },
+  characterCard: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    padding: 10,
+    gap: 6,
+  },
+  characterCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  characterNameWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  characterName: {
+    color: ui.colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  characterMeta: {
+    color: ui.colors.textTertiary,
+    fontSize: 11,
+  },
+  characterRoleBadge: {
+    borderRadius: ui.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  characterRoleBadgePrimary: {
+    backgroundColor: ui.colors.primarySoft,
+  },
+  characterRoleBadgeAlt: {
+    backgroundColor: ui.colors.accentSoft,
+  },
+  characterRoleBadgeText: {
+    color: ui.colors.primaryStrong,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  characterSummary: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  relationshipList: {
+    gap: 8,
+  },
+  relationshipCard: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    padding: 10,
+    gap: 6,
+  },
+  relationshipTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  relationshipRoute: {
+    flex: 1,
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  relationshipType: {
+    color: ui.colors.accent,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  relationshipMeterTrack: {
+    height: 6,
+    borderRadius: ui.radius.pill,
+    backgroundColor: ui.colors.surfaceSoft,
+    overflow: 'hidden',
+  },
+  relationshipMeterFill: {
+    height: '100%',
+    backgroundColor: ui.colors.primary,
+  },
+  relationshipText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  factionList: {
+    gap: 8,
+  },
+  factionCard: {
+    borderRadius: ui.radius.md,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
+    backgroundColor: ui.colors.cardAlt,
+    padding: 10,
+    gap: 4,
+  },
+  factionTitle: {
+    color: ui.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  factionText: {
+    color: ui.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  factionMeta: {
+    color: ui.colors.textTertiary,
+    fontSize: 11,
   },
   modalMask: {
     flex: 1,

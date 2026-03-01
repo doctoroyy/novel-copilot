@@ -214,9 +214,9 @@ async function getActiveTasksForUser(db: D1Database, userId: string): Promise<Ge
     SELECT t.*, p.name as project_name
     FROM generation_tasks t
     JOIN projects p ON t.project_id = p.id
-    WHERE t.user_id = ? AND t.status = 'running'
+    WHERE t.user_id = ? AND t.status IN ('running', 'paused')
     AND t.cancel_requested = 0
-    ORDER BY t.created_at DESC
+    ORDER BY CASE WHEN t.status = 'running' THEN 0 ELSE 1 END, t.created_at DESC
   `).bind(userId).all();
 
   const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
@@ -263,10 +263,10 @@ async function getActiveChapterTaskForProject(
     SELECT t.*, p.name as project_name
     FROM generation_tasks t
     JOIN projects p ON t.project_id = p.id
-    WHERE t.project_id = ? AND t.user_id = ? AND t.status = 'running'
+    WHERE t.project_id = ? AND t.user_id = ? AND t.status IN ('running', 'paused')
     AND t.task_type = 'chapters'
     AND t.cancel_requested = 0
-    ORDER BY t.created_at DESC
+    ORDER BY CASE WHEN t.status = 'running' THEN 0 ELSE 1 END, t.created_at DESC
     LIMIT 1
   `).bind(projectId, userId).first() as any;
 
@@ -294,8 +294,7 @@ tasksRoutes.get('/active-tasks', async (c) => {
   }
 });
 
-// Get task history for the current user (global endpoint)
-tasksRoutes.get('/history', async (c) => {
+async function buildTaskHistoryResponse(c: any) {
   const userId = c.get('userId');
   const limit = 50;
 
@@ -347,7 +346,13 @@ tasksRoutes.get('/history', async (c) => {
     console.error('Task history error:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}
+
+// Get task history for the current user (global endpoint)
+tasksRoutes.get('/history', async (c) => buildTaskHistoryResponse(c));
+
+// Backward-compatible alias used by existing web/mobile clients.
+tasksRoutes.get('/tasks/history', async (c) => buildTaskHistoryResponse(c));
 
 // Types
 export type GenerationTask = {
@@ -741,8 +746,8 @@ export async function createBackgroundTask(
   const existing = await db.prepare(`
     SELECT id
     FROM generation_tasks
-    WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0 AND task_type = ?
-    ORDER BY created_at DESC
+    WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused') AND cancel_requested = 0 AND task_type = ?
+    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
   `).bind(projectId, userId, taskType).first() as { id: number } | null;
 
