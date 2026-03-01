@@ -1362,90 +1362,76 @@ export async function runChapterGenerationTaskInBackground(params: {
       }
 
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-      const CHAPTER_MAX_RETRIES = 3;
       let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
       let lastChapterError: unknown;
 
-      for (let retryAttempt = 0; retryAttempt < CHAPTER_MAX_RETRIES; retryAttempt++) {
-        try {
-          // Check cancel again before heavy work
-          const retryControl = await handleTaskCancellationIfNeeded({
-            db: env.DB,
-            taskId,
-            projectName: project.name,
-            total: task.targetCount,
-            chapterIndex,
-            current: completedCount,
-          });
-          if (retryControl.shouldStop) return;
+      try {
+        // Check cancel again before heavy work
+        const retryControl = await handleTaskCancellationIfNeeded({
+          db: env.DB,
+          taskId,
+          projectName: project.name,
+          total: task.targetCount,
+          chapterIndex,
+          current: completedCount,
+        });
+        if (retryControl.shouldStop) return;
 
-          const attemptLabel = `尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}`;
-          await updateTaskMessage(env.DB, taskId, `正在AI生成（${attemptLabel}）...`, chapterIndex);
-          await emitProgressEvent({
-            projectName: project.name,
-            current: completedCount,
-            total: task.targetCount,
-            chapterIndex,
-            status: 'generating',
-            message: `正在AI生成（${attemptLabel}）...`,
-          });
+        await updateTaskMessage(env.DB, taskId, `正在AI生成（章节初始化）...`, chapterIndex);
+        await emitProgressEvent({
+          projectName: project.name,
+          current: completedCount,
+          total: task.targetCount,
+          chapterIndex,
+          status: 'generating',
+          message: `正在AI生成（章节初始化）...`,
+        });
 
-          result = await writeOneChapter({
-            aiConfig,
-            bible: project.bible,
-            rollingSummary: project.rolling_summary || '',
-            openLoops: JSON.parse(project.open_loops || '[]'),
-            lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
-            chapterIndex,
-            totalChapters: project.total_chapters,
-            minChapterWords: Number(project.min_chapter_words) || DEFAULT_MIN_CHAPTER_WORDS,
-            chapterGoalHint,
-            chapterTitle: outlineTitle,
-            characters,
-            chapterPromptProfile: project.chapter_prompt_profile,
-            chapterPromptCustom: project.chapter_prompt_custom,
-            summaryAiConfig: effectiveSummaryAiConfig,
-            skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
-            onProgress: (message, status) => {
-              const attemptProgressMessage = `[尝试 ${retryAttempt + 1}/${CHAPTER_MAX_RETRIES}] ${message}`;
-              updateTaskMessage(env.DB, taskId, attemptProgressMessage, chapterIndex).catch(console.warn);
-              void emitProgressEvent({
-                projectName: project.name,
-                current: completedCount,
-                total: task.targetCount,
-                chapterIndex,
-                status,
-                message: attemptProgressMessage,
-              });
-            },
-          });
-
-          break; // Success
-        } catch (err) {
-          lastChapterError = err;
-          console.warn(`Attempt ${retryAttempt + 1} failed:`, err);
-          const reason = (err as Error)?.message || String(err) || '未知错误';
-          const attempt = retryAttempt + 1;
-          const isLastAttempt = attempt === CHAPTER_MAX_RETRIES;
-
-          if (!isLastAttempt) {
-            const retryDelay = 5000 * Math.pow(2, retryAttempt);
-            const retryMessage = `第 ${chapterIndex} 章第 ${attempt}/${CHAPTER_MAX_RETRIES} 次失败：${reason}；${retryDelay / 1000} 秒后重试`;
-            await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
-            await emitProgressEvent({
+        result = await writeOneChapter({
+          aiConfig,
+          bible: project.bible,
+          rollingSummary: project.rolling_summary || '',
+          openLoops: JSON.parse(project.open_loops || '[]'),
+          lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
+          chapterIndex,
+          totalChapters: project.total_chapters,
+          minChapterWords: Number(project.min_chapter_words) || DEFAULT_MIN_CHAPTER_WORDS,
+          chapterGoalHint,
+          chapterTitle: outlineTitle,
+          characters,
+          chapterPromptProfile: project.chapter_prompt_profile,
+          chapterPromptCustom: project.chapter_prompt_custom,
+          summaryAiConfig: effectiveSummaryAiConfig,
+          skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
+          onProgress: (message, status) => {
+            updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
+            void emitProgressEvent({
               projectName: project.name,
               current: completedCount,
               total: task.targetCount,
               chapterIndex,
-              status: 'reviewing',
-              message: retryMessage,
+              status,
+              message,
             });
-            await new Promise((resolve) => setTimeout(resolve, retryDelay));
-            continue;
-          }
-
-          if (retryAttempt === CHAPTER_MAX_RETRIES - 1) throw err;
-        }
+          },
+        });
+      } catch (err) {
+        lastChapterError = err;
+        console.warn(`Chapter ${chapterIndex} generation failed:`, err);
+        const reason = (err as Error)?.message || String(err) || '未知错误';
+        
+        const retryMessage = `第 ${chapterIndex} 章生成抛错：${reason}。将由队列接管重试...`;
+        await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
+        await emitProgressEvent({
+          projectName: project.name,
+          current: completedCount,
+          total: task.targetCount,
+          chapterIndex,
+          status: 'reviewing',
+          message: retryMessage,
+        });
+        
+        throw err;
       }
 
       if (!result) throw lastChapterError || new Error("Generated failed");
