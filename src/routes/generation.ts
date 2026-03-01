@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
+import { logGenerationMetrics } from '../services/logger.js';
 import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
@@ -1487,6 +1488,34 @@ export async function runChapterGenerationTaskInBackground(params: {
         `[Perf][Task ${taskId}] 第 ${chapterIndex} 章: 正文 ${formatDurationMs(result.generationDurationMs)}, ` +
         `摘要 ${formatDurationMs(result.summaryDurationMs)}, 总计 ${formatDurationMs(result.totalDurationMs)}, ` +
         `摘要${summaryStatusText}`
+      );
+      logGenerationMetrics({
+        projectId: project.id,
+        chapterIndex,
+        promptTokens: result.diagnostics.estimatedTokens.mainInput,
+        outputTokens: result.diagnostics.estimatedTokens.mainOutput,
+        generationTime: result.totalDurationMs,
+        phaseTimes: {
+          context_build: result.diagnostics.phaseDurationsMs.planning,
+          model_call: result.generationDurationMs,
+          qc_check: result.diagnostics.phaseDurationsMs.quickQc + result.diagnostics.phaseDurationsMs.fullQc,
+          summary_update: result.summaryDurationMs,
+        },
+        qcAttempts: result.rewriteCount,
+        qcFinalScore: result.qcResult?.score,
+        wasRewritten: result.wasRewritten,
+        model: aiConfig.model,
+        provider: aiConfig.provider,
+        timestamp: new Date(),
+      });
+      console.log(
+        `[PerfDetail][Task ${taskId}] 第 ${chapterIndex} 章`,
+        JSON.stringify({
+          promptChars: result.diagnostics.promptChars,
+          phaseDurationsMs: result.diagnostics.phaseDurationsMs,
+          logicalAiCalls: result.diagnostics.logicalAiCalls,
+          estimatedTokens: result.diagnostics.estimatedTokens,
+        })
       );
       await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
