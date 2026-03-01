@@ -109,10 +109,11 @@ export function quickChapterFormatHeuristic(
     return { hit: true, reasons: ['章节内容为空'] };
   }
 
-  const titleLine = lines[firstNonEmptyIdx].replace(/^#+\s*/, '').trim();
+  // Allow markdown bold (**TITLE**) and headers (# TITLE)
+  const titleLine = lines[firstNonEmptyIdx].replace(/^#+\s*/, '').replace(/^\*\*|\*\*$/g, '').trim();
   if (!titleLine) {
     reasons.push('缺少章节标题');
-  } else if (!/^第[一二三四五六七八九十百千万零两\d]+[章节回]/.test(titleLine)) {
+  } else if (!/第[一二三四五六七八九十百千万零两\d]+[章节回]/.test(titleLine)) {
     reasons.push(`标题格式不规范（当前标题: "${titleLine}"）`);
   }
 

@@ -59,7 +59,10 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
     maxTokens,
-  };
+    compat: {
+      supportsDeveloperRole: false
+    }
+  } as any;
 }
 
 /**
@@ -209,7 +212,7 @@ export async function generateTextWithRetry(
       const errorType = classifyError(lastError);
       console.warn(`Generation attempt ${i + 1} failed (${errorType}):`, lastError.message);
 
-      if (errorType === 'truncated') {
+        if (errorType === 'truncated') {
         const cap = getAutoExpandTokenCap(config);
         const nextMaxTokens = getNextExpandedMaxTokens(requestArgs.maxTokens, cap);
         if (nextMaxTokens !== null) {
@@ -217,6 +220,7 @@ export async function generateTextWithRetry(
           console.warn(
             `Detected truncated output, retrying with higher maxTokens=${nextMaxTokens} (cap=${cap})`
           );
+          i--; // Do not consume a retry attempt for token expansion
           continue;
         }
       }
@@ -258,10 +262,11 @@ export async function generateTextWithFallback(
   for (let providerIndex = 0; providerIndex < allConfigs.length; providerIndex++) {
     const config = allConfigs[providerIndex];
     const isLastProvider = providerIndex === allConfigs.length - 1;
+    const requestArgs: Parameters<typeof generateText>[1] = { ...args };
 
     for (let attempt = 0; attempt < maxRetriesPerProvider; attempt++) {
       try {
-        return await generateText(config, args);
+        return await generateText(config, requestArgs);
       } catch (error) {
         lastError = error as Error;
         const errorType = classifyError(lastError);
@@ -270,6 +275,19 @@ export async function generateTextWithFallback(
           `Provider ${config.provider}/${config.model} attempt ${attempt + 1} failed (${errorType}):`,
           lastError.message
         );
+
+        if (errorType === 'truncated') {
+          const cap = getAutoExpandTokenCap(config);
+          const nextMaxTokens = getNextExpandedMaxTokens(requestArgs.maxTokens, cap);
+          if (nextMaxTokens !== null) {
+            requestArgs.maxTokens = nextMaxTokens;
+            console.warn(
+              `Detected truncated output, retrying with higher maxTokens=${nextMaxTokens} (cap=${cap})`
+            );
+            attempt--; // Do not consume a retry attempt for token expansion
+            continue;
+          }
+        }
 
         if (!isRetryableError(errorType)) {
           if (!isLastProvider) {
