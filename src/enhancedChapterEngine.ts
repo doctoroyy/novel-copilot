@@ -45,6 +45,7 @@ import {
   checkEventDuplication,
 } from './context/timelineManager.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
+import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
 import { z } from 'zod';
@@ -52,6 +53,10 @@ import { z } from 'zod';
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
+const PLAN_MAX_TOKENS = 700;
+const SELF_REVIEW_MAX_TOKENS = 500;
+const SUMMARY_UPDATE_MAX_TOKENS = 1200;
+const SUMMARY_SOURCE_MAX_CHARS = 1800;
 
 function normalizeMinChapterWords(value: number | undefined): number {
   const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
@@ -201,7 +206,7 @@ export type EnhancedWriteChapterResult = {
 function buildFallbackConfig(primary: AIConfig, fallbackConfigs?: AIConfig[]): FallbackConfig {
   return {
     primary,
-    fallback: fallbackConfigs,
+    fallback: fallbackConfigs?.filter((candidate) => !isSameAiConfig(candidate, primary)),
     switchConditions: ['rate_limit', 'server_error', 'timeout', 'unknown'] as FallbackConfig['switchConditions'],
   };
 }
@@ -307,6 +312,7 @@ export async function writeEnhancedChapter(
     if (enablePlanning) {
       chapterPlanText = await generateChapterPlan(
         aiConfig,
+        fallbackConfigs,
         optimizedContext,
         buildChapterGoalSection(params, enhancedOutline)
       );
@@ -324,6 +330,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
       const planningContext = buildPlanningContext(params, narrativeGuide);
       chapterPlanText = await generateChapterPlan(
         aiConfig,
+        fallbackConfigs,
         planningContext,
         buildChapterGoalSection(params, enhancedOutline)
       );
@@ -368,7 +375,13 @@ ${buildChapterGoalSection(params, enhancedOutline)}
         characters,
         characterStates
       );
-      const review = await runSelfReview(aiConfig, reviewContext, chapterText, duplicationWarnings);
+      const review = await runSelfReview(
+        aiConfig,
+        fallbackConfigs,
+        reviewContext,
+        chapterText,
+        duplicationWarnings
+      );
 
       if (review.action === 'keep') break;
 
@@ -500,6 +513,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
         try {
           summaryResult = await generateSummaryUpdate(
             candidate,
+            isSameAiConfig(candidate, aiConfig) ? fallbackConfigs : undefined,
             bible,
             params.rollingSummary,
             params.openLoops,
@@ -893,6 +907,7 @@ function formatChapterPlan(plan: ChapterPlan): string {
 
 async function generateChapterPlan(
   aiConfig: AIConfig,
+  fallbackConfigs: AIConfig[] | undefined,
   context: string,
   chapterGoal: string
 ): Promise<string | undefined> {
@@ -920,7 +935,12 @@ ${chapterGoal}
 
 请输出 JSON：`.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.4 });
+  const raw = await generateChapterDraft(aiConfig, fallbackConfigs, {
+    system,
+    prompt,
+    temperature: 0.4,
+    maxTokens: PLAN_MAX_TOKENS,
+  });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
@@ -945,6 +965,7 @@ function getEventDuplicationWarnings(
 
 async function runSelfReview(
   aiConfig: AIConfig,
+  fallbackConfigs: AIConfig[] | undefined,
   context: string,
   chapterText: string,
   duplicationWarnings: string[]
@@ -973,7 +994,12 @@ ${chapterText}
 
 请输出 JSON：`.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2 });
+  const raw = await generateChapterDraft(aiConfig, fallbackConfigs, {
+    system,
+    prompt,
+    temperature: 0.2,
+    maxTokens: SELF_REVIEW_MAX_TOKENS,
+  });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
@@ -988,11 +1014,13 @@ ${chapterText}
  */
 async function generateSummaryUpdate(
   aiConfig: AIConfig,
+  fallbackConfigs: AIConfig[] | undefined,
   bible: string,
   previousSummary: string,
   previousOpenLoops: string[],
   chapterText: string
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
+  const summarySource = buildChapterMemoryDigest(chapterText, SUMMARY_SOURCE_MAX_CHARS);
   const system = `
 你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
 只输出严格的 JSON 格式，不要有任何其他文字。
@@ -1016,13 +1044,18 @@ ${normalizeRollingSummary(previousSummary || '') || '（无）'}
 【此前 Open Loops】
 ${previousOpenLoops.length ? previousOpenLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（无）'}
 
-【本章原文】
-${chapterText}
+【本章压缩摘录（非全文，按开场/中段/结尾抽取）】
+${summarySource}
 
 请按“越近越详细、越远越压缩”的原则输出更新后的 JSON。
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2, maxTokens: 1800 }, 3);
+  const raw = await generateChapterDraft(aiConfig, fallbackConfigs, {
+    system,
+    prompt,
+    temperature: 0.2,
+    maxTokens: SUMMARY_UPDATE_MAX_TOKENS,
+  });
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
 }
 

@@ -5,12 +5,15 @@ import type { CharacterStateRegistry } from './types/characterState.js';
 import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
+import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
 
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
+const SUMMARY_UPDATE_MAX_TOKENS = 1200;
+const SUMMARY_SOURCE_MAX_CHARS = 1800;
 
 function normalizeMinChapterWords(value: number | undefined): number {
   const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
@@ -223,6 +226,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   const startedAt = Date.now();
   const {
     aiConfig,
+    fallbackConfigs,
     summaryAiConfig,
     chapterIndex,
     totalChapters,
@@ -329,6 +333,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
         try {
           summaryResult = await generateSummaryUpdate(
             candidate,
+            isSameAiConfig(candidate, aiConfig) ? fallbackConfigs : undefined,
             params.bible,
             params.rollingSummary,
             params.openLoops,
@@ -384,11 +389,13 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
  */
 async function generateSummaryUpdate(
   aiConfig: AIConfig,
+  fallbackConfigs: AIConfig[] | undefined,
   bible: string,
   previousSummary: string,
   previousOpenLoops: string[],
   chapterText: string
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
+  const summarySource = buildChapterMemoryDigest(chapterText, SUMMARY_SOURCE_MAX_CHARS);
   const system = `
 你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
 只输出严格的 JSON 格式，不要有任何其他文字。
@@ -412,17 +419,26 @@ ${normalizeRollingSummary(previousSummary || '') || '（无）'}
 【此前 Open Loops】
 ${previousOpenLoops.length ? previousOpenLoops.map((x, i) => `${i + 1}. ${x}`).join('\n') : '（无）'}
 
-【本章原文】
-${chapterText}
+【本章压缩摘录（非全文，按开场/中段/结尾抽取）】
+${summarySource}
 
 请按“越近越详细、越远越压缩”的原则输出更新后的 JSON。
 `.trim();
 
-  const raw = await generateTextWithRetry(
-    aiConfig,
-    { system, prompt, temperature: 0.2, maxTokens: 1800 },
-    3
-  );
+  const raw = fallbackConfigs?.length
+    ? await generateTextWithFallback(
+      {
+        primary: aiConfig,
+        fallback: fallbackConfigs,
+        switchConditions: ['rate_limit', 'server_error', 'timeout', 'unknown'],
+      },
+      { system, prompt, temperature: 0.2, maxTokens: SUMMARY_UPDATE_MAX_TOKENS }
+    )
+    : await generateTextWithRetry(
+      aiConfig,
+      { system, prompt, temperature: 0.2, maxTokens: SUMMARY_UPDATE_MAX_TOKENS },
+      3
+    );
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
 }
 
