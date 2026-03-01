@@ -93,8 +93,8 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
   };
 
   return (
-    <div className="h-full flex flex-col p-4 lg:p-6 overflow-hidden">
-      <div className="flex items-center justify-between mb-4">
+    <div className="h-full min-h-0 flex flex-col p-4 lg:p-6">
+      <div className="mb-4 flex shrink-0 items-center justify-between">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2">
             <BookMarked className="h-6 w-6 text-primary" />
@@ -110,28 +110,30 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
         </Button>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="mb-4 w-full justify-start">
-            <TabsTrigger value="bible" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Story Bible (核心)
-            </TabsTrigger>
-            <TabsTrigger value="background" className="flex items-center gap-2">
-              <Map className="h-4 w-4" />
-              世界观与背景
-            </TabsTrigger>
-            <TabsTrigger value="roles" className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              角色设定
-            </TabsTrigger>
-            <TabsTrigger value="chapter-prompt" className="flex items-center gap-2">
-              <PenLine className="h-4 w-4" />
-              正文提示词
-            </TabsTrigger>
-          </TabsList>
+          <div className="mb-4 overflow-x-auto pb-1">
+            <TabsList className="inline-flex min-w-max justify-start">
+              <TabsTrigger value="bible" className="flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                Story Bible (核心)
+              </TabsTrigger>
+              <TabsTrigger value="background" className="flex items-center gap-2">
+                <Map className="h-4 w-4" />
+                世界观与背景
+              </TabsTrigger>
+              <TabsTrigger value="roles" className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                角色设定
+              </TabsTrigger>
+              <TabsTrigger value="chapter-prompt" className="flex items-center gap-2">
+                <PenLine className="h-4 w-4" />
+                正文提示词
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-          <TabsContent value="bible" className="flex-1 min-h-0 mt-0">
+          <TabsContent value="bible" className="flex-1 min-h-0 mt-0 overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
               <Card className="h-full flex flex-col">
                 <CardHeader className="py-3">
@@ -157,7 +159,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="background" className="flex-1 min-h-0 mt-0">
+          <TabsContent value="background" className="flex-1 min-h-0 mt-0 overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
               <Card className="h-full flex flex-col">
                 <CardHeader className="py-3">
@@ -184,7 +186,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="roles" className="flex-1 min-h-0 mt-0">
+          <TabsContent value="roles" className="flex-1 min-h-0 mt-0 overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
               <Card className="h-full flex flex-col">
                 <CardHeader className="py-3">
@@ -211,7 +213,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="chapter-prompt" className="flex-1 min-h-0 mt-0">
+          <TabsContent value="chapter-prompt" className="flex-1 min-h-0 mt-0 overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
               <Card className="h-full flex flex-col">
                 <CardHeader className="py-3">

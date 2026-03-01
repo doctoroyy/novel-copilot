@@ -4,6 +4,7 @@ import type {
   ApiSuccess,
   BibleImagineTemplate,
   BibleTemplateSnapshotResponse,
+  CharacterRelationGraph,
   CreditFeature,
   GenerationStreamEvent,
   GenerationTask,
@@ -127,6 +128,32 @@ export async function createProject(
   if (!json.success) throw new Error(json.error || 'Failed to create project');
 }
 
+export async function updateProject(
+  apiBaseUrl: string,
+  token: string,
+  projectRef: string,
+  payload: {
+    bible?: string;
+    background?: string;
+    role_settings?: string;
+    chapter_prompt_profile?: string;
+    chapter_prompt_custom?: string;
+    minChapterWords?: number;
+  },
+): Promise<void> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/projects/${encodeURIComponent(projectRef)}`), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const json = await parseJsonResponse<Record<string, never>>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to update project');
+}
+
 export async function deleteProject(
   apiBaseUrl: string,
   token: string,
@@ -220,6 +247,44 @@ export async function fetchBibleTemplates(
     errorMessage: json.errorMessage ?? null,
     availableSnapshots: Array.isArray(json.availableSnapshots) ? json.availableSnapshots : [],
   };
+}
+
+export async function fetchCharacters(
+  apiBaseUrl: string,
+  token: string,
+  projectRef: string,
+): Promise<CharacterRelationGraph | null> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/characters/${encodeURIComponent(projectRef)}`), {
+    headers: authHeaders(token),
+  });
+
+  const json = await parseJsonResponse<{ characters: CharacterRelationGraph | null }>(res);
+  if (!json.success) throw new Error(json.error || 'Failed to fetch characters');
+  return json.characters || null;
+}
+
+export async function generateCharacters(
+  apiBaseUrl: string,
+  token: string,
+  projectRef: string,
+  aiConfig?: AppConfig['ai'],
+  options?: { targetChapters?: number; targetWordCount?: number },
+): Promise<CharacterRelationGraph> {
+  const res = await fetch(buildApiUrl(apiBaseUrl, `/characters/${encodeURIComponent(projectRef)}/generate`), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(token, aiConfig),
+    },
+    body: JSON.stringify({
+      targetChapters: options?.targetChapters,
+      targetWordCount: options?.targetWordCount,
+    }),
+  });
+
+  const json = await parseJsonResponse<{ characters: CharacterRelationGraph }>(res);
+  if (!json.success || !json.characters) throw new Error(json.error || 'Failed to generate characters');
+  return json.characters;
 }
 
 export type BibleTemplateRefreshJobStatus = 'queued' | 'running' | 'completed' | 'failed';
