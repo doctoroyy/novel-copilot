@@ -20,6 +20,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply novel-copilot-db --remote",
     "typecheck": "tsc --noEmit",
     "batch": "tsx src/runBatch.ts",
+    "benchmark:chapter": "node --import tsx src/benchmarkGeneration.ts",
     "server": "wrangler dev --local"
   },
   "dependencies": {

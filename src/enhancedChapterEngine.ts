@@ -89,6 +89,36 @@ const SelfReviewSchema = z.object({
 type ChapterPlan = z.infer<typeof PlanSchema>;
 type SelfReview = z.infer<typeof SelfReviewSchema>;
 
+export type EnhancedGenerationDiagnostics = {
+  promptChars: {
+    system: number;
+    user: number;
+    optimizedContext: number;
+    chapterPlan: number;
+    summarySource: number;
+  };
+  estimatedTokens: {
+    mainInput: number;
+    mainOutput: number;
+  };
+  phaseDurationsMs: {
+    planning: number;
+    selfReview: number;
+    quickQc: number;
+    fullQc: number;
+    summary: number;
+    characterState: number;
+    plotGraph: number;
+    timeline: number;
+  };
+  logicalAiCalls: {
+    planning: number;
+    drafting: number;
+    selfReview: number;
+    summary: number;
+  };
+};
+
 /**
  * 增强版章节生成参数
  */
@@ -201,6 +231,8 @@ export type EnhancedWriteChapterResult = {
   summaryDurationMs: number;
   /** 整体耗时（毫秒） */
   totalDurationMs: number;
+  /** 生成链路观测指标 */
+  diagnostics: EnhancedGenerationDiagnostics;
 };
 
 function buildFallbackConfig(primary: AIConfig, fallbackConfigs?: AIConfig[]): FallbackConfig {
@@ -209,6 +241,11 @@ function buildFallbackConfig(primary: AIConfig, fallbackConfigs?: AIConfig[]): F
     fallback: fallbackConfigs?.filter((candidate) => !isSameAiConfig(candidate, primary)),
     switchConditions: ['rate_limit', 'server_error', 'timeout', 'unknown'] as FallbackConfig['switchConditions'],
   };
+}
+
+function estimateTokens(text: string | undefined): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 2);
 }
 
 async function generateChapterDraft(
@@ -289,6 +326,17 @@ export async function writeEnhancedChapter(
   let contextStats: { totalChars: number; estimatedTokens: number } | undefined;
   let optimizedContext: string | undefined;
   let chapterPlanText: string | undefined;
+  let planningDurationMs = 0;
+  let planningCalls = 0;
+  let selfReviewDurationMs = 0;
+  let selfReviewCalls = 0;
+  let quickQcDurationMs = 0;
+  let fullQcDurationMs = 0;
+  let characterStateDurationMs = 0;
+  let plotGraphDurationMs = 0;
+  let timelineDurationMs = 0;
+  let summarySourceChars = 0;
+  let summaryCalls = 0;
 
   if (enableContextOptimization) {
     params.onProgress?.('正在优化上下文...', 'analyzing');
@@ -310,12 +358,15 @@ export async function writeEnhancedChapter(
     contextStats = getContextStats(optimizedContext);
 
     if (enablePlanning) {
+      planningCalls++;
+      const planningStartedAt = Date.now();
       chapterPlanText = await generateChapterPlan(
         aiConfig,
         fallbackConfigs,
         optimizedContext,
         buildChapterGoalSection(params, enhancedOutline)
       );
+      planningDurationMs += Date.now() - planningStartedAt;
     }
 
     userPrompt = `${optimizedContext}
@@ -328,12 +379,15 @@ ${buildChapterGoalSection(params, enhancedOutline)}
     // 使用传统上下文构建
     if (enablePlanning) {
       const planningContext = buildPlanningContext(params, narrativeGuide);
+      planningCalls++;
+      const planningStartedAt = Date.now();
       chapterPlanText = await generateChapterPlan(
         aiConfig,
         fallbackConfigs,
         planningContext,
         buildChapterGoalSection(params, enhancedOutline)
       );
+      planningDurationMs += Date.now() - planningStartedAt;
     }
     userPrompt = buildTraditionalPrompt(params, narrativeGuide, chapterPlanText);
   }
@@ -352,6 +406,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
   // 4. 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
   const generationStartedAt = Date.now();
+  let draftingCalls = 1;
   let chapterText = normalizeGeneratedChapterText(
     await generateChapterDraft(aiConfig, fallbackConfigs, {
       system,
@@ -375,6 +430,8 @@ ${buildChapterGoalSection(params, enhancedOutline)}
         characters,
         characterStates
       );
+      selfReviewCalls++;
+      const reviewStartedAt = Date.now();
       const review = await runSelfReview(
         aiConfig,
         fallbackConfigs,
@@ -382,6 +439,7 @@ ${buildChapterGoalSection(params, enhancedOutline)}
         chapterText,
         duplicationWarnings
       );
+      selfReviewDurationMs += Date.now() - reviewStartedAt;
 
       if (review.action === 'keep') break;
 
@@ -403,6 +461,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
         }),
         chapterIndex
       );
+      draftingCalls++;
 
       wasRewritten = true;
       rewriteCount++;
@@ -410,6 +469,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
   }
 
   // 5. 快速 QC 检测（结构 + 非最终章提前完结）
+  const quickQcStartedAt = Date.now();
   for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
     params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
     const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
@@ -439,6 +499,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
       }),
       chapterIndex
     );
+    draftingCalls++;
 
     wasRewritten = true;
     rewriteCount++;
@@ -452,42 +513,49 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
     params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
     throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
   }
+  quickQcDurationMs = Date.now() - quickQcStartedAt;
   const generationDurationMs = Date.now() - generationStartedAt;
 
   // 6. 多维度 QC（可选）
   let qcResult: QCResult | undefined;
   if (enableFullQC) {
     params.onProgress?.('正在进行深度 QC...', 'reviewing');
-    qcResult = await runMultiDimensionalQC({
-      aiConfig,
-      chapterText,
-      chapterIndex,
-      totalChapters,
-      characterStates,
-      narrativeGuide,
-      chapterOutline: enhancedOutline,
-      minChapterWords: normalizedMinChapterWords,
-      useAI: true,
-    });
-
-    // 自动修复（可选）
-    if (enableAutoRepair && !qcResult.passed) {
-      params.onProgress?.('正在自动修复问题...', 'repairing');
-      const repairResult = await repairChapter(
+    const fullQcStartedAt = Date.now();
+    try {
+      qcResult = await runMultiDimensionalQC({
         aiConfig,
         chapterText,
-        qcResult,
         chapterIndex,
         totalChapters,
-        1 // 只尝试修复一次
-      );
+        characterStates,
+        narrativeGuide,
+        chapterOutline: enhancedOutline,
+        minChapterWords: normalizedMinChapterWords,
+        useAI: true,
+      });
 
-      if (repairResult.success) {
-        chapterText = normalizeGeneratedChapterText(repairResult.repairedChapter, chapterIndex);
-        qcResult = repairResult.finalQC;
-        wasRewritten = true;
-        rewriteCount += repairResult.attempts;
+      // 自动修复（可选）
+      if (enableAutoRepair && !qcResult.passed) {
+        params.onProgress?.('正在自动修复问题...', 'repairing');
+        const repairResult = await repairChapter(
+          aiConfig,
+          chapterText,
+          qcResult,
+          chapterIndex,
+          totalChapters,
+          1 // 只尝试修复一次
+        );
+
+        if (repairResult.success) {
+          chapterText = normalizeGeneratedChapterText(repairResult.repairedChapter, chapterIndex);
+          qcResult = repairResult.finalQC;
+          wasRewritten = true;
+          rewriteCount += repairResult.attempts;
+          draftingCalls += repairResult.attempts;
+        }
       }
+    } finally {
+      fullQcDurationMs = Date.now() - fullQcStartedAt;
     }
   }
 
@@ -506,10 +574,11 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
     }
 
     try {
-      let summaryResult: { updatedSummary: string; updatedOpenLoops: string[] } | null = null;
+      let summaryResult: { updatedSummary: string; updatedOpenLoops: string[]; sourceChars: number } | null = null;
       let lastSummaryError: Error | null = null;
 
       for (const candidate of summaryCandidates) {
+        summaryCalls++;
         try {
           summaryResult = await generateSummaryUpdate(
             candidate,
@@ -519,6 +588,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
             params.openLoops,
             chapterText
           );
+          summarySourceChars = Math.max(summarySourceChars, summaryResult.sourceChars);
           break;
         } catch (error) {
           lastSummaryError = error as Error;
@@ -552,6 +622,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
   if (!skipStateUpdate && characterStates) {
     try {
       params.onProgress?.('正在分析人物状态...', 'analyzing');
+      const stateStartedAt = Date.now();
       const stateChanges = await analyzeChapterForStateChanges(
         aiConfig,
         chapterText,
@@ -566,6 +637,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
           chapterIndex
         );
       }
+      characterStateDurationMs = Date.now() - stateStartedAt;
     } catch (error) {
       console.warn('State update failed:', error);
     }
@@ -575,6 +647,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
   let updatedPlotGraph = plotGraph;
   if (!skipStateUpdate && plotGraph) {
     try {
+      const plotStartedAt = Date.now();
       const plotChanges = await analyzeChapterForPlotChanges(
         aiConfig,
         chapterText,
@@ -590,6 +663,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
           totalChapters
         );
       }
+      plotGraphDurationMs = Date.now() - plotStartedAt;
     } catch (error) {
       console.warn('Plot update failed:', error);
     }
@@ -614,6 +688,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
 
     // 分析并更新时间线
     try {
+      const timelineStartedAt = Date.now();
       const currentTimeline = timeline || createEmptyTimelineState();
       const eventAnalysis = await analyzeChapterForEvents(
         aiConfig,
@@ -627,12 +702,42 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
         updatedTimeline = applyEventAnalysis(currentTimeline, eventAnalysis, chapterIndex);
         console.log(`📅 章节 ${chapterIndex} 记录了 ${eventAnalysis.newEvents.length} 个新事件`);
       }
+      timelineDurationMs = Date.now() - timelineStartedAt;
     } catch (error) {
       console.warn('Timeline update failed:', error);
     }
   }
 
   const totalDurationMs = Date.now() - startedAt;
+  const diagnostics: EnhancedGenerationDiagnostics = {
+    promptChars: {
+      system: system.length,
+      user: userPrompt.length,
+      optimizedContext: optimizedContext?.length || 0,
+      chapterPlan: chapterPlanText?.length || 0,
+      summarySource: summarySourceChars,
+    },
+    estimatedTokens: {
+      mainInput: estimateTokens(system) + estimateTokens(userPrompt),
+      mainOutput: estimateTokens(chapterText),
+    },
+    phaseDurationsMs: {
+      planning: planningDurationMs,
+      selfReview: selfReviewDurationMs,
+      quickQc: quickQcDurationMs,
+      fullQc: fullQcDurationMs,
+      summary: summaryDurationMs,
+      characterState: characterStateDurationMs,
+      plotGraph: plotGraphDurationMs,
+      timeline: timelineDurationMs,
+    },
+    logicalAiCalls: {
+      planning: planningCalls,
+      drafting: draftingCalls,
+      selfReview: selfReviewCalls,
+      summary: summaryCalls,
+    },
+  };
 
   return {
     chapterText,
@@ -651,6 +756,7 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
     generationDurationMs,
     summaryDurationMs,
     totalDurationMs,
+    diagnostics,
   };
 }
 
@@ -1019,7 +1125,7 @@ async function generateSummaryUpdate(
   previousSummary: string,
   previousOpenLoops: string[],
   chapterText: string
-): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
+): Promise<{ updatedSummary: string; updatedOpenLoops: string[]; sourceChars: number }> {
   const summarySource = buildChapterMemoryDigest(chapterText, SUMMARY_SOURCE_MAX_CHARS);
   const system = `
 你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
@@ -1056,7 +1162,10 @@ ${summarySource}
     temperature: 0.2,
     maxTokens: SUMMARY_UPDATE_MAX_TOKENS,
   });
-  return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
+  return {
+    ...parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops),
+    sourceChars: summarySource.length,
+  };
 }
 
 /**
