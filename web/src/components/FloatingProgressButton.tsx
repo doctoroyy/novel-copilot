@@ -19,7 +19,7 @@ const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = 
 };
 
 export function FloatingProgressButton() {
-  const { generationState, activeTasks } = useGeneration();
+  const { generationState, activeTasks, setGenerationState } = useGeneration();
   const { taskUpdateCounter } = useServerEventsContext();
   const [isOpen, setIsOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -136,6 +136,15 @@ export function FloatingProgressButton() {
         await cancelTaskById(task.taskId);
       } else if (task.projectName) {
         await cancelAllActiveTasks(task.projectName);
+      }
+
+      if (task.id === 'legacy-chapters' || generationState.taskId === task.taskId) {
+        setGenerationState(prev => ({
+          ...prev,
+          isGenerating: false,
+          status: 'error',
+          message: '任务已取消'
+        }));
       }
     } catch (error) {
       console.error('Failed to cancel generation task:', error);
