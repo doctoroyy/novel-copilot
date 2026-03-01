@@ -25,7 +25,7 @@ export function FloatingProgressButton() {
   const [history, setHistory] = useState<TaskHistoryItem[]>([]);
   const [serverHistory, setServerHistory] = useState<GenerationTask[]>([]);
   const [cancelingTaskId, setCancelingTaskId] = useState<string | null>(null);
-  const streamedTasks = useActiveTasksStream();
+  const { tasks: streamedTasks, connected: tasksStreamConnected } = useActiveTasksStream();
 
   // Map server task to ActiveTask structure
   const mapServerTask = (task: GenerationTask): ActiveTask => {
@@ -177,6 +177,11 @@ export function FloatingProgressButton() {
             <div className="text-xs text-muted-foreground mb-2">
               当前任务 ({allTasks.length})
             </div>
+            {!tasksStreamConnected && (
+              <div className="mb-2 text-[11px] text-amber-600">
+                任务流重连中，当前显示最近一次快照
+              </div>
+            )}
             {allTasks.length === 0 ? (
               <div className="text-sm text-muted-foreground py-4 text-center">
                 暂无进行中的任务

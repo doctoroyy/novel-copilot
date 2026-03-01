@@ -46,6 +46,7 @@ import {
 } from './context/timelineManager.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
+import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS, getSupportPassMaxTokens } from './utils/aiModelHelpers.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
 import { z } from 'zod';
@@ -56,7 +57,6 @@ const MAX_CHAPTER_WORDS_LIMIT = 20000;
 const PLAN_MAX_TOKENS = 700;
 const SELF_REVIEW_MAX_TOKENS = 500;
 const SUMMARY_UPDATE_MAX_TOKENS = 1200;
-const SUMMARY_SOURCE_MAX_CHARS = 1800;
 
 function normalizeMinChapterWords(value: number | undefined): number {
   const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
@@ -248,29 +248,13 @@ function estimateTokens(text: string | undefined): number {
   return Math.ceil(text.length / 2);
 }
 
-function isReasoningHeavyModel(aiConfig: AIConfig): boolean {
-  const provider = String(aiConfig.provider || '').toLowerCase();
-  const model = String(aiConfig.model || '').toLowerCase();
-  return (
-    provider === 'custom' ||
-    provider === 'zai' ||
-    /gpt-oss|gpt-5|glm|qwen|deepseek|reasoner|r1|o1|o3|o4/.test(model)
-  );
-}
-
-function getSupportPassMaxTokens(
+function getEnhancedSupportPassMaxTokens(
   aiConfig: AIConfig,
   kind: 'planning' | 'selfReview' | 'summary'
 ): number {
-  if (!isReasoningHeavyModel(aiConfig)) {
-    if (kind === 'planning') return PLAN_MAX_TOKENS;
-    if (kind === 'selfReview') return SELF_REVIEW_MAX_TOKENS;
-    return SUMMARY_UPDATE_MAX_TOKENS;
-  }
-
-  if (kind === 'planning') return Math.max(PLAN_MAX_TOKENS, 1800);
-  if (kind === 'selfReview') return Math.max(SELF_REVIEW_MAX_TOKENS, 1200);
-  return Math.max(SUMMARY_UPDATE_MAX_TOKENS, 1800);
+  if (kind === 'planning') return getSupportPassMaxTokens(aiConfig, PLAN_MAX_TOKENS, 1800);
+  if (kind === 'selfReview') return getSupportPassMaxTokens(aiConfig, SELF_REVIEW_MAX_TOKENS, 1200);
+  return getSupportPassMaxTokens(aiConfig, SUMMARY_UPDATE_MAX_TOKENS, 1800);
 }
 
 async function generateChapterDraft(
@@ -1070,14 +1054,15 @@ ${chapterGoal}
     system,
     prompt,
     temperature: 0.4,
-    maxTokens: getSupportPassMaxTokens(aiConfig, 'planning'),
+    maxTokens: getEnhancedSupportPassMaxTokens(aiConfig, 'planning'),
   });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
     const plan = PlanSchema.parse(JSON.parse(jsonText));
     return formatChapterPlan(plan);
-  } catch {
+  } catch (error) {
+    console.warn('Failed to parse chapter plan JSON:', (error as Error).message, jsonText.slice(0, 200));
     return undefined;
   }
 }
@@ -1129,13 +1114,14 @@ ${chapterText}
     system,
     prompt,
     temperature: 0.2,
-    maxTokens: getSupportPassMaxTokens(aiConfig, 'selfReview'),
+    maxTokens: getEnhancedSupportPassMaxTokens(aiConfig, 'selfReview'),
   });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
     return SelfReviewSchema.parse(JSON.parse(jsonText));
-  } catch {
+  } catch (error) {
+    console.warn('Failed to parse self-review JSON:', (error as Error).message, jsonText.slice(0, 200));
     return { action: 'keep', issues: [], guidance: '' };
   }
 }
@@ -1151,7 +1137,7 @@ async function generateSummaryUpdate(
   previousOpenLoops: string[],
   chapterText: string
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[]; sourceChars: number }> {
-  const summarySource = buildChapterMemoryDigest(chapterText, SUMMARY_SOURCE_MAX_CHARS);
+  const summarySource = buildChapterMemoryDigest(chapterText, DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS);
   const system = `
 你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
 只输出严格的 JSON 格式，不要有任何其他文字。
@@ -1185,7 +1171,7 @@ ${summarySource}
     system,
     prompt,
     temperature: 0.2,
-    maxTokens: getSupportPassMaxTokens(aiConfig, 'summary'),
+    maxTokens: getEnhancedSupportPassMaxTokens(aiConfig, 'summary'),
   });
   return {
     ...parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops),

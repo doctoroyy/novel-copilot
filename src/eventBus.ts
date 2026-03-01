@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events';
 
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
-type EventUserId = string | null;
+type EventUserId = string | null | undefined;
 
 interface BaseServerEvent {
   id: number;
   createdAt: number;
-  userId: EventUserId;
+  userId: string;
 }
 
 export interface LogEvent extends BaseServerEvent {
@@ -41,12 +41,22 @@ class ServerEventBus extends EventEmitter {
     this.setMaxListeners(20);
   }
 
+  private normalizeUserId(userId: EventUserId, eventType: ServerEvent['type']): string | null {
+    if (typeof userId === 'string' && userId.trim()) {
+      return userId;
+    }
+    console.warn(`Dropping ${eventType} event without userId.`);
+    return null;
+  }
+
   private pushEvent(event: EmittableServerEvent): ServerEvent {
-    const enriched = {
-      ...event,
+    const base = {
       id: this.nextId++,
       createdAt: Date.now(),
-    } as unknown as ServerEvent;
+    };
+    const enriched: ServerEvent = event.type === 'log'
+      ? { ...event, ...base }
+      : { ...event, ...base };
 
     this.history.push(enriched);
     if (this.history.length > this.maxHistory) {
@@ -58,13 +68,18 @@ class ServerEventBus extends EventEmitter {
   }
 
   log(level: LogLevel, message: string, project?: string, userId: EventUserId = null) {
+    const scopedUserId = this.normalizeUserId(userId, 'log');
+    if (!scopedUserId) {
+      return;
+    }
+
     this.pushEvent({
       type: 'log',
       level,
       message,
       timestamp: new Date().toLocaleTimeString(),
       project,
-      userId,
+      userId: scopedUserId,
     });
 
     const prefix = {
@@ -77,10 +92,15 @@ class ServerEventBus extends EventEmitter {
   }
 
   progress(data: Omit<ProgressEvent, 'type' | 'id' | 'createdAt' | 'userId'> & { userId?: EventUserId }) {
+    const scopedUserId = this.normalizeUserId(data.userId, 'progress');
+    if (!scopedUserId) {
+      return;
+    }
+
     this.pushEvent({
       ...data,
       type: 'progress',
-      userId: data.userId ?? null,
+      userId: scopedUserId,
     });
   }
 

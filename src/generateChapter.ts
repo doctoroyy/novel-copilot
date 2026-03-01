@@ -6,6 +6,7 @@ import { buildCharacterStateContext } from './context/characterStateManager.js';
 import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
+import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS, getSupportPassMaxTokens } from './utils/aiModelHelpers.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
 
@@ -13,7 +14,6 @@ const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
 const SUMMARY_UPDATE_MAX_TOKENS = 1200;
-const SUMMARY_SOURCE_MAX_CHARS = 1800;
 
 function normalizeMinChapterWords(value: number | undefined): number {
   const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
@@ -27,21 +27,8 @@ function buildRecommendedMaxChapterWords(minChapterWords: number): number {
   return Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
 }
 
-function isReasoningHeavyModel(aiConfig: AIConfig): boolean {
-  const provider = String(aiConfig.provider || '').toLowerCase();
-  const model = String(aiConfig.model || '').toLowerCase();
-  return (
-    provider === 'custom' ||
-    provider === 'zai' ||
-    /gpt-oss|gpt-5|glm|qwen|deepseek|reasoner|r1|o1|o3|o4/.test(model)
-  );
-}
-
 function getSummaryUpdateMaxTokens(aiConfig: AIConfig): number {
-  if (!isReasoningHeavyModel(aiConfig)) {
-    return SUMMARY_UPDATE_MAX_TOKENS;
-  }
-  return Math.max(SUMMARY_UPDATE_MAX_TOKENS, 1800);
+  return getSupportPassMaxTokens(aiConfig, SUMMARY_UPDATE_MAX_TOKENS, 1800);
 }
 
 /**
@@ -412,7 +399,7 @@ async function generateSummaryUpdate(
   previousOpenLoops: string[],
   chapterText: string
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
-  const summarySource = buildChapterMemoryDigest(chapterText, SUMMARY_SOURCE_MAX_CHARS);
+  const summarySource = buildChapterMemoryDigest(chapterText, DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS);
   const system = `
 你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
 只输出严格的 JSON 格式，不要有任何其他文字。

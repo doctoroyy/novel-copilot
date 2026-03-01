@@ -85,6 +85,11 @@ export async function verifyToken(token: string): Promise<TokenPayload | null> {
   }
 }
 
+function allowsQueryTokenForSse(path: string): boolean {
+  if (path === '/api/active-tasks') return true;
+  return /^\/api\/projects\/[^/]+\/active-task$/.test(path);
+}
+
 // Middleware that requires authentication
 export function authMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
@@ -92,6 +97,7 @@ export function authMiddleware() {
 
     const acceptHeader = c.req.header('Accept') || '';
     const isSseRequest = c.req.method === 'GET'
+      && allowsQueryTokenForSse(c.req.path)
       && (c.req.query('stream') === '1' || acceptHeader.includes('text/event-stream'));
 
     let token: string | null = null;

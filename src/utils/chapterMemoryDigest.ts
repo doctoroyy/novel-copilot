@@ -1,3 +1,5 @@
+import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS } from './aiModelHelpers.js';
+
 function normalizeText(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
@@ -42,7 +44,10 @@ function scoreParagraph(paragraph: string): number {
   return score;
 }
 
-export function buildChapterMemoryDigest(chapterText: string, maxChars = 1800): string {
+export function buildChapterMemoryDigest(
+  chapterText: string,
+  maxChars = DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS
+): string {
   const normalized = normalizeText(chapterText);
   if (!normalized) return '';
   if (normalized.length <= maxChars) return normalized;
@@ -50,10 +55,17 @@ export function buildChapterMemoryDigest(chapterText: string, maxChars = 1800): 
   const lines = normalized.split('\n');
   const title = lines[0]?.trim() || '';
   const body = normalizeText(lines.slice(1).join('\n')) || normalized;
-  const paragraphs = body
-    .split(/\n{2,}|\n/g)
+  let paragraphs = body
+    .split(/\n{2,}/g)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
+
+  if (paragraphs.length <= 1) {
+    paragraphs = body
+      .split('\n')
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean);
+  }
 
   if (paragraphs.length === 0) {
     return clipText(normalized, maxChars);
