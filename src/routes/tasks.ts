@@ -262,10 +262,11 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
 
   try {
     const task = await c.env.DB.prepare(`
-      SELECT status
-      FROM generation_tasks
-      WHERE id = ? AND user_id = ?
-    `).bind(taskId, userId).first() as { status: string } | null;
+      SELECT t.status, p.name as project_name
+      FROM generation_tasks t
+      LEFT JOIN projects p ON t.project_id = p.id
+      WHERE t.id = ? AND t.user_id = ?
+    `).bind(taskId, userId).first() as { status: string; project_name: string | null } | null;
 
     if (!task) {
       return c.json({ success: false, error: 'Task not found' }, 404);
@@ -278,6 +279,18 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
         WHERE id = ? AND user_id = ?
       `).bind(taskId, userId).run();
       eventBus.taskUpdate();
+      
+      if (task.project_name) {
+        eventBus.progress({
+          projectName: task.project_name,
+          current: 0,
+          total: 100,
+          chapterIndex: 0,
+          status: 'error',
+          message: '任务已取消',
+        });
+      }
+      
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -442,6 +455,17 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
       eventBus.taskUpdate();
+      const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+      if (project) {
+        eventBus.progress({
+          projectName: project.name,
+          current: 0,
+          total: 100,
+          chapterIndex: 0,
+          status: 'error',
+          message: '任务已取消',
+        });
+      }
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -452,6 +476,17 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
       eventBus.taskUpdate();
+      const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+      if (project) {
+        eventBus.progress({
+          projectName: project.name,
+          current: 0,
+          total: 100,
+          chapterIndex: 0,
+          status: 'error',
+          message: '任务已取消',
+        });
+      }
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -507,6 +542,18 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
     `).bind(projectId, userId).run();
     eventBus.taskUpdate();
+    
+    const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+    if (project) {
+      eventBus.progress({
+        projectName: project.name,
+        current: 0,
+        total: 100,
+        chapterIndex: 0,
+        status: 'error',
+        message: '任务已取消',
+      });
+    }
 
     return c.json({ success: true });
   } catch (error) {
