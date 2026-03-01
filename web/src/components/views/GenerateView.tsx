@@ -32,7 +32,7 @@ type FlowNode = {
   label: string;
   x: number;
   y: number;
-  className: string;
+  active: boolean;
 };
 
 type FlowEdge = {
@@ -131,53 +131,48 @@ export function GenerateView({
 
   const flowNodes = useMemo<FlowNode[]>(
     () => {
-      const highlight = (active: boolean) =>
-        active
-          ? 'border-sky-400/90 shadow-[0_0_0_2px_rgba(56,189,248,0.25)]'
-          : 'border-slate-400/35';
-
       return [
         {
           id: 'outline',
           label: '大纲生成\n(Story Bible/卷规划)',
           x: 20,
           y: 24,
-          className: highlight(flowStage === 'outline'),
+          active: flowStage === 'outline',
         },
         {
           id: 'context',
           label: '上下文构建\n(摘要/角色/图谱)',
           x: 230,
           y: 24,
-          className: highlight(flowStage === 'ready'),
+          active: flowStage === 'ready',
         },
         {
           id: 'write',
           label: '章节生成\n(正文产出)',
           x: 440,
           y: 24,
-          className: highlight(flowStage === 'generating'),
+          active: flowStage === 'generating',
         },
         {
           id: 'review',
           label: '自检/QC\n(重复/节奏)',
           x: 440,
           y: 172,
-          className: highlight(flowStage === 'generating'),
+          active: flowStage === 'generating',
         },
         {
           id: 'memory',
           label: '记忆更新\n(摘要/时间线)',
           x: 230,
           y: 172,
-          className: highlight(flowStage === 'iterating'),
+          active: flowStage === 'iterating',
         },
         {
           id: 'blocked',
           label: '人工介入\n(异常处理)',
           x: 20,
           y: 172,
-          className: highlight(flowStage === 'blocked'),
+          active: flowStage === 'blocked',
         },
       ];
     },
@@ -480,18 +475,58 @@ export function GenerateView({
                   </text>
                 </g>
               ))}
+              {flowNodes.map((node) => {
+                const lines = node.label.split('\n');
+                const centerX = node.x + nodeSize.width / 2;
+                const lineHeight = 18;
+                const startY = node.y + nodeSize.height / 2 - ((lines.length - 1) * lineHeight) / 2 + 4;
+
+                return (
+                  <g key={node.id}>
+                    {node.active && (
+                      <rect
+                        x={node.x - 4}
+                        y={node.y - 4}
+                        width={nodeSize.width + 8}
+                        height={nodeSize.height + 8}
+                        rx={18}
+                        fill="none"
+                        stroke="rgba(56, 189, 248, 0.25)"
+                        strokeWidth="2"
+                      />
+                    )}
+                    <rect
+                      x={node.x}
+                      y={node.y}
+                      width={nodeSize.width}
+                      height={nodeSize.height}
+                      rx={14}
+                      fill="rgba(15, 23, 42, 0.82)"
+                      stroke={node.active ? 'rgba(56, 189, 248, 0.95)' : 'rgba(148, 163, 184, 0.35)'}
+                      strokeWidth={node.active ? '2.5' : '1.5'}
+                    />
+                    <text
+                      x={centerX}
+                      y={startY}
+                      fill="rgba(226, 232, 240, 0.95)"
+                      fontSize="12"
+                      fontWeight="600"
+                      textAnchor="middle"
+                    >
+                      {lines.map((line, index) => (
+                        <tspan
+                          key={`${node.id}-${index}`}
+                          x={centerX}
+                          dy={index === 0 ? 0 : lineHeight}
+                        >
+                          {line}
+                        </tspan>
+                      ))}
+                    </text>
+                  </g>
+                );
+              })}
             </svg>
-            {flowNodes.map((node) => (
-              <div
-                key={node.id}
-                className={`absolute rounded-xl border px-3 py-2 text-[12px] leading-snug text-center text-slate-200 bg-slate-900/80 ${node.className}`}
-                style={{ width: nodeSize.width, height: nodeSize.height, left: node.x, top: node.y }}
-              >
-                {node.label.split('\n').map((line, index) => (
-                  <div key={`${node.id}-${index}`}>{line}</div>
-                ))}
-              </div>
-            ))}
           </div>
         </CardContent>
       </Card>
