@@ -277,6 +277,7 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND user_id = ?
       `).bind(taskId, userId).run();
+      eventBus.taskUpdate();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -406,6 +407,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
       SET status = 'paused', updated_at = (unixepoch() * 1000)
       WHERE id = ? AND project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
     `).bind(taskId, projectId, userId).run();
+    eventBus.taskUpdate();
 
     return c.json({ success: true });
   } catch (error) {
@@ -439,6 +441,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
+      eventBus.taskUpdate();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -448,6 +451,7 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
+      eventBus.taskUpdate();
       return c.json({ success: true, cancelled: true, message: '任务已取消' });
     }
 
@@ -472,6 +476,7 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
     await c.env.DB.prepare(`
       DELETE FROM generation_tasks WHERE id = ? AND project_id = ? AND user_id = ?
     `).bind(taskId, projectId, userId).run();
+    eventBus.taskUpdate();
 
     return c.json({ success: true });
   } catch (error) {
@@ -501,6 +506,7 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
       SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
     `).bind(projectId, userId).run();
+    eventBus.taskUpdate();
 
     return c.json({ success: true });
   } catch (error) {
@@ -523,6 +529,7 @@ tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
       DELETE FROM generation_tasks 
       WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused')
     `).bind(projectId, userId).run();
+    eventBus.taskUpdate();
 
     return c.json({ success: true });
   } catch (error) {
