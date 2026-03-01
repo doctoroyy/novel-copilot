@@ -248,6 +248,31 @@ function estimateTokens(text: string | undefined): number {
   return Math.ceil(text.length / 2);
 }
 
+function isReasoningHeavyModel(aiConfig: AIConfig): boolean {
+  const provider = String(aiConfig.provider || '').toLowerCase();
+  const model = String(aiConfig.model || '').toLowerCase();
+  return (
+    provider === 'custom' ||
+    provider === 'zai' ||
+    /gpt-oss|gpt-5|glm|qwen|deepseek|reasoner|r1|o1|o3|o4/.test(model)
+  );
+}
+
+function getSupportPassMaxTokens(
+  aiConfig: AIConfig,
+  kind: 'planning' | 'selfReview' | 'summary'
+): number {
+  if (!isReasoningHeavyModel(aiConfig)) {
+    if (kind === 'planning') return PLAN_MAX_TOKENS;
+    if (kind === 'selfReview') return SELF_REVIEW_MAX_TOKENS;
+    return SUMMARY_UPDATE_MAX_TOKENS;
+  }
+
+  if (kind === 'planning') return Math.max(PLAN_MAX_TOKENS, 1800);
+  if (kind === 'selfReview') return Math.max(SELF_REVIEW_MAX_TOKENS, 1200);
+  return Math.max(SUMMARY_UPDATE_MAX_TOKENS, 1800);
+}
+
 async function generateChapterDraft(
   aiConfig: AIConfig,
   fallbackConfigs: AIConfig[] | undefined,
@@ -1045,7 +1070,7 @@ ${chapterGoal}
     system,
     prompt,
     temperature: 0.4,
-    maxTokens: PLAN_MAX_TOKENS,
+    maxTokens: getSupportPassMaxTokens(aiConfig, 'planning'),
   });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
@@ -1104,7 +1129,7 @@ ${chapterText}
     system,
     prompt,
     temperature: 0.2,
-    maxTokens: SELF_REVIEW_MAX_TOKENS,
+    maxTokens: getSupportPassMaxTokens(aiConfig, 'selfReview'),
   });
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
@@ -1160,7 +1185,7 @@ ${summarySource}
     system,
     prompt,
     temperature: 0.2,
-    maxTokens: SUMMARY_UPDATE_MAX_TOKENS,
+    maxTokens: getSupportPassMaxTokens(aiConfig, 'summary'),
   });
   return {
     ...parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops),

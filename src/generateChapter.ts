@@ -27,6 +27,23 @@ function buildRecommendedMaxChapterWords(minChapterWords: number): number {
   return Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
 }
 
+function isReasoningHeavyModel(aiConfig: AIConfig): boolean {
+  const provider = String(aiConfig.provider || '').toLowerCase();
+  const model = String(aiConfig.model || '').toLowerCase();
+  return (
+    provider === 'custom' ||
+    provider === 'zai' ||
+    /gpt-oss|gpt-5|glm|qwen|deepseek|reasoner|r1|o1|o3|o4/.test(model)
+  );
+}
+
+function getSummaryUpdateMaxTokens(aiConfig: AIConfig): number {
+  if (!isReasoningHeavyModel(aiConfig)) {
+    return SUMMARY_UPDATE_MAX_TOKENS;
+  }
+  return Math.max(SUMMARY_UPDATE_MAX_TOKENS, 1800);
+}
+
 /**
  * 章节生成参数
  */
@@ -432,11 +449,11 @@ ${summarySource}
         fallback: fallbackConfigs,
         switchConditions: ['rate_limit', 'server_error', 'timeout', 'unknown'],
       },
-      { system, prompt, temperature: 0.2, maxTokens: SUMMARY_UPDATE_MAX_TOKENS }
+      { system, prompt, temperature: 0.2, maxTokens: getSummaryUpdateMaxTokens(aiConfig) }
     )
     : await generateTextWithRetry(
       aiConfig,
-      { system, prompt, temperature: 0.2, maxTokens: SUMMARY_UPDATE_MAX_TOKENS },
+      { system, prompt, temperature: 0.2, maxTokens: getSummaryUpdateMaxTokens(aiConfig) },
       3
     );
   return parseSummaryUpdateResponse(raw, previousSummary, previousOpenLoops);
