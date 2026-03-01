@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
+import { generateText, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
 import { writeOneChapter } from '../generateChapter.js';
 import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
@@ -1154,7 +1154,8 @@ async function startGenerationChain(
   taskId: number,
   userId: string,
   aiConfig: AIConfig,
-  chaptersToGenerate?: number
+  chaptersToGenerate?: number,
+  fallbackConfigs?: AIConfig[]
 ) {
   if (c.env.GENERATION_QUEUE) {
     // Queue implementation
@@ -1163,6 +1164,7 @@ async function startGenerationChain(
       taskId,
       userId,
       aiConfig,
+      fallbackConfigs,
       chaptersToGenerate
     });
     console.log(`Task ${taskId} enqueued successfully.`);
@@ -1173,6 +1175,7 @@ async function startGenerationChain(
       runChapterGenerationTaskInBackground({
         env: c.env,
         aiConfig,
+        fallbackConfigs,
         userId,
         taskId,
         chaptersToGenerate
@@ -1200,6 +1203,7 @@ function getContiguousCompletedCount(startChapter: number, completedChapters: nu
 export async function runChapterGenerationTaskInBackground(params: {
   env: Env;
   aiConfig: AIConfig;
+  fallbackConfigs?: AIConfig[];
   userId: string;
   taskId: number;
   chaptersToGenerate?: number;
@@ -1207,6 +1211,7 @@ export async function runChapterGenerationTaskInBackground(params: {
   const {
     env,
     aiConfig,
+    fallbackConfigs,
     userId,
     taskId,
     chaptersToGenerate,
@@ -1389,6 +1394,7 @@ export async function runChapterGenerationTaskInBackground(params: {
 
         result = await writeOneChapter({
           aiConfig,
+          fallbackConfigs,
           bible: project.bible,
           rollingSummary: project.rolling_summary || '',
           openLoops: JSON.parse(project.open_loops || '[]'),
@@ -1776,7 +1782,8 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   // For resumed active tasks, avoid duplicate enqueue storms caused by reconnect.
   // Only kick when the task looks stalled for a short period.
   if (!isResumed || shouldKickResumedTask) {
-    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate);
+    const fallbackConfigs = await getFallbackAIConfigsFromRegistry(c.env.DB, aiConfig.model);
+    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
   }
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
@@ -2020,7 +2027,8 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
     const authHeader = c.req.header('Authorization') || '';
     const origin = new URL(c.req.url).origin;
 
-    startGenerationChain(c, taskId, userId, aiConfig);
+    const fallbackConfigs = await getFallbackAIConfigsFromRegistry(c.env.DB, aiConfig.model);
+    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
 
     // We return immediately, the task runs in background (via startGenerationChain -> waitUntil)
     // Client can poll task status or listen to SSE
