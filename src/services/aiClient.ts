@@ -449,3 +449,33 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
     return null;
   }
 }
+
+/**
+ * Get a list of fallback AI configs (other active models) from Model Registry
+ */
+export async function getFallbackAIConfigsFromRegistry(
+  db: D1Database,
+  excludeModelName: string
+): Promise<AIConfig[]> {
+  try {
+    const { results } = await db.prepare(
+      `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
+       FROM model_registry m
+       JOIN provider_registry p ON m.provider_id = p.id
+       WHERE m.is_active = 1 AND m.model_name != ?
+       ORDER BY m.is_default DESC, m.id ASC LIMIT 3`
+    ).bind(excludeModelName).all();
+
+    if (!results || results.length === 0) return [];
+
+    return results.map((model: any) => ({
+      provider: normalizeProviderId(model.provider_id) as AIProvider,
+      model: model.model_name,
+      apiKey: model.provider_api_key || '',
+      baseUrl: model.provider_base_url || undefined,
+    }));
+  } catch (error) {
+    console.error('Failed to get fallback AI configs from registry:', error);
+    return [];
+  }
+}

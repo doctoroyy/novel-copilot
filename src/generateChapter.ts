@@ -1,4 +1,4 @@
-import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
+import { generateTextWithRetry, generateTextWithFallback, type AIConfig } from './services/aiClient.js';
 import { getCharacterContext } from './generateCharacters.js';
 import type { CharacterRelationGraph } from './types/characters.js';
 import type { CharacterStateRegistry } from './types/characterState.js';
@@ -30,6 +30,8 @@ function buildRecommendedMaxChapterWords(minChapterWords: number): number {
 export type WriteChapterParams = {
   /** AI 配置 */
   aiConfig: AIConfig;
+  /** 备用 AI 配置列表，当主模型因速率等原因失败时启用轮询降级 */
+  fallbackConfigs?: AIConfig[];
   /** 摘要更新专用 AI 配置（可选，不传则复用 aiConfig） */
   summaryAiConfig?: AIConfig;
   /** Story Bible 内容 */
@@ -245,7 +247,14 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
 
   // 第一次生成
   params.onProgress?.('正在生成正文...', 'generating');
-  const rawResponse = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.85 });
+  
+  const aiConfigs = {
+    primary: aiConfig,
+    fallback: params.fallbackConfigs,
+    switchConditions: ['rate_limit', 'server_error', 'timeout', 'unknown'] as any[]
+  };
+
+  const rawResponse = await generateTextWithFallback(aiConfigs, { system, prompt, temperature: 0.85 });
   
   let chapterText = parseChapterResponse(rawResponse, chapterIndex);
 
@@ -278,7 +287,7 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     });
 
     const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
-    const rawRewriteResponse = await generateTextWithRetry(aiConfig, { system, prompt: rewritePrompt, temperature: 0.8 });
+    const rawRewriteResponse = await generateTextWithFallback(aiConfigs, { system, prompt: rewritePrompt, temperature: 0.8 });
     chapterText = parseChapterResponse(rawRewriteResponse, chapterIndex);
     wasRewritten = true;
     rewriteCount++;
