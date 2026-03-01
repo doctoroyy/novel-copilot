@@ -138,7 +138,7 @@ export function FloatingProgressButton() {
         await cancelAllActiveTasks(task.projectName);
       }
 
-      if (task.id === 'legacy-chapters' || generationState.taskId === task.taskId) {
+      if (task.id === 'legacy-chapters' || (generationState.taskId !== undefined && generationState.taskId === task.taskId)) {
         setGenerationState(prev => ({
           ...prev,
           isGenerating: false,
