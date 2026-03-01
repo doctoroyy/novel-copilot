@@ -1,3 +1,9 @@
+/**
+ * Legacy local Express entrypoint.
+ *
+ * This file is kept only for backward compatibility and one-off local debugging.
+ * The supported runtime path is Cloudflare Worker via src/worker.ts.
+ */
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'node:path';

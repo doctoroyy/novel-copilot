@@ -709,6 +709,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
 // Trigger generation for a project
 animeRoutes.post('/projects/:id/generate', async (c) => {
   const projectId = c.req.param('id');
+  const userId = c.get('userId') as string | null;
 
   try {
     // Read API config from headers or registry
@@ -761,6 +762,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
         if (!episode.storyboard_json) {
            const { eventBus } = await import('../eventBus.js');
            eventBus.progress({
+             userId: userId || undefined,
              projectName: project.name,
              current: processedCount,
              total: episodes.length,
@@ -857,6 +859,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
                 }
 
                 eventBus.progress({
+                    userId: userId || undefined,
                     projectName: project.name,
                     current: processedCount,
                     total: episodes.length,
@@ -975,6 +978,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
         
         // Emit progress update
         eventBus.progress({
+          userId: userId || undefined,
           projectName: project.name,
           current: processedCount,
           total: episodes.length,
@@ -984,7 +988,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
         });
 
         // Emit persistent log
-        eventBus.error(`第 ${episode.episode_num} 集生成失败: ${(error as Error).message}`, project.name);
+        eventBus.error(`第 ${episode.episode_num} 集生成失败: ${(error as Error).message}`, project.name, userId || undefined);
 
         
         await c.env.DB.prepare(`

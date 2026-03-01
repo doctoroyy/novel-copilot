@@ -62,80 +62,68 @@ app.route('/api/anime', animeRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/credit', creditRoutes);
 
-// SSE endpoint (stub - Workers have limited SSE support)
-// For real-time updates, clients should poll or use Durable Objects
-// SSE endpoint - supports token auth via query param (EventSource doesn't support headers)
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');
   const { verifyToken } = await import('./middleware/authMiddleware.js');
 
-  // Get token from query param (EventSource cannot send headers)
   const token = c.req.query('token');
-  let userId: string | null = null;
-
-  if (token) {
-    const payload = await verifyToken(token);
-    if (payload) {
-      userId = payload.userId;
-    }
+  if (!token) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
 
+  const payload = await verifyToken(token);
+  if (!payload?.userId) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  let cursor = Number.parseInt(c.req.query('cursor') || '0', 10);
+  if (!Number.isFinite(cursor) || cursor < 0) {
+    cursor = 0;
+  }
+
+  const userId = payload.userId;
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
+      let closed = false;
 
-      const send = (data: any) => {
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(pollInterval);
         try {
-          // Check if controller is still valid (best effort)
-          // encode and enqueue
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        } catch (err) {
-          // Controller might be closed or cross-request error
-          // e.g. "The controller is already closed" or "Invalid state" or "Promise resolved from different context"
-          // We can just stop listening if it's broken
-          console.warn('SSE send failed, unsubscribing:', (err as Error).message);
-          eventBus.off('event', send);
+          controller.close();
+        } catch {
+          // no-op
         }
       };
 
-      // Polling loop to check for events in the queue
-      // This ensures we write to the controller from the request's own context
+      const flushEvents = () => {
+        if (closed) return;
+        const { events, nextCursor } = eventBus.consumeSince(cursor, { userId });
+        cursor = nextCursor;
+        for (const event of events) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+      };
+
       const pollInterval = setInterval(() => {
         try {
-          // Consume events from the bus
-          const events = eventBus.consume();
-
-          if (events.length > 0) {
-            for (const event of events) {
-              // TODO: In a multi-user environment, filter events by userId
-              // For now, broadcast all events to all connected clients
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-            }
-          } else {
-            // Optional: keep alive ping every few ticks if no events
-            // But we can just use a separate ping or just rely on standard keepalive
-            // Let's explicitly ping every ~30 polls (30 * 500ms = 15s)
-            if (Math.random() < 0.05) {
-              controller.enqueue(encoder.encode(': ping\n\n'));
-            }
-          }
+          flushEvents();
+          controller.enqueue(encoder.encode(': ping\n\n'));
         } catch (err) {
           console.warn('SSE polling failed:', (err as Error).message);
-          clearInterval(pollInterval);
+          close();
         }
-      }, 500); // Check every 500ms
+      }, 5000);
 
       c.req.raw.signal.addEventListener('abort', () => {
-        clearInterval(pollInterval);
-        try {
-          // controller.close(); 
-        } catch { }
+        close();
       });
-
-
+      flushEvents();
     },
     cancel() {
-      // Cleanup happen in abort listener usually, but here too for safety
+      // Cleanup happens through abort/close.
     }
   });
 

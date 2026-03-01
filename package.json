@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run db:migrate:local && wrangler dev",
-    "dev:local": "tsx src/server.ts",
+    "dev:local": "npm run db:migrate:local && wrangler dev --local",
     "dev:mobile": "cd mobile && pnpm start",
     "mobile:android": "cd mobile && pnpm android",
     "mobile:ios": "cd mobile && pnpm ios",
@@ -20,7 +20,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply novel-copilot-db --remote",
     "typecheck": "tsc --noEmit",
     "batch": "tsx src/runBatch.ts",
-    "server": "tsx src/server.ts"
+    "server": "wrangler dev --local",
+    "server:legacy": "tsx src/server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
