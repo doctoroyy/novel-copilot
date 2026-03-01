@@ -8,8 +8,14 @@ type ActiveTasksStreamPayload = {
   tasks: GenerationTask[];
 };
 
-export function useActiveTasksStream(enabled = true): GenerationTask[] {
+type UseActiveTasksStreamResult = {
+  tasks: GenerationTask[];
+  connected: boolean;
+};
+
+export function useActiveTasksStream(enabled = true): UseActiveTasksStreamResult {
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
+  const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const enabledRef = useRef(enabled);
@@ -26,6 +32,7 @@ export function useActiveTasksStream(enabled = true): GenerationTask[] {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      setConnected(false);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = undefined;
@@ -61,6 +68,10 @@ export function useActiveTasksStream(enabled = true): GenerationTask[] {
       const eventSource = new EventSource(`/api/active-tasks?${params.toString()}`);
       eventSourceRef.current = eventSource;
 
+      eventSource.onopen = () => {
+        setConnected(true);
+      };
+
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as ActiveTasksStreamPayload;
@@ -77,12 +88,14 @@ export function useActiveTasksStream(enabled = true): GenerationTask[] {
         if (eventSourceRef.current === eventSource) {
           eventSourceRef.current = null;
         }
+        setConnected(false);
         scheduleReconnect(3000);
       };
     };
 
     if (!enabled) {
       setTasks([]);
+      setConnected(false);
       closeCurrent();
       return;
     }
@@ -94,5 +107,5 @@ export function useActiveTasksStream(enabled = true): GenerationTask[] {
     };
   }, [enabled]);
 
-  return tasks;
+  return { tasks, connected: enabled ? connected : false };
 }

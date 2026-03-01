@@ -20,6 +20,9 @@ export interface Env {
   FANQIE_BROWSER?: Fetcher;
 }
 
+const EVENTS_STREAM_POLL_INTERVAL_MS = 2000;
+const EVENTS_STREAM_KEEPALIVE_MS = 15000;
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
@@ -86,11 +89,22 @@ app.get('/api/events', async (c) => {
     start(controller) {
       const encoder = new TextEncoder();
       let closed = false;
+      let pollInterval: ReturnType<typeof setInterval> | undefined;
+      let keepaliveInterval: ReturnType<typeof setInterval> | undefined;
+      let lastSendAt = 0;
 
       const close = () => {
         if (closed) return;
         closed = true;
-        clearInterval(pollInterval);
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = undefined;
+        }
+        if (keepaliveInterval) {
+          clearInterval(keepaliveInterval);
+          keepaliveInterval = undefined;
+        }
+        eventBus.off('event', handleEvent);
         try {
           controller.close();
         } catch {
@@ -98,24 +112,55 @@ app.get('/api/events', async (c) => {
         }
       };
 
+      const sendChunk = (chunk: string) => {
+        if (closed) return;
+        lastSendAt = Date.now();
+        controller.enqueue(encoder.encode(chunk));
+      };
+
       const flushEvents = () => {
         if (closed) return;
         const { events, nextCursor } = eventBus.consumeSince(cursor, { userId });
         cursor = nextCursor;
         for (const event of events) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          sendChunk(`data: ${JSON.stringify(event)}\n\n`);
         }
       };
 
-      const pollInterval = setInterval(() => {
+      const handleEvent = (event: { id: number; userId?: string | null }) => {
+        if (closed) return;
+        if (event.userId !== userId) return;
+        if (typeof event.id !== 'number' || event.id <= cursor) return;
+        cursor = event.id;
+        try {
+          sendChunk(`data: ${JSON.stringify(event)}\n\n`);
+        } catch (err) {
+          console.warn('SSE push failed:', (err as Error).message);
+          close();
+        }
+      };
+
+      eventBus.on('event', handleEvent);
+
+      pollInterval = setInterval(() => {
         try {
           flushEvents();
-          controller.enqueue(encoder.encode(': ping\n\n'));
         } catch (err) {
           console.warn('SSE polling failed:', (err as Error).message);
           close();
         }
-      }, 5000);
+      }, EVENTS_STREAM_POLL_INTERVAL_MS);
+
+      keepaliveInterval = setInterval(() => {
+        if (closed) return;
+        if (Date.now() - lastSendAt < EVENTS_STREAM_KEEPALIVE_MS) return;
+        try {
+          sendChunk(': ping\n\n');
+        } catch (err) {
+          console.warn('SSE keepalive failed:', (err as Error).message);
+          close();
+        }
+      }, EVENTS_STREAM_KEEPALIVE_MS);
 
       c.req.raw.signal.addEventListener('abort', () => {
         close();
