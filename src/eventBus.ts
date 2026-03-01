@@ -1,9 +1,15 @@
 import { EventEmitter } from 'node:events';
 
-// Event types
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
+type EventUserId = string | null;
 
-export interface LogEvent {
+interface BaseServerEvent {
+  id: number;
+  createdAt: number;
+  userId: EventUserId;
+}
+
+export interface LogEvent extends BaseServerEvent {
   type: 'log';
   level: LogLevel;
   message: string;
@@ -11,7 +17,7 @@ export interface LogEvent {
   project?: string;
 }
 
-export interface ProgressEvent {
+export interface ProgressEvent extends BaseServerEvent {
   type: 'progress';
   projectName: string;
   current: number;
@@ -19,99 +25,115 @@ export interface ProgressEvent {
   chapterIndex: number;
   chapterTitle?: string;
   status: 'starting' | 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error';
-
   message?: string;
 }
 
-// 任务状态变更信号事件（前端收到后拉取最新任务列表）
-export interface TaskUpdateEvent {
+export interface TaskUpdateEvent extends BaseServerEvent {
   type: 'task_update';
 }
 
 export type ServerEvent = LogEvent | ProgressEvent | TaskUpdateEvent;
 
-// Global event bus
 class ServerEventBus extends EventEmitter {
-  private queue: ServerEvent[] = [];
+  private history: ServerEvent[] = [];
+  private nextId = 1;
+  private maxHistory = 500;
 
   constructor() {
     super();
-    // Set max listeners to avoid warnings
     this.setMaxListeners(20);
   }
 
-  // 推送任务状态变更信号，前端收到后会拉取最新任务列表
-  taskUpdate() {
-    const event: TaskUpdateEvent = { type: 'task_update' };
-    this.queue.push(event);
-    this.emit('event', event);
+  private pushEvent<T extends Omit<ServerEvent, 'id' | 'createdAt'>>(event: T): ServerEvent {
+    const enriched = {
+      ...event,
+      id: this.nextId++,
+      createdAt: Date.now(),
+    } as ServerEvent;
+
+    this.history.push(enriched);
+    if (this.history.length > this.maxHistory) {
+      this.history.splice(0, this.history.length - this.maxHistory);
+    }
+
+    this.emit('event', enriched);
+    return enriched;
   }
 
-  log(level: LogLevel, message: string, project?: string) {
-    const event: LogEvent = {
+  taskUpdate(userId: EventUserId = null) {
+    this.pushEvent({ type: 'task_update', userId });
+  }
+
+  log(level: LogLevel, message: string, project?: string, userId: EventUserId = null) {
+    this.pushEvent({
       type: 'log',
       level,
       message,
       timestamp: new Date().toLocaleTimeString(),
       project,
-    };
-    // Push to queue for polling consumers
-    this.queue.push(event);
-    
-    // Still emit for local listeners (if any)
-    this.emit('event', event);
-    
-    // Also log to console with appropriate prefix
+      userId,
+    });
+
     const prefix = {
-      info: '📋',
-      success: '✅',
-      warning: '⚠️',
-      error: '❌',
+      info: '[info]',
+      success: '[ok]',
+      warning: '[warn]',
+      error: '[error]',
     }[level];
     console.log(`${prefix} ${message}`);
   }
 
-  progress(data: Omit<ProgressEvent, 'type' | 'timestamp'>) {
-    const event: ProgressEvent = {
+  progress(data: Omit<ProgressEvent, 'type' | 'id' | 'createdAt' | 'userId'> & { userId?: EventUserId }) {
+    this.pushEvent({
       ...data,
       type: 'progress',
-    };
-    this.queue.push(event);
-    this.emit('event', event);
+      userId: data.userId ?? null,
+    });
   }
 
-  // Consume events for a specific client (polling)
-  // Limit to avoid sending too many at once
-  consume(limit = 100): ServerEvent[] {
-    if (this.queue.length === 0) return [];
-    
-    // In a multi-tenant/real env, this would need to filter by project/user
-    // For this local single-user app, we can just splice the whole queue
-    // But since there might be multiple SSE connections (reconnects), 
-    // destructive consume is dangerous if multiple clients are connected.
-    // However, for this app, we assume effectively one active client.
-    // To be safe, we'll just return and clear.
-    // Ideally we'd use IDs, but simplicity first for the I/O fix.
-    const events = this.queue.splice(0, limit);
-    return events;
+  consumeSince(
+    cursor = 0,
+    options: {
+      userId: string;
+      limit?: number;
+    }
+  ): { events: ServerEvent[]; nextCursor: number } {
+    const { userId, limit = 100 } = options;
+    const events: ServerEvent[] = [];
+    let nextCursor = cursor;
+
+    for (const event of this.history) {
+      if (event.id <= cursor) continue;
+      nextCursor = event.id;
+
+      if (event.userId !== userId) {
+        continue;
+      }
+
+      events.push(event);
+      if (events.length >= limit) {
+        break;
+      }
+    }
+
+    return { events, nextCursor };
   }
 
-  info(message: string, project?: string) {
-    this.log('info', message, project);
+  info(message: string, project?: string, userId: EventUserId = null) {
+    this.log('info', message, project, userId);
   }
 
-  success(message: string, project?: string) {
-    this.log('success', message, project);
+  success(message: string, project?: string, userId: EventUserId = null) {
+    this.log('success', message, project, userId);
   }
 
-  warning(message: string, project?: string) {
-    this.log('warning', message, project);
+  warning(message: string, project?: string, userId: EventUserId = null) {
+    this.log('warning', message, project, userId);
   }
 
-  error(message: string, project?: string) {
-    this.log('error', message, project);
+  error(message: string, project?: string, userId: EventUserId = null) {
+    this.log('error', message, project, userId);
   }
 }
-
 
 export const eventBus = new ServerEventBus();

@@ -965,23 +965,27 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         await cancelAllActiveTasks(targetProjectRef);
       }
 
+      stopStreamMonitor();
       setGenerationState(prev => (
         prev.projectName === targetProjectName
           ? {
             ...prev,
-            isGenerating: true,
-            taskId: prev.taskId,
-            status: 'preparing',
-            message: '正在取消任务...',
+            isGenerating: false,
+            taskId: undefined,
+            status: 'done',
+            message: '任务已取消',
           }
           : prev
       ));
+      if (selectedProject?.id) {
+        void loadProject(selectedProject.id);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setCancelingGeneration(false);
     }
-  }, [selectedProject, generationState.projectName, generationState.taskId, setGenerationState]);
+  }, [selectedProject, generationState.projectName, generationState.taskId, setGenerationState, stopStreamMonitor, loadProject]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;

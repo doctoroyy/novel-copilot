@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { generateTextWithRetry, type AIConfig } from './aiClient.js';
+import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
 import { readBible, readState, writeState, type BookState } from './memory.js';
 
 /**

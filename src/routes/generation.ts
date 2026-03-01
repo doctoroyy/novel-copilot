@@ -2,12 +2,8 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
-import { writeOneChapter } from '../generateChapter.js';
 import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
-import type { CharacterStateRegistry } from '../types/characterState.js';
-import type { PlotGraph } from '../types/plotGraph.js';
-import type { NarrativeArc, EnhancedChapterOutline } from '../types/narrative.js';
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
@@ -882,6 +878,7 @@ function normalizeRealtimeStatus(status?: string): RealtimeProgressStatus {
 }
 
 async function emitProgressEvent(data: {
+  userId: string;
   projectName: string;
   current: number;
   total: number;
@@ -895,6 +892,7 @@ async function emitProgressEvent(data: {
     }
     const { eventBus } = await eventBusModulePromise;
     eventBus.progress({
+      userId: data.userId,
       projectName: data.projectName,
       current: data.current,
       total: data.total,
@@ -934,6 +932,7 @@ async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<Ta
 async function handleTaskCancellationIfNeeded(params: {
   db: D1Database;
   taskId: number;
+  userId: string;
   projectName: string;
   total: number;
   chapterIndex: number;
@@ -951,6 +950,7 @@ async function handleTaskCancellationIfNeeded(params: {
 
   await completeTask(params.db, params.taskId, false, '任务已取消');
   await emitProgressEvent({
+    userId: params.userId,
     projectName: params.projectName,
     current: params.current,
     total: params.total,
@@ -1235,11 +1235,17 @@ export async function runChapterGenerationTaskInBackground(params: {
           p.chapter_prompt_custom,
           s.*,
           o.outline_json,
-          c.characters_json
+          c.characters_json,
+          cs.registry_json as character_states_json,
+          pg.graph_json as plot_graph_json,
+          nc.narrative_arc_json
         FROM projects p
         JOIN states s ON p.id = s.project_id
         LEFT JOIN outlines o ON p.id = o.project_id
         LEFT JOIN characters c ON p.id = c.project_id
+        LEFT JOIN character_states cs ON p.id = cs.project_id
+        LEFT JOIN plot_graphs pg ON p.id = pg.project_id
+        LEFT JOIN narrative_config nc ON p.id = nc.project_id
         WHERE p.id = ? AND p.user_id = ?
       `).bind(task.projectId, userId).first() as any;
 
@@ -1255,6 +1261,7 @@ export async function runChapterGenerationTaskInBackground(params: {
     const runtime = await handleTaskCancellationIfNeeded({
       db: env.DB,
       taskId,
+      userId,
       projectName: project.name,
       total: task.targetCount,
       chapterIndex: 0, // Placeholder
@@ -1268,6 +1275,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       // Task Complete!
       await completeTask(env.DB, taskId, true, undefined);
       await emitProgressEvent({
+        userId,
         projectName: project.name,
         current: completedCount,
         total: task.targetCount,
@@ -1285,6 +1293,7 @@ export async function runChapterGenerationTaskInBackground(params: {
     if (chapterIndex > project.total_chapters) {
       await completeTask(env.DB, taskId, true, '已达到项目总章节数');
       await emitProgressEvent({
+        userId,
         projectName: project.name,
         current: completedCount,
         total: task.targetCount,
@@ -1297,6 +1306,7 @@ export async function runChapterGenerationTaskInBackground(params: {
 
     await updateTaskMessage(env.DB, taskId, `正在生成第 ${chapterIndex} 章...`, chapterIndex);
     await emitProgressEvent({
+      userId,
       projectName: project.name,
       current: completedCount,
       total: task.targetCount,
@@ -1314,6 +1324,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
         await completeTask(env.DB, taskId, false, (creditError as Error).message);
         void emitProgressEvent({
+          userId,
           projectName: project.name,
           current: completedCount,
           total: task.targetCount,
@@ -1367,7 +1378,18 @@ export async function runChapterGenerationTaskInBackground(params: {
       }
 
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-      let result: Awaited<ReturnType<typeof writeOneChapter>> | undefined;
+      const characterStates = project.character_states_json
+        ? JSON.parse(project.character_states_json)
+        : (characters ? initializeRegistryFromGraph(characters) : undefined);
+      const plotGraph = project.plot_graph_json
+        ? JSON.parse(project.plot_graph_json)
+        : createEmptyPlotGraph();
+      const narrativeArc = project.narrative_arc_json
+        ? JSON.parse(project.narrative_arc_json)
+        : (outline ? generateNarrativeArc(outline.volumes || [], project.total_chapters) : undefined);
+      const enableSelfReview = chapterIndex > task.startChapter || Boolean(project.character_states_json || project.plot_graph_json);
+
+      let result: Awaited<ReturnType<typeof writeEnhancedChapter>> | undefined;
       let lastChapterError: unknown;
 
       try {
@@ -1375,6 +1397,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         const retryControl = await handleTaskCancellationIfNeeded({
           db: env.DB,
           taskId,
+          userId,
           projectName: project.name,
           total: task.targetCount,
           chapterIndex,
@@ -1384,6 +1407,7 @@ export async function runChapterGenerationTaskInBackground(params: {
 
         await updateTaskMessage(env.DB, taskId, `正在AI生成（章节初始化）...`, chapterIndex);
         await emitProgressEvent({
+          userId,
           projectName: project.name,
           current: completedCount,
           total: task.targetCount,
@@ -1392,9 +1416,10 @@ export async function runChapterGenerationTaskInBackground(params: {
           message: `正在AI生成（章节初始化）...`,
         });
 
-        result = await writeOneChapter({
+        result = await writeEnhancedChapter({
           aiConfig,
           fallbackConfigs,
+          summaryAiConfig: effectiveSummaryAiConfig,
           bible: project.bible,
           rollingSummary: project.rolling_summary || '',
           openLoops: JSON.parse(project.open_loops || '[]'),
@@ -1405,13 +1430,21 @@ export async function runChapterGenerationTaskInBackground(params: {
           chapterGoalHint,
           chapterTitle: outlineTitle,
           characters,
+          characterStates,
+          plotGraph,
+          narrativeArc,
           chapterPromptProfile: project.chapter_prompt_profile,
           chapterPromptCustom: project.chapter_prompt_custom,
-          summaryAiConfig: effectiveSummaryAiConfig,
+          enableContextOptimization: true,
+          enablePlanning: true,
+          enableSelfReview,
+          enableFullQC: false,
+          enableAutoRepair: false,
           skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
           onProgress: (message, status) => {
             updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
             void emitProgressEvent({
+              userId,
               projectName: project.name,
               current: completedCount,
               total: task.targetCount,
@@ -1429,6 +1462,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         const retryMessage = `第 ${chapterIndex} 章生成抛错：${reason}。将由队列接管重试...`;
         await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
         await emitProgressEvent({
+          userId,
           projectName: project.name,
           current: completedCount,
           total: task.targetCount,
@@ -1471,6 +1505,54 @@ export async function runChapterGenerationTaskInBackground(params: {
         project.id
       ).run();
 
+      if (result.updatedCharacterStates) {
+        await env.DB.prepare(`
+          INSERT INTO character_states (project_id, registry_json, last_updated_chapter)
+          VALUES (?, ?, ?)
+          ON CONFLICT(project_id) DO UPDATE SET
+            registry_json = excluded.registry_json,
+            last_updated_chapter = excluded.last_updated_chapter,
+            updated_at = (unixepoch() * 1000)
+        `).bind(
+          project.id,
+          JSON.stringify(result.updatedCharacterStates),
+          chapterIndex
+        ).run();
+      }
+
+      if (result.updatedPlotGraph) {
+        await env.DB.prepare(`
+          INSERT INTO plot_graphs (project_id, graph_json, last_updated_chapter)
+          VALUES (?, ?, ?)
+          ON CONFLICT(project_id) DO UPDATE SET
+            graph_json = excluded.graph_json,
+            last_updated_chapter = excluded.last_updated_chapter,
+            updated_at = (unixepoch() * 1000)
+        `).bind(
+          project.id,
+          JSON.stringify(result.updatedPlotGraph),
+          chapterIndex
+        ).run();
+      }
+
+      if (result.qcResult) {
+        await env.DB.prepare(`
+          INSERT INTO chapter_qc (project_id, chapter_index, qc_json, passed, score)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(project_id, chapter_index) DO UPDATE SET
+            qc_json = excluded.qc_json,
+            passed = excluded.passed,
+            score = excluded.score,
+            created_at = (unixepoch() * 1000)
+        `).bind(
+          project.id,
+          chapterIndex,
+          JSON.stringify(result.qcResult),
+          result.qcResult.passed ? 1 : 0,
+          result.qcResult.score
+        ).run();
+      }
+
       await appendSummaryMemorySnapshot({
         db: env.DB,
         projectId: project.id,
@@ -1486,6 +1568,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       await updateTaskProgress(env.DB, taskId, chapterIndex, false);
 
       await emitProgressEvent({
+        userId,
         projectName: project.name,
         current: completedCount + 1,
         total: task.targetCount,
@@ -1499,6 +1582,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       const chapterErrorMessage = (chapterError as Error).message || '未知错误';
       await updateTaskProgress(env.DB, taskId, chapterIndex, true, chapterErrorMessage);
       await emitProgressEvent({
+        userId,
         projectName: project.name,
         current: completedCount,
         total: task.targetCount,
@@ -1521,6 +1605,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       // Done
       await completeTask(env.DB, taskId, true, undefined);
       await emitProgressEvent({
+        userId,
         projectName: project.name,
         current: newCompletedCount,
         total: task.targetCount,

@@ -39,6 +39,7 @@ interface UseServerEventsOptions {
 export function useServerEvents({ onLog, onProgress, onTaskUpdate, enabled = true }: UseServerEventsOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastEventIdRef = useRef(0);
   const enabledRef = useRef(enabled);
   const onLogRef = useRef(onLog);
   const onProgressRef = useRef(onProgress);
@@ -65,19 +66,30 @@ export function useServerEvents({ onLog, onProgress, onTaskUpdate, enabled = tru
 
   const connect = useCallback(() => {
     if (!enabledRef.current) return;
-    
-    // Close existing connection
+
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = undefined;
     }
 
-    // EventSource doesn't support custom headers, so pass token via query param
     const token = getToken();
-    const url = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
+    if (!token) {
+      setConnected(false);
+      reconnectTimeoutRef.current = setTimeout(() => {
+        connectRef.current();
+      }, 2000);
+      return;
+    }
+
+    const params = new URLSearchParams({
+      token,
+      cursor: String(lastEventIdRef.current),
+    });
+    const url = `/api/events?${params.toString()}`;
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
@@ -88,8 +100,11 @@ export function useServerEvents({ onLog, onProgress, onTaskUpdate, enabled = tru
 
     eventSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data) as ServerEvent;
-        
+        const data = JSON.parse(event.data) as ServerEvent & { id?: number };
+        if (typeof data.id === 'number' && Number.isFinite(data.id)) {
+          lastEventIdRef.current = Math.max(lastEventIdRef.current, data.id);
+        }
+
         if (data.type === 'log' && onLogRef.current) {
           onLogRef.current(data);
         } else if (data.type === 'progress' && onProgressRef.current) {
@@ -106,8 +121,8 @@ export function useServerEvents({ onLog, onProgress, onTaskUpdate, enabled = tru
       console.log('SSE connection lost, reconnecting...');
       setConnected(false);
       eventSource.close();
+      eventSourceRef.current = null;
       if (!enabledRef.current) return;
-      // Reconnect after 3 seconds
       reconnectTimeoutRef.current = setTimeout(() => {
         connectRef.current();
       }, 3000);
