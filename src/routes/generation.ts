@@ -2397,6 +2397,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
         }
       }, 5000);
 
+      let taskId: number | undefined;
       try {
         // 获取项目
         const project = await c.env.DB.prepare(`
@@ -2437,13 +2438,27 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
         const existingOutline = JSON.parse((outlineRecord as any).outline_json);
         const existingVolumes = existingOutline.volumes || [];
 
+        // 注册到任务中心
+        const bgResult = await createBackgroundTask(
+          c.env.DB,
+          projectId,
+          userId!,
+          'outline',
+          newVolumeCount,
+          0,
+          `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷...`
+        );
+        taskId = bgResult.taskId;
+
         sendEvent('start', {
           totalVolumes: newVolumeCount,
           existingVolumeCount: existingVolumes.length,
           message: `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷...`,
+          taskId,
         });
 
         // 生成新卷骨架
+        await updateTaskMessage(c.env.DB, taskId!, '正在生成新卷骨架...', 0);
         sendEvent('progress', {
           current: 0,
           total: newVolumeCount,
@@ -2466,6 +2481,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
 
         const newVolumeSkeletons = newVolumesResult.volumes || [];
         if (newVolumeSkeletons.length === 0) {
+          await completeTask(c.env.DB, taskId!, false, 'AI 未能生成新卷骨架');
           sendEvent('error', { error: 'AI 未能生成新卷骨架' });
           clearInterval(heartbeatInterval);
           controller.close();
@@ -2478,12 +2494,14 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           const vol = newVolumeSkeletons[i];
           const globalVolIndex = existingVolumes.length + i;
 
+          const progressMsg = `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (${i + 1}/${newVolumeSkeletons.length})`;
+          await updateTaskMessage(c.env.DB, taskId!, progressMsg, i + 1);
           sendEvent('progress', {
             current: i + 1,
             total: newVolumeSkeletons.length,
             volumeIndex: globalVolIndex,
             volumeTitle: vol.title,
-            message: `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (${i + 1}/${newVolumeSkeletons.length})`,
+            message: progressMsg,
           });
 
           // 构建上一卷摘要
@@ -2536,9 +2554,12 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           UPDATE states SET total_chapters = ? WHERE project_id = ?
         `).bind(newTotalChapters, projectId).run();
 
+        const doneMsg = `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`;
+        await updateTaskMessage(c.env.DB, taskId!, doneMsg, newVolumeCount);
+        await completeTask(c.env.DB, taskId!, true, undefined);
         sendEvent('done', {
           success: true,
-          message: `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`,
+          message: doneMsg,
           outline: finalOutline,
         });
 
@@ -2546,6 +2567,10 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
         controller.close();
       } catch (error) {
         console.error('Add volumes error:', error);
+        // taskId 可能在 catch 之前还没创建，需要安全检查
+        if (typeof taskId === 'number') {
+          await completeTask(c.env.DB, taskId, false, (error as Error).message).catch(console.warn);
+        }
         sendEvent('error', { error: (error as Error).message });
         clearInterval(heartbeatInterval);
         controller.close();
