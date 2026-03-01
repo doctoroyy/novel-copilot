@@ -405,6 +405,22 @@ export function buildPlotContext(
     parts.push(causalChains);
   }
 
+  // 5. 关键历史里程碑（解决长距离遗忘）
+  const milestones = graph.nodes
+    .filter((n) => n.importance >= 8 && chapterIndex - n.introducedAt >= 15)
+    .sort((a, b) => {
+      if (b.importance !== a.importance) return b.importance - a.importance;
+      return a.introducedAt - b.introducedAt;
+    })
+    .slice(0, 5);
+
+  if (milestones.length > 0) {
+    parts.push('【关键历史里程碑】');
+    milestones.forEach((m, i) => {
+      parts.push(`  ${i + 1}. 第${m.introducedAt}章: ${m.content}`);
+    });
+  }
+
   if (parts.length === 0) {
     return '';
   }
