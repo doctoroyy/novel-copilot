@@ -20,8 +20,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply novel-copilot-db --remote",
     "typecheck": "tsc --noEmit",
     "batch": "tsx src/runBatch.ts",
-    "server": "wrangler dev --local",
-    "server:legacy": "tsx src/server.ts"
+    "server": "wrangler dev --local"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
