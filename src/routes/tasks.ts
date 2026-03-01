@@ -6,6 +6,8 @@ export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string
 
 export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
 type ActiveTaskStatus = 'running' | 'paused' | 'completed' | 'failed';
+const TASK_STREAM_POLL_INTERVAL_MS = 1500;
+const TASK_STREAM_KEEPALIVE_MS = 15000;
 
 function toTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -54,21 +56,85 @@ function parseJsonNumberArray(value: unknown): number[] {
   }
 }
 
-async function emitTaskUpdateForTask(db: D1Database, taskId: number): Promise<void> {
-  try {
-    const row = await db.prepare(`
-      SELECT user_id
-      FROM generation_tasks
-      WHERE id = ?
-      LIMIT 1
-    `).bind(taskId).first() as { user_id: string | null } | null;
+function isTaskStreamRequest(c: { req: { query: (key: string) => string | undefined; header: (name: string) => string | undefined } }): boolean {
+  return c.req.query('stream') === '1' || (c.req.header('Accept') || '').includes('text/event-stream');
+}
 
-    if (row?.user_id) {
-      eventBus.taskUpdate(row.user_id);
-    }
-  } catch (error) {
-    console.warn('Failed to emit scoped task update:', (error as Error).message);
-  }
+function createTaskStreamResponse<T>(
+  c: { req: { raw: Request } },
+  loadSnapshot: () => Promise<T>,
+  buildPayload: (snapshot: T) => unknown
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      let closed = false;
+      let inFlight = false;
+      let lastPayload = '';
+      let lastKeepaliveAt = 0;
+      let pollInterval: ReturnType<typeof setInterval> | undefined;
+
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = undefined;
+        }
+        try {
+          controller.close();
+        } catch {
+          // no-op
+        }
+      };
+
+      const flushSnapshot = async () => {
+        if (closed || inFlight) return;
+        inFlight = true;
+
+        try {
+          const snapshot = await loadSnapshot();
+          if (closed) return;
+
+          const payload = JSON.stringify(buildPayload(snapshot));
+          if (payload !== lastPayload) {
+            lastPayload = payload;
+            lastKeepaliveAt = Date.now();
+            controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+          } else if (Date.now() - lastKeepaliveAt >= TASK_STREAM_KEEPALIVE_MS) {
+            lastKeepaliveAt = Date.now();
+            controller.enqueue(encoder.encode(': ping\n\n'));
+          }
+        } catch (error) {
+          console.warn('Task stream flush failed:', (error as Error).message);
+          close();
+        } finally {
+          inFlight = false;
+        }
+      };
+
+      pollInterval = setInterval(() => {
+        void flushSnapshot();
+      }, TASK_STREAM_POLL_INTERVAL_MS);
+
+      c.req.raw.signal.addEventListener('abort', () => {
+        close();
+      });
+
+      void flushSnapshot();
+    },
+    cancel() {
+      // Cleanup happens through abort/close.
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 }
 
 function mapGenerationTaskRow(task: any): GenerationTask {
@@ -143,53 +209,85 @@ async function getProjectIdByRef(
   return project?.id || null;
 }
 
+async function getActiveTasksForUser(db: D1Database, userId: string): Promise<GenerationTask[]> {
+  const { results: generationTasks } = await db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM generation_tasks t
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.user_id = ? AND t.status = 'running'
+    AND t.cancel_requested = 0
+    ORDER BY t.created_at DESC
+  `).bind(userId).all();
+
+  const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
+
+  // Template jobs are optional for old DBs that haven't run migration 0021 yet.
+  try {
+    const { results: templateJobs } = await db.prepare(`
+      SELECT
+        id,
+        snapshot_date,
+        requested_by_user_id,
+        max_templates,
+        status,
+        message,
+        error_message,
+        result_template_count,
+        created_at,
+        updated_at
+      FROM ai_imagine_template_jobs
+      WHERE requested_by_user_id = ?
+        AND status IN ('queued', 'running')
+      ORDER BY created_at DESC
+      LIMIT 20
+    `).bind(userId).all();
+
+    mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
+  } catch (error) {
+    const message = (error as Error).message || '';
+    if (!message.includes('no such table: ai_imagine_template_jobs')) {
+      console.warn('Failed to load imagine template jobs for active tasks:', message);
+    }
+  }
+
+  mergedTasks.sort((a, b) => b.createdAt - a.createdAt);
+  return mergedTasks;
+}
+
+async function getActiveChapterTaskForProject(
+  db: D1Database,
+  projectId: string,
+  userId: string
+): Promise<GenerationTask | null> {
+  const task = await db.prepare(`
+    SELECT t.*, p.name as project_name
+    FROM generation_tasks t
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.project_id = ? AND t.user_id = ? AND t.status = 'running'
+    AND t.task_type = 'chapters'
+    AND t.cancel_requested = 0
+    ORDER BY t.created_at DESC
+    LIMIT 1
+  `).bind(projectId, userId).first() as any;
+
+  return task ? mapGenerationTaskRow(task) : null;
+}
+
 // Get all active tasks for the current user (global endpoint)
 tasksRoutes.get('/active-tasks', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const { results: generationTasks } = await c.env.DB.prepare(`
-      SELECT t.*, p.name as project_name
-      FROM generation_tasks t
-      JOIN projects p ON t.project_id = p.id
-      WHERE t.user_id = ? AND t.status = 'running'
-      AND t.cancel_requested = 0
-      ORDER BY t.created_at DESC
-    `).bind(userId).all();
-
-    const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
-
-    // Template jobs are optional for old DBs that haven't run migration 0021 yet.
-    try {
-      const { results: templateJobs } = await c.env.DB.prepare(`
-        SELECT
-          id,
-          snapshot_date,
-          requested_by_user_id,
-          max_templates,
-          status,
-          message,
-          error_message,
-          result_template_count,
-          created_at,
-          updated_at
-        FROM ai_imagine_template_jobs
-        WHERE requested_by_user_id = ?
-          AND status IN ('queued', 'running')
-        ORDER BY created_at DESC
-        LIMIT 20
-      `).bind(userId).all();
-
-      mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
-    } catch (error) {
-      const message = (error as Error).message || '';
-      if (!message.includes('no such table: ai_imagine_template_jobs')) {
-        console.warn('Failed to load imagine template jobs for active tasks:', message);
-      }
+    if (isTaskStreamRequest(c)) {
+      return createTaskStreamResponse(
+        c,
+        () => getActiveTasksForUser(c.env.DB, userId),
+        (tasks) => ({ type: 'active_tasks', tasks })
+      );
     }
 
-    mergedTasks.sort((a, b) => b.createdAt - a.createdAt);
-    return c.json({ success: true, tasks: mergedTasks });
+    const tasks = await getActiveTasksForUser(c.env.DB, userId);
+    return c.json({ success: true, tasks });
   } catch (error) {
     console.error('Active tasks error:', error);
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -295,7 +393,6 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND user_id = ?
       `).bind(taskId, userId).run();
-      eventBus.taskUpdate(userId);
       
       if (task.project_name) {
         eventBus.progress({
@@ -377,45 +474,16 @@ tasksRoutes.get('/projects/:name/active-task', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    // Get the most recent running or paused task
-    const task = await c.env.DB.prepare(`
-      SELECT t.*, p.name as project_name
-      FROM generation_tasks t
-      JOIN projects p ON t.project_id = p.id
-      WHERE t.project_id = ? AND t.user_id = ? AND t.status = 'running'
-      AND t.task_type = 'chapters'
-      AND t.cancel_requested = 0
-      ORDER BY t.created_at DESC
-      LIMIT 1
-    `).bind(projectId, userId).first() as any;
-
-    if (!task) {
-      return c.json({ success: true, task: null });
+    if (isTaskStreamRequest(c)) {
+      return createTaskStreamResponse(
+        c,
+        () => getActiveChapterTaskForProject(c.env.DB, projectId, userId),
+        (task) => ({ type: 'active_task', task })
+      );
     }
 
-    const createdAtMs = toTimestampMs(task.created_at);
-    const updatedAtMs = toTimestampMs(task.updated_at);
-    const result: GenerationTask = {
-      id: task.id,
-      taskType: (task.task_type || 'chapters') as TaskType,
-      projectId: task.project_id,
-      projectName: task.project_name,
-      userId: task.user_id,
-      targetCount: task.target_count,
-      startChapter: task.start_chapter,
-      completedChapters: JSON.parse(task.completed_chapters || '[]'),
-      failedChapters: JSON.parse(task.failed_chapters || '[]'),
-      currentProgress: task.current_progress || 0,
-      currentMessage: task.current_message || null,
-      cancelRequested: Boolean(task.cancel_requested),
-      status: task.status,
-      errorMessage: task.error_message,
-      createdAt: createdAtMs,
-      updatedAt: updatedAtMs,
-      updatedAtMs,
-    };
-
-    return c.json({ success: true, task: result });
+    const task = await getActiveChapterTaskForProject(c.env.DB, projectId, userId);
+    return c.json({ success: true, task });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
@@ -438,7 +506,6 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
       SET status = 'paused', updated_at = (unixepoch() * 1000)
       WHERE id = ? AND project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
     `).bind(taskId, projectId, userId).run();
-    eventBus.taskUpdate(userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -472,7 +539,6 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
-      eventBus.taskUpdate(userId);
       const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
       if (project) {
         eventBus.progress({
@@ -494,7 +560,6 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
-      eventBus.taskUpdate(userId);
       const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
       if (project) {
         eventBus.progress({
@@ -531,7 +596,6 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
     await c.env.DB.prepare(`
       DELETE FROM generation_tasks WHERE id = ? AND project_id = ? AND user_id = ?
     `).bind(taskId, projectId, userId).run();
-    eventBus.taskUpdate(userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -561,7 +625,6 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
       SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
     `).bind(projectId, userId).run();
-    eventBus.taskUpdate(userId);
     
     const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
     if (project) {
@@ -597,7 +660,6 @@ tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
       DELETE FROM generation_tasks 
       WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused')
     `).bind(projectId, userId).run();
-    eventBus.taskUpdate(userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -664,7 +726,6 @@ export async function createGenerationTask(
   `).bind(projectId, userId, targetCount, startChapter).run();
 
   const newTaskId = result.meta.last_row_id as number;
-  eventBus.taskUpdate(userId);
   return newTaskId;
 }
 
@@ -686,7 +747,6 @@ export async function createBackgroundTask(
   `).bind(projectId, userId, taskType).first() as { id: number } | null;
 
   if (existing?.id) {
-    eventBus.taskUpdate(userId);
     return { taskId: existing.id, created: false };
   }
 
@@ -704,7 +764,6 @@ export async function createBackgroundTask(
   `).bind(projectId, userId, targetCount, startChapter, taskType, initialMessage).run();
 
   const newTaskId = result.meta.last_row_id as number;
-  eventBus.taskUpdate(userId);
   return { taskId: newTaskId, created: true };
 }
 
@@ -740,7 +799,6 @@ export async function updateTaskProgress(
       WHERE id = ?
     `).bind(JSON.stringify(normalizedCompletedChapters), completedChapter, message || `第 ${completedChapter} 章完成`, taskId).run();
   }
-  await emitTaskUpdateForTask(db, taskId);
 }
 
 export async function completeTask(
@@ -759,7 +817,6 @@ export async function completeTask(
     success ? '任务完成' : (errorMessage || '任务失败'),
     taskId
   ).run();
-  await emitTaskUpdateForTask(db, taskId);
 }
 
 // Check if there is a running task for a project (optionally scoped to a user)
@@ -824,7 +881,6 @@ export async function updateTaskMessage(
       WHERE id = ?
     `).bind(message, taskId).run();
   }
-  await emitTaskUpdateForTask(db, taskId);
 }
 
 export async function getTaskById(

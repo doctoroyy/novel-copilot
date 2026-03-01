@@ -89,12 +89,22 @@ export async function verifyToken(token: string): Promise<TokenPayload | null> {
 export function authMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authHeader = c.req.header('Authorization');
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+
+    const acceptHeader = c.req.header('Accept') || '';
+    const isSseRequest = c.req.method === 'GET'
+      && (c.req.query('stream') === '1' || acceptHeader.includes('text/event-stream'));
+
+    let token: string | null = null;
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (isSseRequest) {
+      token = c.req.query('token') || null;
+    }
+
+    if (!token) {
       return c.json({ success: false, error: '未登录，请先登录' }, 401);
     }
-    
-    const token = authHeader.substring(7);
+
     const payload = await verifyToken(token);
     
     if (!payload) {

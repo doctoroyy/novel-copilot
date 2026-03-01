@@ -23,10 +23,16 @@ import {
   type ProjectDetail,
   type GenerationTask,
 } from '@/lib/api';
+import { getToken } from '@/lib/auth';
 import { addTaskToHistory } from '@/lib/taskHistory';
 
 // Constants
 const MOBILE_BREAKPOINT = 1024;
+
+type ProjectActiveTaskStreamPayload = {
+  type: 'active_task';
+  task: GenerationTask | null;
+};
 
 interface ProjectContextType {
   // Projects list
@@ -408,60 +414,141 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     loadProjects();
   }, [loadProjects]);
 
-  // Bootstrap generation state once per selected project.
-  // After bootstrap, attach generate-stream monitor for durable progress sync.
+  // Keep the selected project's task state in sync via a dedicated SSE snapshot stream.
+  // generate-stream is still the detailed progress channel once a task is detected.
   useEffect(() => {
     if (!selectedProject?.id || !selectedProject?.name) return;
     let disposed = false;
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | undefined;
+    let connect = () => {};
 
-    const bootstrapActiveTask = async () => {
-      try {
-        const task = await getActiveTask(selectedProject.id);
-        if (disposed) return;
+    const closeEventSource = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = undefined;
+      }
+    };
 
-        if (!task || task.cancelRequested || task.status !== 'running') {
-          stopStreamMonitor();
-          setGenerationState((prev) => {
-            if (!prev.isGenerating || prev.projectName !== selectedProject.name) return prev;
-            return {
-              ...prev,
-              isGenerating: false,
-              taskId: undefined,
-              status: prev.status === 'error' ? 'error' : 'done',
-              message: prev.message || '任务已结束',
-            };
-          });
-          return;
+    const scheduleReconnect = (delayMs: number) => {
+      if (disposed) return;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      reconnectTimeout = setTimeout(() => {
+        connect();
+      }, delayMs);
+    };
+
+    const applyTaskSnapshot = (task: GenerationTask | null) => {
+      if (disposed) return;
+
+      if (!task || task.cancelRequested || task.status !== 'running') {
+        stopStreamMonitor();
+        setGenerationState((prev) => {
+          if (!prev.isGenerating || prev.projectName !== selectedProject.name) return prev;
+          return {
+            ...prev,
+            isGenerating: false,
+            taskId: undefined,
+            status: prev.status === 'error' ? 'error' : 'done',
+            message: prev.message || '任务已结束',
+          };
+        });
+        return;
+      }
+
+      if (typeof task.id !== 'number') {
+        stopStreamMonitor();
+        return;
+      }
+
+      const taskId = task.id;
+      const completedCount = task.completedChapters.length;
+      const currentChapter = task.currentProgress || task.startChapter;
+
+      setGenerationState((prev) => {
+        const sameTask = prev.isGenerating
+          && prev.projectName === selectedProject.name
+          && prev.taskId === taskId;
+
+        if (sameTask) {
+          return {
+            ...prev,
+            current: Math.max(prev.current, completedCount),
+            total: task.targetCount || prev.total,
+            currentChapter: Math.max(prev.currentChapter || 0, currentChapter),
+            message: task.currentMessage || prev.message,
+            projectName: task.projectName || selectedProject.name,
+            startTime: prev.startTime || task.createdAt || task.updatedAtMs || Date.now(),
+          };
         }
-        if (typeof task.id !== 'number') {
-          stopStreamMonitor();
-          return;
-        }
 
-        const completedCount = task.completedChapters.length;
-        const currentChapter = task.currentProgress || task.startChapter;
-
-        setGenerationState({
+        return {
           isGenerating: true,
-          taskId: task.id,
+          taskId,
           current: completedCount,
           total: task.targetCount,
           currentChapter,
           status: 'generating',
           message: task.currentMessage || `正在生成第 ${currentChapter} 章...`,
-          projectName: task.projectName,
+          projectName: task.projectName || selectedProject.name,
           startTime: task.createdAt || task.updatedAtMs || Date.now(),
-        });
-        startStreamMonitor(selectedProject, task);
-      } catch (err) {
-        console.warn('Failed to bootstrap active task:', err);
-      }
+        };
+      });
+
+      startStreamMonitor(selectedProject, task);
     };
 
-    void bootstrapActiveTask();
+    connect = () => {
+      if (disposed) return;
+      closeEventSource();
+
+      const token = getToken();
+      if (!token) {
+        applyTaskSnapshot(null);
+        scheduleReconnect(2000);
+        return;
+      }
+
+      const params = new URLSearchParams({
+        stream: '1',
+        token,
+      });
+      const nextEventSource = new EventSource(
+        `/api/projects/${encodeURIComponent(selectedProject.id)}/active-task?${params.toString()}`
+      );
+      eventSource = nextEventSource;
+
+      nextEventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as ProjectActiveTaskStreamPayload;
+          if (payload.type === 'active_task') {
+            applyTaskSnapshot(payload.task);
+          }
+        } catch (error) {
+          console.error('Failed to parse project active-task stream payload:', error);
+        }
+      };
+
+      nextEventSource.onerror = () => {
+        if (eventSource === nextEventSource) {
+          nextEventSource.close();
+          eventSource = null;
+        }
+        scheduleReconnect(3000);
+      };
+    };
+
+    connect();
 
     return () => {
       disposed = true;
+      closeEventSource();
       stopStreamMonitor();
     };
   }, [setGenerationState, selectedProject?.id, selectedProject?.name, startStreamMonitor, stopStreamMonitor]);
