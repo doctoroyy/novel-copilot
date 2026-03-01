@@ -736,8 +736,7 @@ export async function generateChaptersWithProgress(
 
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        // User cancelled, don't retry
-        callbacks.onError?.('任务已取消');
+        // Client-side stream handoff/unmount should not be treated as task cancellation.
         return results;
       }
 

@@ -156,6 +156,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [cancelingGeneration, setCancelingGeneration] = useState(false);
   const streamMonitorAbortRef = useRef<AbortController | null>(null);
   const streamMonitorTaskIdRef = useRef<number | null>(null);
+  const foregroundGenerationAbortRef = useRef<AbortController | null>(null);
+  const foregroundGenerationProjectIdRef = useRef<string | null>(null);
+  const foregroundGenerationTaskIdRef = useRef<number | null>(null);
 
   // SSE events
   const { connected, logs, lastProgress: generationProgress, clearLogs, enabled: eventsEnabled, toggleEnabled: toggleEvents } = useServerEventsContext();
@@ -252,11 +255,24 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     streamMonitorTaskIdRef.current = null;
   }, []);
 
+  const clearForegroundGeneration = useCallback((abort = false) => {
+    if (abort && foregroundGenerationAbortRef.current) {
+      foregroundGenerationAbortRef.current.abort();
+    }
+    foregroundGenerationAbortRef.current = null;
+    foregroundGenerationProjectIdRef.current = null;
+    foregroundGenerationTaskIdRef.current = null;
+  }, []);
+
   const startStreamMonitor = useCallback((project: ProjectDetail, task: GenerationTask) => {
     if (task.status !== 'running') return;
     if (typeof task.id !== 'number') return;
     const taskId = task.id;
     if (streamMonitorTaskIdRef.current === taskId) return;
+
+    const foregroundOwnsTask = foregroundGenerationProjectIdRef.current === project.id
+      && (foregroundGenerationTaskIdRef.current === null || foregroundGenerationTaskIdRef.current === taskId);
+    if (foregroundOwnsTask) return;
 
     stopStreamMonitor();
     const abortController = new AbortController();
@@ -407,7 +423,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }));
       setError((err as Error).message);
     });
-  }, [completeGeneration, loadProject, setGenerationState, stopStreamMonitor]);
+  }, [clearForegroundGeneration, completeGeneration, loadProject, setGenerationState, stopStreamMonitor]);
 
   // Initial load
   useEffect(() => {
@@ -549,9 +565,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     return () => {
       disposed = true;
       closeEventSource();
+      if (foregroundGenerationProjectIdRef.current === selectedProject.id) {
+        clearForegroundGeneration(true);
+      }
       stopStreamMonitor();
     };
-  }, [setGenerationState, selectedProject?.id, selectedProject?.name, startStreamMonitor, stopStreamMonitor]);
+  }, [clearForegroundGeneration, setGenerationState, selectedProject?.id, selectedProject?.name, startStreamMonitor, stopStreamMonitor]);
 
   // Load project when URL changes
   useEffect(() => {
@@ -896,8 +915,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
     setLoading(true);
     stopStreamMonitor();
+    clearForegroundGeneration(true);
     startGeneration(selectedProject.name, chapterCount);
-    streamMonitorAbortRef.current = new AbortController();
+    const foregroundAbortController = new AbortController();
+    foregroundGenerationAbortRef.current = foregroundAbortController;
+    foregroundGenerationProjectIdRef.current = selectedProject.id;
+    foregroundGenerationTaskIdRef.current = null;
 
     try {
       await generateChaptersWithProgress(
@@ -909,18 +932,25 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
           onTaskCreated: (event: any) => {
             if (typeof event.taskId !== 'number') return;
+            foregroundGenerationTaskIdRef.current = event.taskId;
             setGenerationState(prev => ({ ...prev, taskId: event.taskId }));
           },
           onTaskResumed: (event: any) => {
+            if (typeof event.taskId === 'number') {
+              foregroundGenerationTaskIdRef.current = event.taskId;
+            }
             const completed = event.completedChapters?.length || 0;
             setGenerationState(prev => ({
               ...prev,
+              isGenerating: true,
               taskId: typeof event.taskId === 'number' ? event.taskId : prev.taskId,
               current: completed,
               total: event.targetCount || prev.total,
               currentChapter: event.currentProgress ?? prev.currentChapter,
               status: 'generating',
               message: event.currentMessage || prev.message,
+              projectName: selectedProject.name,
+              startTime: prev.startTime || Date.now(),
             }));
           },
           onProgress: (event: any) => {
@@ -961,6 +991,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             console.error(`Chapter ${chapterIndex} error:`, error);
           },
           onDone: (results: any, failedChapters: any) => {
+            clearForegroundGeneration();
             completeGeneration();
             addTaskToHistory({
               type: 'chapters',
@@ -972,6 +1003,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             });
           },
           onError: (error: string) => {
+            clearForegroundGeneration();
             const cancelled = error.includes('取消');
             if (cancelled) {
               setGenerationState(prev => ({
@@ -1010,11 +1042,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           },
         },
         undefined,
-        streamMonitorAbortRef.current.signal,
+        foregroundAbortController.signal,
         { index, regenerate, minChapterWords: parsedMinChapterWords }
       );
       await loadProject(selectedProject.id);
     } catch (err) {
+      clearForegroundGeneration();
       setGenerationState(prev => ({
         ...prev,
         isGenerating: false,
@@ -1024,9 +1057,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }));
       setError((err as Error).message);
     } finally {
+      clearForegroundGeneration();
       setLoading(false);
     }
-  }, [selectedProject, isConfigured, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName, stopStreamMonitor]);
+  }, [selectedProject, isConfigured, clearForegroundGeneration, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName, stopStreamMonitor]);
 
   const handleCancelGeneration = useCallback(async (projectNameOverride?: string) => {
     const targetProjectName = projectNameOverride || selectedProject?.name || generationState.projectName;
@@ -1053,6 +1087,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }
 
       stopStreamMonitor();
+      clearForegroundGeneration(true);
       setGenerationState(prev => (
         prev.projectName === targetProjectName
           ? {
@@ -1072,7 +1107,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     } finally {
       setCancelingGeneration(false);
     }
-  }, [selectedProject, generationState.projectName, generationState.taskId, setGenerationState, stopStreamMonitor, loadProject]);
+  }, [selectedProject, generationState.projectName, generationState.taskId, clearForegroundGeneration, setGenerationState, stopStreamMonitor, loadProject]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
