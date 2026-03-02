@@ -513,7 +513,7 @@ adminRoutes.get('/model-registry', async (c) => {
 // Create model
 adminRoutes.post('/model-registry', async (c) => {
   try {
-    const { providerId, modelName, displayName, creditMultiplier, capabilities, configJson } = await c.req.json();
+    const { providerId, customProviderName, modelName, displayName, creditMultiplier, capabilities, configJson } = await c.req.json();
     if (!providerId || !modelName) {
       return c.json({ success: false, error: 'providerId, modelName 不能为空' }, 400);
     }
@@ -528,6 +528,11 @@ adminRoutes.post('/model-registry', async (c) => {
           INSERT INTO provider_registry (id, name, protocol, base_url)
           VALUES (?, ?, ?, ?)
         `).bind(preset.id, preset.label, preset.protocol, preset.defaultBaseUrl || null).run();
+      } else if (providerId.startsWith('custom')) {
+        await c.env.DB.prepare(`
+          INSERT INTO provider_registry (id, name, protocol, base_url)
+          VALUES (?, ?, ?, ?)
+        `).bind(providerId, customProviderName || providerId, 'openai', null).run();
       } else {
         return c.json({ success: false, error: 'Provider 不存在且非预设' }, 400);
       }
