@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, AIProvider } from '../services/aiClient';
-import { getProviderPresets } from '../services/providerCatalog.js';
+import { getProviderPresets, getProviderPreset, normalizeProviderId, normalizeGeminiBaseUrl } from '../services/providerCatalog.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();
 
@@ -15,6 +15,7 @@ configRoutes.get('/provider-presets', async (c) => {
       protocol: item.protocol,
       defaultBaseUrl: item.defaultBaseUrl || '',
       isCustom: Boolean(item.isCustom),
+      color: item.color || '#6b7280',
     })),
   });
 });
@@ -39,6 +40,102 @@ configRoutes.post('/test', async (c) => {
   } catch (error) {
     console.error('Test connection error:', error);
     return c.json({ success: false, message: (error as Error).message }, 500);
+  }
+});
+
+// Fetch available models from a provider API (public, requires login)
+configRoutes.post('/fetch-models', async (c) => {
+  try {
+    const userId = c.get('userId');
+    if (!userId) {
+      return c.json({ success: false, error: '未登录' }, 401);
+    }
+
+    const { provider, apiKey, baseUrl } = await c.req.json();
+    if (!provider || !apiKey) {
+      return c.json({ success: false, error: 'provider 和 apiKey 不能为空' }, 400);
+    }
+
+    const normalizedProvider = normalizeProviderId(String(provider));
+    const preset = getProviderPreset(normalizedProvider);
+    const providerType = preset?.protocol || 'openai';
+    const effectiveBaseUrl = String(baseUrl || '').trim() || preset?.defaultBaseUrl;
+
+    if (!effectiveBaseUrl) {
+      return c.json({
+        success: false,
+        error: `请提供 Base URL。provider=${normalizedProvider} 未配置默认地址`,
+      }, 400);
+    }
+
+    let models: { id: string; name: string; displayName: string }[] = [];
+
+    if (providerType === 'gemini') {
+      const geminiBaseUrl = normalizeGeminiBaseUrl(effectiveBaseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
+      const res = await fetch(`${geminiBaseUrl}/models?key=${apiKey}`, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        const err = await res.json() as any;
+        throw new Error(err.error?.message || `Gemini API 错误: ${res.status}`);
+      }
+      const data = await res.json() as any;
+      models = (data.models || [])
+        .filter((m: any) => {
+          const methods = m.supportedGenerationMethods || [];
+          return methods.includes('generateContent') || methods.includes('streamGenerateContent');
+        })
+        .map((m: any) => ({
+          id: m.name?.replace('models/', '') || m.name,
+          name: m.name?.replace('models/', '') || m.name,
+          displayName: m.displayName || m.name?.replace('models/', '') || m.name,
+        }));
+    } else if (providerType === 'anthropic') {
+      const res = await fetch(`${effectiveBaseUrl}/v1/models`, {
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } })) as any;
+        throw new Error(err.error?.message || err.message || `Anthropic API 错误: ${res.status}`);
+      }
+      const data = await res.json() as any;
+      models = (data.data || []).map((m: any) => ({
+        id: m.id || m.name,
+        name: m.id || m.name,
+        displayName: m.display_name || m.id || m.name,
+      }));
+    } else {
+      const modelsUrl = effectiveBaseUrl.endsWith('/v1')
+        ? `${effectiveBaseUrl}/models`
+        : `${effectiveBaseUrl}/v1/models`;
+      const res = await fetch(modelsUrl, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } })) as any;
+        throw new Error(err.error?.message || `API 错误: ${res.status}`);
+      }
+      const data = await res.json() as any;
+      const modelList = data.data || data.models || [];
+      models = modelList.map((m: any) => ({
+        id: m.id || m.name,
+        name: m.id || m.name,
+        displayName: m.id || m.name,
+      }));
+    }
+
+    models.sort((a, b) => a.name.localeCompare(b.name));
+
+    return c.json({ success: true, models, count: models.length });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
 

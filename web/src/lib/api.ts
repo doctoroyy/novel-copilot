@@ -1340,7 +1340,133 @@ export async function rechargeUserCredit(userId: string, amount: number, descrip
   return { balanceAfter: data.balanceAfter };
 }
 
-export async function fetchModelRegistry(): Promise<any[]> {
+// ==========================================
+// Admin Provider & Model Registry Types
+// ==========================================
+
+export interface AdminProvider {
+  id: string;
+  name: string;
+  protocol: string;
+  base_url: string | null;
+  api_key_encrypted: string | null;
+  config_json: string;
+  enabled: number;
+  display_order: number;
+  model_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AdminModel {
+  id: string;
+  provider_id: string;
+  model_name: string;
+  display_name: string;
+  credit_multiplier: number;
+  capabilities: string;
+  is_active: number;
+  is_default: number;
+  config_json: string;
+  created_at: number;
+  updated_at: number;
+  // Joined fields
+  provider: string;
+  api_key_encrypted: string | null;
+  base_url: string | null;
+}
+
+export interface CreateProviderRequest {
+  id: string;
+  name: string;
+  protocol?: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface CreateModelRequest {
+  providerId: string;
+  customProviderName?: string;
+  modelName: string;
+  displayName?: string;
+  creditMultiplier?: number;
+  capabilities?: string[];
+  configJson?: Record<string, unknown>;
+}
+
+export interface UpdateModelRequest {
+  displayName?: string;
+  modelName?: string;
+  creditMultiplier?: number;
+  capabilities?: string[];
+  isActive?: boolean;
+  isDefault?: boolean;
+  configJson?: Record<string, unknown>;
+}
+
+// ==========================================
+// Admin Provider Registry API
+// ==========================================
+
+export async function fetchAdminProviders(): Promise<AdminProvider[]> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.providers;
+}
+
+export async function createAdminProvider(provider: CreateProviderRequest): Promise<{ id: string }> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(provider),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { id: data.id };
+}
+
+export async function updateAdminProvider(id: string, updates: {
+  apiKey?: string;
+  baseUrl?: string;
+  configJson?: Record<string, unknown>;
+  name?: string;
+}): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry/${id}`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(updates),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function deleteAdminProvider(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry/${id}`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+}
+
+export async function toggleAdminProvider(id: string): Promise<{ enabled: boolean }> {
+  const res = await fetch(`${API_BASE}/admin/provider-registry/${id}/toggle`, {
+    method: 'PATCH',
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { enabled: data.enabled };
+}
+
+// ==========================================
+// Admin Model Registry API
+// ==========================================
+
+export async function fetchModelRegistry(): Promise<AdminModel[]> {
   const res = await fetch(`${API_BASE}/admin/model-registry`, {
     headers: defaultHeaders(),
   });
@@ -1349,7 +1475,7 @@ export async function fetchModelRegistry(): Promise<any[]> {
   return data.models;
 }
 
-export async function createModel(model: any): Promise<{ id: string }> {
+export async function createModel(model: CreateModelRequest): Promise<{ id: string }> {
   const res = await fetch(`${API_BASE}/admin/model-registry`, {
     method: 'POST',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }),
@@ -1360,7 +1486,7 @@ export async function createModel(model: any): Promise<{ id: string }> {
   return { id: data.id };
 }
 
-export async function updateModel(id: string, updates: any): Promise<void> {
+export async function updateModel(id: string, updates: UpdateModelRequest): Promise<void> {
   const res = await fetch(`${API_BASE}/admin/model-registry/${id}`, {
     method: 'PUT',
     headers: mergeHeaders({ 'Content-Type': 'application/json' }),
@@ -1370,25 +1496,6 @@ export async function updateModel(id: string, updates: any): Promise<void> {
   if (!data.success) throw new Error(data.error);
 }
 
-
-export async function fetchAdminProviders(): Promise<any[]> {
-  const res = await fetch(`${API_BASE}/admin/provider-registry`, {
-    headers: defaultHeaders(),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-  return data.providers;
-}
-
-export async function updateAdminProvider(id: string, updates: any): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/provider-registry/${id}`, {
-    method: 'PUT',
-    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(updates),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error);
-}
 
 export async function deleteModel(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/admin/model-registry/${id}`, {
@@ -1397,6 +1504,17 @@ export async function deleteModel(id: string): Promise<void> {
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
+}
+
+export async function batchDeleteModels(ids: string[]): Promise<{ count: number }> {
+  const res = await fetch(`${API_BASE}/admin/model-registry/batch`, {
+    method: 'DELETE',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ ids }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { count: data.count };
 }
 
 export async function fetchCreditStats(): Promise<any> {
@@ -1450,6 +1568,7 @@ export type ProviderPreset = {
   protocol: 'openai' | 'gemini' | 'anthropic';
   defaultBaseUrl?: string;
   isCustom?: boolean;
+  color?: string;
 };
 
 export async function fetchProviderPresets(): Promise<ProviderPreset[]> {
@@ -1468,4 +1587,20 @@ export async function fetchPublicProviderPresets(): Promise<ProviderPreset[]> {
   const data = await res.json();
   if (!data.success) throw new Error(data.error || data.message || '加载 provider 列表失败');
   return data.providers || [];
+}
+
+// 用户侧：从远程 AI 提供商获取可用模型列表
+export async function fetchPublicRemoteModels(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string
+): Promise<{ id: string; name: string; displayName: string }[]> {
+  const res = await fetch(`${API_BASE}/config/fetch-models`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ provider, apiKey, baseUrl }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.models;
 }
