@@ -52,6 +52,7 @@ app.use('/api/tasks/*', authMiddleware());
 app.use('/api/bible-templates/refresh', authMiddleware());
 app.use('/api/bible-templates/refresh-jobs', authMiddleware());
 app.use('/api/bible-templates/refresh-jobs/*', authMiddleware());
+app.use('/api/config/fetch-models', authMiddleware());
 
 // Mount routes
 app.route('/api/projects', projectsRoutes);
