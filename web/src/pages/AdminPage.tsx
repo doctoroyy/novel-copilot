@@ -1235,6 +1235,16 @@ export function AdminPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      {newModelForm.providerId === 'custom' && (
+                        <div>
+                          <label className="text-xs text-muted-foreground">自定义提供商名称</label>
+                          <Input
+                            placeholder="如: 我的自定义大模型"
+                            value={newModelForm.customProviderName || ''}
+                            onChange={(e) => setNewModelForm({ ...newModelForm, customProviderName: e.target.value })}
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="text-xs text-muted-foreground">模型名称</label>
                         <Input value={newModelForm.modelName} onChange={(e) => setNewModelForm({ ...newModelForm, modelName: e.target.value })} />
@@ -1257,11 +1267,15 @@ export function AdminPage() {
                             return;
                           }
 
-                          await createModel({
-                            ...newModelForm,
-                            modelName: normalizedModelName,
-                            displayName: String(newModelForm.displayName || normalizedModelName).trim(),
-                          });
+                          const payload = { ...newModelForm, modelName: normalizedModelName, displayName: String(newModelForm.displayName || normalizedModelName).trim() };
+                          if (payload.providerId === 'custom') {
+                            payload.providerId = `custom-${Date.now()}`;
+                            if (!payload.customProviderName || payload.customProviderName.trim() === '') {
+                              payload.customProviderName = `custom${Math.floor(Math.random() * 10000)}`;
+                            }
+                          }
+
+                          await createModel(payload);
                           setNewModelForm(null);
                           fetchData();
                         } catch (e) { setError((e as Error).message); }
