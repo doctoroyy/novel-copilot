@@ -7,24 +7,25 @@ export type ProviderPreset = {
   defaultBaseUrl?: string;
   aliases?: string[];
   isCustom?: boolean;
+  color?: string;
 };
 
 const PRESETS: ProviderPreset[] = [
-  { id: 'openai', label: 'OpenAI', protocol: 'openai', defaultBaseUrl: 'https://api.openai.com/v1' },
-  { id: 'anthropic', label: 'Anthropic', protocol: 'anthropic', defaultBaseUrl: 'https://api.anthropic.com' },
-  { id: 'gemini', label: 'Google Gemini', protocol: 'gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
-  { id: 'deepseek', label: 'DeepSeek', protocol: 'openai', defaultBaseUrl: 'https://api.deepseek.com/v1' },
-  { id: 'zai', label: 'Zhipu GLM (zAI)', protocol: 'openai', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', aliases: ['zhipu', 'glm', 'bigmodel', 'z-ai'] },
-  { id: 'moonshot', label: 'Moonshot (Kimi)', protocol: 'openai', defaultBaseUrl: 'https://api.moonshot.cn/v1', aliases: ['kimi'] },
-  { id: 'qwen', label: 'Qwen / DashScope', protocol: 'openai', defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', aliases: ['dashscope', 'aliyun', 'bailian'] },
-  { id: 'openrouter', label: 'OpenRouter', protocol: 'openai', defaultBaseUrl: 'https://openrouter.ai/api/v1' },
-  { id: 'groq', label: 'Groq', protocol: 'openai', defaultBaseUrl: 'https://api.groq.com/openai/v1' },
-  { id: 'xai', label: 'xAI', protocol: 'openai', defaultBaseUrl: 'https://api.x.ai/v1', aliases: ['grok'] },
-  { id: 'together', label: 'Together AI', protocol: 'openai', defaultBaseUrl: 'https://api.together.xyz/v1' },
-  { id: 'siliconflow', label: 'SiliconFlow', protocol: 'openai', defaultBaseUrl: 'https://api.siliconflow.cn/v1' },
-  { id: 'mistral', label: 'Mistral', protocol: 'openai', defaultBaseUrl: 'https://api.mistral.ai/v1' },
-  { id: 'fireworks', label: 'Fireworks AI', protocol: 'openai', defaultBaseUrl: 'https://api.fireworks.ai/inference/v1' },
-  { id: 'custom', label: 'Custom (OpenAI-compatible)', protocol: 'openai', isCustom: true },
+  { id: 'openai', label: 'OpenAI', protocol: 'openai', defaultBaseUrl: 'https://api.openai.com/v1', color: '#10a37f' },
+  { id: 'anthropic', label: 'Anthropic', protocol: 'anthropic', defaultBaseUrl: 'https://api.anthropic.com', color: '#d97757' },
+  { id: 'gemini', label: 'Google Gemini', protocol: 'gemini', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta', color: '#4285f4' },
+  { id: 'deepseek', label: 'DeepSeek', protocol: 'openai', defaultBaseUrl: 'https://api.deepseek.com/v1', color: '#4d6bfe' },
+  { id: 'zai', label: 'Zhipu GLM (zAI)', protocol: 'openai', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', aliases: ['zhipu', 'glm', 'bigmodel', 'z-ai'], color: '#3b5ccc' },
+  { id: 'moonshot', label: 'Moonshot (Kimi)', protocol: 'openai', defaultBaseUrl: 'https://api.moonshot.cn/v1', aliases: ['kimi'], color: '#000000' },
+  { id: 'qwen', label: 'Qwen / DashScope', protocol: 'openai', defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', aliases: ['dashscope', 'aliyun', 'bailian'], color: '#615ced' },
+  { id: 'openrouter', label: 'OpenRouter', protocol: 'openai', defaultBaseUrl: 'https://openrouter.ai/api/v1', color: '#6466f1' },
+  { id: 'groq', label: 'Groq', protocol: 'openai', defaultBaseUrl: 'https://api.groq.com/openai/v1', color: '#f55036' },
+  { id: 'xai', label: 'xAI', protocol: 'openai', defaultBaseUrl: 'https://api.x.ai/v1', aliases: ['grok'], color: '#000000' },
+  { id: 'together', label: 'Together AI', protocol: 'openai', defaultBaseUrl: 'https://api.together.xyz/v1', color: '#0f6fff' },
+  { id: 'siliconflow', label: 'SiliconFlow', protocol: 'openai', defaultBaseUrl: 'https://api.siliconflow.cn/v1', color: '#7c3aed' },
+  { id: 'mistral', label: 'Mistral', protocol: 'openai', defaultBaseUrl: 'https://api.mistral.ai/v1', color: '#ff7000' },
+  { id: 'fireworks', label: 'Fireworks AI', protocol: 'openai', defaultBaseUrl: 'https://api.fireworks.ai/inference/v1', color: '#e25822' },
+  { id: 'custom', label: 'Custom (OpenAI-compatible)', protocol: 'openai', isCustom: true, color: '#6b7280' },
 ];
 
 const BASE_URL_HINTS: Array<{ pattern: RegExp; providerId: string }> = [

@@ -434,10 +434,13 @@ adminRoutes.post('/feature-models', async (c) => {
 // Get all providers
 adminRoutes.get('/provider-registry', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(
-      'SELECT * FROM provider_registry ORDER BY id ASC'
-    ).all();
-    
+    const { results } = await c.env.DB.prepare(`
+      SELECT p.*,
+        (SELECT COUNT(*) FROM model_registry m WHERE m.provider_id = p.id) as model_count
+      FROM provider_registry p
+      ORDER BY p.display_order ASC, p.id ASC
+    `).all();
+
     // Mask API keys for display
     const masked = (results || []).map((p: any) => ({
       ...p,
@@ -455,15 +458,16 @@ adminRoutes.get('/provider-registry', async (c) => {
 adminRoutes.put('/provider-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
-    const { apiKey, baseUrl, configJson } = await c.req.json();
+    const { apiKey, baseUrl, configJson, name } = await c.req.json();
     const updates: string[] = [];
     const values: any[] = [];
 
+    if (name !== undefined) { updates.push('name = ?'); values.push(String(name).trim()); }
     if (apiKey !== undefined) { updates.push('api_key_encrypted = ?'); values.push(apiKey || null); }
-    if (baseUrl !== undefined) { 
+    if (baseUrl !== undefined) {
       const normalizedBaseUrl = id === 'gemini' ? (normalizeGeminiBaseUrl(baseUrl) || null) : (baseUrl || null);
-      updates.push('base_url = ?'); 
-      values.push(normalizedBaseUrl); 
+      updates.push('base_url = ?');
+      values.push(normalizedBaseUrl);
     }
     if (configJson !== undefined) { updates.push('config_json = ?'); values.push(JSON.stringify(configJson)); }
 
@@ -485,7 +489,96 @@ adminRoutes.put('/provider-registry/:id', async (c) => {
 // Model Registry API
 // ==========================================
 
-// Get all models (joined with providers)
+// Create provider
+adminRoutes.post('/provider-registry', async (c) => {
+  try {
+    const { id, name, protocol, baseUrl, apiKey } = await c.req.json();
+    if (!id || !name) {
+      return c.json({ success: false, error: 'id 和 name 不能为空' }, 400);
+    }
+
+    const existing = await c.env.DB.prepare('SELECT id FROM provider_registry WHERE id = ?').bind(id).first();
+    if (existing) {
+      return c.json({ success: false, error: 'Provider 已存在' }, 400);
+    }
+
+    // Get max display_order
+    const maxOrder = await c.env.DB.prepare(
+      'SELECT COALESCE(MAX(display_order), -1) as max_order FROM provider_registry'
+    ).first() as any;
+
+    await c.env.DB.prepare(`
+      INSERT INTO provider_registry (id, name, protocol, base_url, api_key_encrypted, display_order)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(
+      id.trim(),
+      name.trim(),
+      protocol || 'openai',
+      baseUrl || null,
+      apiKey || null,
+      (maxOrder?.max_order ?? -1) + 1
+    ).run();
+
+    return c.json({ success: true, id: id.trim() });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Delete provider (cascade: delete all models + feature_model_mappings)
+adminRoutes.delete('/provider-registry/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    // First delete feature_model_mappings for all models of this provider
+    await c.env.DB.prepare(`
+      DELETE FROM feature_model_mappings
+      WHERE model_id IN (SELECT id FROM model_registry WHERE provider_id = ?)
+    `).bind(id).run();
+
+    // Delete all models of this provider
+    await c.env.DB.prepare('DELETE FROM model_registry WHERE provider_id = ?').bind(id).run();
+
+    // Delete the provider itself
+    await c.env.DB.prepare('DELETE FROM provider_registry WHERE id = ?').bind(id).run();
+
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Toggle provider enabled status
+adminRoutes.patch('/provider-registry/:id/toggle', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const provider = await c.env.DB.prepare('SELECT enabled FROM provider_registry WHERE id = ?').bind(id).first() as any;
+    if (!provider) {
+      return c.json({ success: false, error: 'Provider 不存在' }, 404);
+    }
+
+    const newEnabled = provider.enabled ? 0 : 1;
+
+    // Toggle provider
+    await c.env.DB.prepare(
+      'UPDATE provider_registry SET enabled = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
+    ).bind(newEnabled, id).run();
+
+    // If disabling, also disable all models
+    if (!newEnabled) {
+      await c.env.DB.prepare(
+        'UPDATE model_registry SET is_active = 0, updated_at = (unixepoch() * 1000) WHERE provider_id = ?'
+      ).bind(id).run();
+    }
+
+    return c.json({ success: true, enabled: Boolean(newEnabled) });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// ==========================================
+// Model Registry API
+// ==========================================
 adminRoutes.get('/model-registry', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(`
@@ -784,6 +877,7 @@ adminRoutes.get('/provider-presets', async (c) => {
       protocol: item.protocol,
       defaultBaseUrl: item.defaultBaseUrl || '',
       isCustom: Boolean(item.isCustom),
+      color: item.color || '#6b7280',
     })),
   });
 });
