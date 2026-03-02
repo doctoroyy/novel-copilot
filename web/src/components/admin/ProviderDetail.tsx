@@ -100,9 +100,10 @@ export function ProviderDetail({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          providerId: provider.id,
           provider: provider.protocol || 'openai',
           model: models[0]?.model_name || 'gpt-4o-mini',
-          apiKey: editApiKey || 'use-server-key',
+          apiKey: editApiKey || undefined,
           baseUrl: editBaseUrl || preset?.defaultBaseUrl || '',
         }),
       });

@@ -20,16 +20,37 @@ configRoutes.get('/provider-presets', async (c) => {
   });
 });
 
-// Test AI connection (config passed in body, not stored on server)
+// Test AI connection
+// Supports two modes:
+// 1. Client-side custom config: pass provider/model/apiKey/baseUrl directly
+// 2. Admin server-side: pass providerId to use DB-stored key
 configRoutes.post('/test', async (c) => {
   try {
-    const { provider, model, apiKey, baseUrl } = await c.req.json();
+    const body = await c.req.json();
+    let { provider, model, apiKey, baseUrl } = body;
+    const { providerId } = body;
+
+    // If providerId is given and no apiKey, look up from DB
+    if (providerId && !apiKey) {
+      const row = await c.env.DB.prepare(
+        `SELECT p.api_key_encrypted, p.base_url, p.protocol,
+                (SELECT m.model_name FROM model_registry m WHERE m.provider_id = p.id AND m.is_active = 1 ORDER BY m.is_default DESC LIMIT 1) as first_model
+         FROM provider_registry p WHERE p.id = ?`
+      ).bind(providerId).first() as any;
+
+      if (!row || !row.api_key_encrypted) {
+        return c.json({ success: false, message: '该 Provider 未配置 API Key' }, 400);
+      }
+      apiKey = row.api_key_encrypted;
+      if (!provider) provider = row.protocol || 'openai';
+      if (!baseUrl) baseUrl = row.base_url || '';
+      if (!model) model = row.first_model || 'gpt-4o-mini';
+    }
 
     if (!provider || !model || !apiKey) {
       return c.json({ success: false, message: 'Missing config parameters' }, 400);
     }
 
-    // Test the connection
     const result = await testAIConnection({
       provider: provider as AIProvider,
       model,
