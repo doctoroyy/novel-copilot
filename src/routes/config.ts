@@ -179,8 +179,13 @@ async function testAIConnection(config: {
       return { success: false, message: '连接成功，但模型返回了空内容' };
     }
 
-    return { success: true, message: `连接成功! 回复: "${text.trim()}"` };
+    return { success: true, message: `连接成功! 回复: "${text.trim().slice(0, 100)}"` };
   } catch (error) {
-    return { success: false, message: `连接失败: ${(error as Error).message}` };
+    const msg = (error as Error).message;
+    // Truncation means the model DID respond — connection is fine
+    if (msg.includes('截断') || msg.includes('truncat') || msg.includes('stopReason=length')) {
+      return { success: true, message: '连接成功! (模型已响应)' };
+    }
+    return { success: false, message: `连接失败: ${msg}` };
   }
 }
