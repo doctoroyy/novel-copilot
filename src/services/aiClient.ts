@@ -14,6 +14,22 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_AUTO_EXPAND_OUTPUT_TOKENS = 24000;
 
+// Override OpenAI SDK's default User-Agent ("OpenAI/JS x.x.x") and X-Stainless-*
+// headers which trigger Cloudflare WAF blocks on some reverse-proxy endpoints.
+const SANITIZED_HEADERS: Record<string, string> = {
+  'User-Agent': 'novel-copilot/1.0',
+  'X-Stainless-Retry-Count': '',
+  'X-Stainless-Timeout': '',
+  'X-Stainless-Runtime': '',
+  'X-Stainless-Runtime-Version': '',
+  'X-Stainless-Arch': '',
+  'X-Stainless-Os': '',
+  'X-Stainless-Lang': '',
+  'X-Stainless-Package-Version': '',
+  'OpenAI-Organization': '',
+  'OpenAI-Project': '',
+};
+
 /**
  * Convert internal AIConfig to pi-ai Model
  */
@@ -86,6 +102,7 @@ export async function generateText(
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
     maxTokens: args.maxTokens,
+    headers: SANITIZED_HEADERS,
   };
 
   const response = await completeSimple(model, {
@@ -340,6 +357,7 @@ export async function* generateTextStream(
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
     maxTokens: args.maxTokens,
+    headers: SANITIZED_HEADERS,
   };
 
   const stream = streamSimple(model, {
