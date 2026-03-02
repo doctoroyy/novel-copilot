@@ -172,7 +172,7 @@ async function testAIConnection(config: {
       system: 'You are a helpful assistant.',
       prompt: 'Say "Hello" in one word.',
       temperature: 0,
-      maxTokens: 10,
+      maxTokens: 50,
     });
 
     if (!text || text.trim().length === 0) {
