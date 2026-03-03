@@ -10,6 +10,57 @@ export interface AIConfig {
   baseUrl?: string;
 }
 
+// ========== 全链路性能追踪 ==========
+
+export type AICallPhase =
+  | 'planning'
+  | 'drafting'
+  | 'selfReview'
+  | 'summary'
+  | 'characterState'
+  | 'plotGraph'
+  | 'timeline'
+  | 'outline'
+  | 'other';
+
+export interface AICallTrace {
+  phase: AICallPhase;
+  provider: string;
+  model: string;
+  durationMs: number;
+  estimatedPromptTokens: number;
+  estimatedOutputTokens: number;
+  stopReason?: string;
+  error?: string;
+  retryAttempt: number;
+  maxTokensUsed?: number;
+}
+
+export class AICallTracer {
+  readonly traces: AICallTrace[] = [];
+
+  record(trace: AICallTrace): void {
+    this.traces.push(trace);
+  }
+
+  get totalDurationMs(): number {
+    return this.traces.reduce((sum, t) => sum + t.durationMs, 0);
+  }
+
+  get callCount(): number {
+    return this.traces.length;
+  }
+
+  toJSON(): AICallTrace[] {
+    return this.traces;
+  }
+}
+
+export interface AICallOptions {
+  tracer?: AICallTracer;
+  phase?: AICallPhase;
+}
+
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_AUTO_EXPAND_OUTPUT_TOKENS = 24000;
@@ -81,6 +132,11 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
   } as any;
 }
 
+function estimateTokenCount(text: string | undefined): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 2);
+}
+
 /**
  * Generate text using the configured AI provider
  */
@@ -91,12 +147,14 @@ export async function generateText(
     prompt: string;
     temperature?: number;
     maxTokens?: number;
-  }
+  },
+  callOptions?: AICallOptions
 ): Promise<string> {
   if (!config.apiKey) {
     throw new Error('API Key not configured. Please set up in Settings.');
   }
 
+  const startTime = Date.now();
   const model = toPiAiModel(config);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
@@ -105,23 +163,63 @@ export async function generateText(
     headers: SANITIZED_HEADERS,
   };
 
-  const response = await completeSimple(model, {
-    systemPrompt: args.system,
-    messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
-  }, options);
+  let resultText = '';
+  let stopReason: string | undefined;
+  try {
+    const response = await completeSimple(model, {
+      systemPrompt: args.system,
+      messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
+    }, options);
 
-  if (response.stopReason === 'error') {
-    throw new Error(response.errorMessage || 'An error occurred during generation');
-  }
-  if (isTruncatedStopReason(response.stopReason)) {
-    throw new Error(`AI 输出被截断（stopReason=${response.stopReason}）`);
-  }
-  if (response.stopReason === 'aborted') {
-    throw new Error(response.errorMessage || 'Generation aborted');
-  }
+    stopReason = response.stopReason;
 
-  // pi-ai automatically collects content from reasoning fields and content fields
-  return response.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+    if (response.stopReason === 'error') {
+      throw new Error(response.errorMessage || 'An error occurred during generation');
+    }
+    if (isTruncatedStopReason(response.stopReason)) {
+      throw new Error(`AI 输出被截断（stopReason=${response.stopReason}）`);
+    }
+    if (response.stopReason === 'aborted') {
+      throw new Error(response.errorMessage || 'Generation aborted');
+    }
+
+    // pi-ai automatically collects content from reasoning fields and content fields
+    resultText = response.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+
+    // Record successful trace
+    if (callOptions?.tracer) {
+      callOptions.tracer.record({
+        phase: callOptions.phase || 'other',
+        provider: config.provider,
+        model: config.model,
+        durationMs: Date.now() - startTime,
+        estimatedPromptTokens: estimateTokenCount(args.system) + estimateTokenCount(args.prompt),
+        estimatedOutputTokens: estimateTokenCount(resultText),
+        stopReason,
+        retryAttempt: 0,
+        maxTokensUsed: args.maxTokens,
+      });
+    }
+
+    return resultText;
+  } catch (error) {
+    // Record failed trace
+    if (callOptions?.tracer) {
+      callOptions.tracer.record({
+        phase: callOptions.phase || 'other',
+        provider: config.provider,
+        model: config.model,
+        durationMs: Date.now() - startTime,
+        estimatedPromptTokens: estimateTokenCount(args.system) + estimateTokenCount(args.prompt),
+        estimatedOutputTokens: 0,
+        stopReason,
+        error: (error as Error).message,
+        retryAttempt: 0,
+        maxTokensUsed: args.maxTokens,
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -216,14 +314,15 @@ function getNextExpandedMaxTokens(current: number | undefined, cap: number): num
 export async function generateTextWithRetry(
   config: AIConfig,
   args: Parameters<typeof generateText>[1],
-  maxRetries = 3
+  maxRetries = 3,
+  callOptions?: AICallOptions
 ): Promise<string> {
   let lastError: Error | undefined;
   const requestArgs: Parameters<typeof generateText>[1] = { ...args };
 
   for (let i = 0; i < maxRetries; i++) {
     try {
-      return await generateText(config, requestArgs);
+      return await generateText(config, requestArgs, callOptions);
     } catch (error) {
       lastError = error as Error;
       const errorType = classifyError(lastError);
@@ -269,7 +368,8 @@ export interface FallbackConfig {
 export async function generateTextWithFallback(
   configs: FallbackConfig,
   args: Parameters<typeof generateText>[1],
-  maxRetriesPerProvider = 2
+  maxRetriesPerProvider = 2,
+  callOptions?: AICallOptions
 ): Promise<string> {
   const allConfigs = [configs.primary, ...(configs.fallback || [])];
   const switchOn = configs.switchConditions || ['rate_limit', 'server_error', 'timeout'];
@@ -283,7 +383,7 @@ export async function generateTextWithFallback(
 
     for (let attempt = 0; attempt < maxRetriesPerProvider; attempt++) {
       try {
-        return await generateText(config, requestArgs);
+        return await generateText(config, requestArgs, callOptions);
       } catch (error) {
         lastError = error as Error;
         const errorType = classifyError(lastError);

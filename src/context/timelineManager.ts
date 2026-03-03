@@ -8,7 +8,7 @@
  * 4. 检测事件重复
  */
 
-import { generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
+import { generateTextWithRetry, type AIConfig, type AICallOptions } from '../services/aiClient.js';
 import type { CharacterRelationGraph } from '../types/characters.js';
 import type { CharacterStateRegistry } from '../types/characterState.js';
 import {
@@ -73,7 +73,8 @@ export async function analyzeChapterForEvents(
   chapterText: string,
   chapterIndex: number,
   timeline: TimelineState,
-  characterNames: Map<string, string>
+  characterNames: Map<string, string>,
+  callOptions?: AICallOptions
 ): Promise<AIEventAnalysis> {
   // 构建角色名称列表供 AI 参考
   const charNameList = Array.from(characterNames.keys()).join('、');
@@ -125,7 +126,7 @@ ${chapterText}
     system,
     prompt,
     temperature: 0.2,
-  });
+  }, 3, callOptions);
 
   // 解析 JSON
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();

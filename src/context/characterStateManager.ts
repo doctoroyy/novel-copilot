@@ -7,7 +7,7 @@
  * 3. 生成用于 prompt 的角色状态上下文
  */
 
-import { generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
+import { generateTextWithRetry, type AIConfig, type AICallOptions } from '../services/aiClient.js';
 import type { CharacterRelationGraph, CharacterProfile } from '../types/characters.js';
 import {
   type CharacterStateRegistry,
@@ -95,7 +95,8 @@ export async function analyzeChapterForStateChanges(
   aiConfig: AIConfig,
   chapterText: string,
   chapterIndex: number,
-  currentRegistry: CharacterStateRegistry
+  currentRegistry: CharacterStateRegistry,
+  callOptions?: AICallOptions
 ): Promise<AIStateChangeAnalysis> {
   const system = `
 你是一个专业的小说角色状态分析师。你的任务是分析章节内容，提取所有角色的状态变化。
@@ -166,7 +167,7 @@ ${chapterText.slice(0, 6000)}
       system,
       prompt,
       temperature: 0.2, // 低温度确保稳定输出
-    });
+    }, 3, callOptions);
 
     // 清理可能的代码块标记
     const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
