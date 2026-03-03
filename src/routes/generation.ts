@@ -1166,7 +1166,8 @@ async function startGenerationChain(
       userId,
       aiConfig,
       fallbackConfigs,
-      chaptersToGenerate
+      chaptersToGenerate,
+      enqueuedAt: Date.now()
     });
     console.log(`Task ${taskId} enqueued successfully.`);
   } else {
@@ -1208,6 +1209,7 @@ export async function runChapterGenerationTaskInBackground(params: {
   userId: string;
   taskId: number;
   chaptersToGenerate?: number;
+  enqueuedAt?: number;
 }) {
   const {
     env,
@@ -1216,7 +1218,12 @@ export async function runChapterGenerationTaskInBackground(params: {
     userId,
     taskId,
     chaptersToGenerate,
+    enqueuedAt,
   } = params;
+  const queueLatencyMs = enqueuedAt ? Date.now() - enqueuedAt : 0;
+  if (queueLatencyMs > 0) {
+    console.log(`[Perf][Task ${taskId}] 队列延迟: ${(queueLatencyMs / 1000).toFixed(1)}s`);
+  }
 
   try {
     // 1. Load Task State (fresh each iteration)
@@ -1485,9 +1492,11 @@ export async function runChapterGenerationTaskInBackground(params: {
           ? '更新失败，下一章优先重试'
           : `延后到第 ${summaryUpdatePlan.nextPlannedChapter} 章`;
       console.log(
-        `[Perf][Task ${taskId}] 第 ${chapterIndex} 章: 正文 ${formatDurationMs(result.generationDurationMs)}, ` +
-        `摘要 ${formatDurationMs(result.summaryDurationMs)}, 总计 ${formatDurationMs(result.totalDurationMs)}, ` +
-        `摘要${summaryStatusText}`
+        `[Perf][Task ${taskId}] 第 ${chapterIndex} 章:\n` +
+        `  总计 ${formatDurationMs(result.totalDurationMs)} | 正文 ${formatDurationMs(result.generationDurationMs)} | 摘要 ${formatDurationMs(result.summaryDurationMs)} | 队列等待 ${formatDurationMs(queueLatencyMs)}\n` +
+        `  AI调用: ${result.diagnostics.aiCallCount}次 | 累计AI耗时 ${formatDurationMs(result.diagnostics.totalAiDurationMs)} | 非AI耗时 ${formatDurationMs(result.totalDurationMs - result.diagnostics.totalAiDurationMs)}\n` +
+        `  阶段: ctx=${formatDurationMs(result.diagnostics.phaseDurationsMs.contextBuild)}, plan=${formatDurationMs(result.diagnostics.phaseDurationsMs.planning)}, draft=${formatDurationMs(result.diagnostics.phaseDurationsMs.mainDraft)}, review=${formatDurationMs(result.diagnostics.phaseDurationsMs.selfReview)}, qc=${formatDurationMs(result.diagnostics.phaseDurationsMs.quickQc)}, summary=${formatDurationMs(result.diagnostics.phaseDurationsMs.summary)}, charState=${formatDurationMs(result.diagnostics.phaseDurationsMs.characterState)}, plot=${formatDurationMs(result.diagnostics.phaseDurationsMs.plotGraph)}, timeline=${formatDurationMs(result.diagnostics.phaseDurationsMs.timeline)}\n` +
+        `  Provider: ${aiConfig.provider}/${aiConfig.model} | 摘要${summaryStatusText}`
       );
       logGenerationMetrics({
         projectId: project.id,
@@ -1496,7 +1505,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         outputTokens: result.diagnostics.estimatedTokens.mainOutput,
         generationTime: result.totalDurationMs,
         phaseTimes: {
-          context_build: result.diagnostics.phaseDurationsMs.planning,
+          context_build: result.diagnostics.phaseDurationsMs.contextBuild,
           model_call: result.generationDurationMs,
           qc_check: result.diagnostics.phaseDurationsMs.quickQc + result.diagnostics.phaseDurationsMs.fullQc,
           summary_update: result.summaryDurationMs,
@@ -1508,15 +1517,16 @@ export async function runChapterGenerationTaskInBackground(params: {
         provider: aiConfig.provider,
         timestamp: new Date(),
       });
-      console.log(
-        `[PerfDetail][Task ${taskId}] 第 ${chapterIndex} 章`,
-        JSON.stringify({
-          promptChars: result.diagnostics.promptChars,
-          phaseDurationsMs: result.diagnostics.phaseDurationsMs,
-          logicalAiCalls: result.diagnostics.logicalAiCalls,
-          estimatedTokens: result.diagnostics.estimatedTokens,
-        })
-      );
+      // AI 调用明细日志
+      if (result.diagnostics.aiCallTraces.length > 0) {
+        const traceLines = result.diagnostics.aiCallTraces.map((t, i) =>
+          `    #${i + 1} [${t.phase}] ${t.provider}/${t.model} ${formatDurationMs(t.durationMs)} in=${t.estimatedPromptTokens}tok out=${t.estimatedOutputTokens}tok${t.error ? ` ERR=${t.error.slice(0, 80)}` : ''}`
+        );
+        console.log(`[PerfTrace][Task ${taskId}] 第 ${chapterIndex} 章 AI调用链:\n${traceLines.join('\n')}`);
+      }
+
+      // 持久化到 generation_perf_logs
+      const dbSaveStartedAt = Date.now();
       await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
@@ -1593,6 +1603,49 @@ export async function runChapterGenerationTaskInBackground(params: {
         modelProvider: result.skippedSummary ? undefined : effectiveSummaryAiConfig.provider,
         modelName: result.skippedSummary ? undefined : effectiveSummaryAiConfig.model,
       });
+
+      const dbSaveDurationMs = Date.now() - dbSaveStartedAt;
+
+      // 持久化性能日志
+      try {
+        await env.DB.prepare(`
+          INSERT INTO generation_perf_logs (
+            task_id, project_id, chapter_index, provider, model,
+            total_duration_ms, context_build_ms, planning_ms, main_draft_ms,
+            self_review_ms, quick_qc_ms, full_qc_ms, summary_ms,
+            character_state_ms, plot_graph_ms, timeline_ms, db_save_ms,
+            ai_call_count, total_ai_duration_ms,
+            estimated_prompt_tokens, estimated_output_tokens,
+            was_rewritten, rewrite_count, summary_skipped,
+            ai_call_traces, queue_latency_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          taskId, project.id, chapterIndex, aiConfig.provider, aiConfig.model,
+          result.totalDurationMs,
+          result.diagnostics.phaseDurationsMs.contextBuild,
+          result.diagnostics.phaseDurationsMs.planning,
+          result.diagnostics.phaseDurationsMs.mainDraft,
+          result.diagnostics.phaseDurationsMs.selfReview,
+          result.diagnostics.phaseDurationsMs.quickQc,
+          result.diagnostics.phaseDurationsMs.fullQc,
+          result.diagnostics.phaseDurationsMs.summary,
+          result.diagnostics.phaseDurationsMs.characterState,
+          result.diagnostics.phaseDurationsMs.plotGraph,
+          result.diagnostics.phaseDurationsMs.timeline,
+          dbSaveDurationMs,
+          result.diagnostics.aiCallCount,
+          result.diagnostics.totalAiDurationMs,
+          result.diagnostics.estimatedTokens.mainInput,
+          result.diagnostics.estimatedTokens.mainOutput,
+          result.wasRewritten ? 1 : 0,
+          result.rewriteCount,
+          result.skippedSummary ? 1 : 0,
+          JSON.stringify(result.diagnostics.aiCallTraces),
+          queueLatencyMs
+        ).run();
+      } catch (perfLogError) {
+        console.warn(`[PerfLog] Failed to persist perf log for chapter ${chapterIndex}:`, (perfLogError as Error).message);
+      }
 
       await updateTaskProgress(env.DB, taskId, chapterIndex, false);
 

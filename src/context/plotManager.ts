@@ -7,7 +7,7 @@
  * 3. 追踪伏笔状态并生成回收提醒
  */
 
-import { generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
+import { generateTextWithRetry, type AIConfig, type AICallOptions } from '../services/aiClient.js';
 import {
   type PlotGraph,
   type PlotNode,
@@ -83,7 +83,8 @@ export async function analyzeChapterForPlotChanges(
   aiConfig: AIConfig,
   chapterText: string,
   chapterIndex: number,
-  currentGraph: PlotGraph
+  currentGraph: PlotGraph,
+  callOptions?: AICallOptions
 ): Promise<AIPlotAnalysis> {
   const system = `
 你是一个专业的小说剧情分析师。你的任务是分析章节内容，提取重要的剧情事件、伏笔和因果关系。
@@ -192,7 +193,7 @@ ${chapterText.slice(0, 6000)}
       system,
       prompt,
       temperature: 0.3,
-    });
+    }, 3, callOptions);
 
     const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
     const parsed = PlotAnalysisSchema.parse(JSON.parse(jsonText));

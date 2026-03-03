@@ -261,7 +261,8 @@ export default {
             aiConfig: payload.aiConfig,
             userId: payload.userId,
             taskId: payload.taskId,
-            chaptersToGenerate: payload.chaptersToGenerate
+            chaptersToGenerate: payload.chaptersToGenerate,
+            enqueuedAt: payload.enqueuedAt,
           });
         }
 
