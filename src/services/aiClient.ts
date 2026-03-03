@@ -65,6 +65,9 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 const MAX_AUTO_EXPAND_OUTPUT_TOKENS = 24000;
 
+/** Per-request timeout in ms. Kills hung connections to slow providers. */
+const AI_REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 // Override OpenAI SDK's default User-Agent ("OpenAI/JS x.x.x") and X-Stainless-*
 // headers which trigger Cloudflare WAF blocks on some reverse-proxy endpoints.
 const SANITIZED_HEADERS: Record<string, string> = {
@@ -156,11 +159,14 @@ export async function generateText(
 
   const startTime = Date.now();
   const model = toPiAiModel(config);
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), AI_REQUEST_TIMEOUT_MS);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
     maxTokens: args.maxTokens,
     headers: SANITIZED_HEADERS,
+    signal: abortController.signal,
   };
 
   let resultText = '';
@@ -203,6 +209,10 @@ export async function generateText(
 
     return resultText;
   } catch (error) {
+    // Wrap AbortError with a clearer message
+    const actualError = abortController.signal.aborted
+      ? new Error(`AI request timed out after ${AI_REQUEST_TIMEOUT_MS / 1000}s (${config.provider}/${config.model})`)
+      : error as Error;
     // Record failed trace
     if (callOptions?.tracer) {
       callOptions.tracer.record({
@@ -213,12 +223,14 @@ export async function generateText(
         estimatedPromptTokens: estimateTokenCount(args.system) + estimateTokenCount(args.prompt),
         estimatedOutputTokens: 0,
         stopReason,
-        error: (error as Error).message,
+        error: actualError.message,
         retryAttempt: 0,
         maxTokensUsed: args.maxTokens,
       });
     }
-    throw error;
+    throw actualError;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -453,31 +465,33 @@ export async function* generateTextStream(
   }
 
   const model = toPiAiModel(config);
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), AI_REQUEST_TIMEOUT_MS);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
     maxTokens: args.maxTokens,
     headers: SANITIZED_HEADERS,
+    signal: abortController.signal,
   };
 
-  const stream = streamSimple(model, {
-    systemPrompt: args.system,
-    messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
-  }, options);
+  try {
+    const stream = streamSimple(model, {
+      systemPrompt: args.system,
+      messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
+    }, options);
 
-  for await (const event of stream) {
-    if (event.type === 'text_delta') {
-      yield event.delta;
-    } else if (event.type === 'thinking_delta') {
-      // In this project, we might want to skip thinking delta or wrap it.
-      // For now, let's yield it if it's text-like, or just focus on text_delta for the chapter content.
-      // DeepSeek/GLM reasoning is often followed by content.
-      // If the user wants to see reasoning, we could yield it with a prefix.
-      // But for chapter generation, we usually only want the final content.
-      // However, some models put content in reasoning. pi-ai's text_delta should be correct.
-    } else if (event.type === 'error') {
-      throw new Error(event.error.errorMessage || 'Streaming error');
+    for await (const event of stream) {
+      if (event.type === 'text_delta') {
+        yield event.delta;
+      } else if (event.type === 'thinking_delta') {
+        // Skip thinking deltas for chapter generation
+      } else if (event.type === 'error') {
+        throw new Error(event.error.errorMessage || 'Streaming error');
+      }
     }
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
