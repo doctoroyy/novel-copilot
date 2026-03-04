@@ -49,6 +49,235 @@ export type ChapterOutline = {
   hook: string;
 };
 
+function stripJsonCodeFence(raw: string): string {
+  return raw.replace(/```json\s*|```\s*/gi, '').trim();
+}
+
+function extractBalancedJsonBlock(raw: string, opening: '{' | '['): string | null {
+  const closing = opening === '{' ? '}' : ']';
+  const start = raw.indexOf(opening);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaping = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === opening) {
+      depth += 1;
+      continue;
+    }
+
+    if (char === closing) {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseLooseJson(raw: string, preferredShape: 'object' | 'array'): unknown {
+  const normalized = stripJsonCodeFence(raw);
+  const attempts = [
+    normalized,
+    preferredShape === 'array'
+      ? extractBalancedJsonBlock(normalized, '[')
+      : extractBalancedJsonBlock(normalized, '{'),
+    preferredShape === 'array'
+      ? extractBalancedJsonBlock(normalized, '{')
+      : extractBalancedJsonBlock(normalized, '['),
+  ].filter((candidate): candidate is string => Boolean(candidate && candidate.trim()));
+
+  let lastError: Error | null = null;
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error as Error;
+    }
+  }
+
+  throw lastError || new Error('Invalid JSON payload');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toShortText(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
+function stripCodeFenceText(raw: string): string {
+  return raw.replace(/```[\w-]*\s*/gi, '').replace(/```/g, '').trim();
+}
+
+function isChapterOrdinalToken(value: string): boolean {
+  const normalized = value.replace(/[：:.\-]/g, '').trim();
+  return /^(?:第?\s*\d+\s*章?|\d+)$/.test(normalized);
+}
+
+function deriveHookFromGoal(goal: string): string {
+  const normalized = goal.trim();
+  if (!normalized) return '';
+  const parts = normalized
+    .split(/[，。！？!?；;]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const tail = parts[parts.length - 1] || normalized;
+  return tail.length > 20 ? tail.slice(0, 20) : tail;
+}
+
+function parseStructuredVolumeChapterText(
+  raw: string,
+  startChapter: number,
+  expectedCount: number
+): ChapterOutline[] {
+  const lines = stripCodeFenceText(raw)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const chapters: ChapterOutline[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine
+      .replace(/^[-*•]\s*/, '')
+      .replace(/^\d+\.\s*/, '')
+      .trim();
+    if (!line) continue;
+
+    const parts = line
+      .split(/[|｜]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length < 2) {
+      continue;
+    }
+
+    let titlePart = '';
+    let goalPart = '';
+
+    if (parts.length >= 3 && isChapterOrdinalToken(parts[0])) {
+      titlePart = parts[1];
+      goalPart = parts.slice(2).join('｜');
+    } else {
+      titlePart = parts[0];
+      goalPart = parts.slice(1).join('｜');
+    }
+
+    titlePart = titlePart.replace(/^标题[:：]\s*/i, '').trim();
+    goalPart = goalPart.replace(/^(?:描述|剧情|梗概|概要|内容)[:：]\s*/i, '').trim();
+
+    if (!titlePart || !goalPart) {
+      continue;
+    }
+
+    const index = startChapter + chapters.length;
+    chapters.push({
+      index,
+      title: titlePart,
+      goal: goalPart,
+      hook: deriveHookFromGoal(goalPart),
+    });
+
+    if (chapters.length >= expectedCount) {
+      break;
+    }
+  }
+
+  return chapters;
+}
+
+function normalizeVolumeChapterPayload(payload: unknown, startChapter: number): ChapterOutline[] {
+  let rawChapters: unknown = payload;
+  const wrapped = asRecord(payload);
+  if (wrapped) {
+    rawChapters = wrapped.chapters ?? wrapped.items ?? wrapped.volumeChapters ?? payload;
+  }
+
+  if (!Array.isArray(rawChapters)) {
+    throw new Error('Volume chapters payload is not an array');
+  }
+
+  return rawChapters.map((chapter, offset) => {
+    const record = asRecord(chapter);
+    const index = startChapter + offset;
+    return {
+      index: toNumber(record?.index ?? record?.chapterIndex ?? record?.chapter ?? record?.id, index),
+      title: toShortText(record?.title, `第${index}章`),
+      goal: toShortText(record?.goal ?? record?.summary ?? record?.description, ''),
+      hook: toShortText(record?.hook ?? record?.cliffhanger, ''),
+    };
+  });
+}
+
+function normalizeAdditionalVolumePayload(
+  payload: unknown,
+  startChapterBase: number,
+  chaptersPerVolume: number
+): Omit<VolumeOutline, 'chapters'>[] {
+  let rawVolumes: unknown = payload;
+  const wrapped = asRecord(payload);
+  if (wrapped) {
+    rawVolumes = wrapped.volumes ?? wrapped.items ?? payload;
+  }
+
+  if (!Array.isArray(rawVolumes)) {
+    throw new Error('Additional volumes payload is not an array');
+  }
+
+  let currentStart = startChapterBase;
+  return rawVolumes.map((volume, offset) => {
+    const record = asRecord(volume);
+    const title = toShortText(record?.title, `第${offset + 1}卷`);
+    const normalizedVolume: Omit<VolumeOutline, 'chapters'> = {
+      title,
+      startChapter: currentStart,
+      endChapter: currentStart + chaptersPerVolume - 1,
+      goal: toShortText(record?.goal ?? record?.summary, ''),
+      conflict: toShortText(record?.conflict ?? record?.coreConflict, ''),
+      climax: toShortText(record?.climax ?? record?.peak, ''),
+      volumeEndState: typeof record?.volumeEndState === 'string' ? record.volumeEndState.trim() : undefined,
+    };
+    currentStart = normalizedVolume.endChapter + 1;
+    return normalizedVolume;
+  });
+}
+
 /**
  * 生成总大纲
  */
@@ -142,10 +371,9 @@ ${charactersSummary}
 `.trim();
 
   const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
-  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
-    return JSON.parse(jsonText);
+    return parseLooseJson(raw, 'object') as { volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] };
   } catch {
     throw new Error('Failed to parse master outline JSON');
   }
@@ -180,15 +408,14 @@ export async function generateVolumeChapters(
 6. 禁止水章：每章都要推动剧情，不能有纯日常的章节
 7. 篇幅意识：章节设计要支撑单章不少于 ${minChapterWords} 字，避免目标过散导致注水或空章
 
-输出严格的 JSON 数组格式，不要有其他文字。
+不要输出 JSON。
+请按“每章一行”的纯文本格式输出，不要有前言、总结、代码块。
+每行固定格式：
+章节序号|章节标题|章节描述
 
-每章格式：
-{
-  "index": 章节序号,
-  "title": "章节标题（不含序号）",
-  "goal": "本章要完成什么（20字以内）",
-  "hook": "章末钩子（20字以内）"
-}
+示例：
+1|初入黑市|主角潜入黑市试探交易线索，却发现有人提前设局，离开前看到旧识留下的警告
+2|假面买家|主角伪装身份接触幕后买家，套出关键情报，但对方突然提出危险交换条件
 `.trim();
 
   const prompt = `
@@ -207,16 +434,32 @@ ${bible.slice(0, 2000)}...
 
 ${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
 
-请生成本卷所有 ${chapterCount} 章的大纲（JSON数组）：
+请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”：
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
-  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
+  const estimatedMaxTokens = Math.min(24000, Math.max(5000, chapterCount * 160));
+  const raw = await generateTextWithRetry(aiConfig, {
+    system,
+    prompt,
+    temperature: 0.7,
+    maxTokens: estimatedMaxTokens,
+  });
+
+  const textChapters = parseStructuredVolumeChapterText(raw, volume.startChapter, chapterCount);
+  if (textChapters.length === chapterCount) {
+    return textChapters;
+  }
 
   try {
-    return JSON.parse(jsonText);
+    return normalizeVolumeChapterPayload(
+      parseLooseJson(raw, 'array'),
+      volume.startChapter
+    );
   } catch {
-    throw new Error('Failed to parse volume chapters JSON');
+    if (textChapters.length > 0) {
+      throw new Error(`Failed to parse volume chapters text: expected ${chapterCount}, got ${textChapters.length}`);
+    }
+    throw new Error('Failed to parse volume chapters response');
   }
 }
 
@@ -304,19 +547,22 @@ ${lastVolume ? `${lastVolume.climax}（目标达成：${lastVolume.goal}）` : '
 请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）：
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
-  const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
+  const estimatedMaxTokens = Math.min(12000, Math.max(2500, newVolumeCount * 700));
+  const raw = await generateTextWithRetry(aiConfig, {
+    system,
+    prompt,
+    temperature: 0.7,
+    maxTokens: estimatedMaxTokens,
+  });
 
   try {
-    const result = JSON.parse(jsonText);
-    // 修正章节范围，确保连续
-    let currentStart = startChapterBase;
-    for (const vol of result.volumes) {
-      vol.startChapter = currentStart;
-      vol.endChapter = currentStart + chaptersPerVolume - 1;
-      currentStart = vol.endChapter + 1;
-    }
-    return result;
+    return {
+      volumes: normalizeAdditionalVolumePayload(
+        parseLooseJson(raw, 'object'),
+        startChapterBase,
+        chaptersPerVolume
+      ),
+    };
   } catch {
     throw new Error('Failed to parse additional volumes JSON');
   }
