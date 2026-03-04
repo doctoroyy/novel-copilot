@@ -418,6 +418,7 @@ editingRoutes.put('/projects/:name', async (c) => {
       role_settings,
       chapter_prompt_profile,
       chapter_prompt_custom,
+      enable_agent_mode,
       outline,
       minChapterWords,
     } = await c.req.json();
@@ -463,6 +464,7 @@ editingRoutes.put('/projects/:name', async (c) => {
         role_settings = COALESCE(?, role_settings),
         chapter_prompt_profile = COALESCE(?, chapter_prompt_profile),
         chapter_prompt_custom = COALESCE(?, chapter_prompt_custom),
+        enable_agent_mode = COALESCE(?, enable_agent_mode),
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
     `).bind(
@@ -471,6 +473,7 @@ editingRoutes.put('/projects/:name', async (c) => {
       role_settings,
       chapter_prompt_profile,
       chapter_prompt_custom,
+      enable_agent_mode != null ? (enable_agent_mode ? 1 : 0) : null,
       (project as any).id
     ).run();
 

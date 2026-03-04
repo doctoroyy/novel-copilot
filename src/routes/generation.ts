@@ -1448,6 +1448,7 @@ export async function runChapterGenerationTaskInBackground(params: {
           enableSelfReview,
           enableFullQC: false,
           enableAutoRepair: false,
+          enableAgentMode: Boolean(project.enable_agent_mode),
           skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
           onProgress: (message, status) => {
             updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
