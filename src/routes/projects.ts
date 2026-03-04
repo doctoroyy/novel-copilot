@@ -120,6 +120,7 @@ projectsRoutes.get('/:name', async (c) => {
       role_settings: (project as any).role_settings,
       chapter_prompt_profile: (project as any).chapter_prompt_profile,
       chapter_prompt_custom: (project as any).chapter_prompt_custom,
+      enable_agent_mode: Boolean((project as any).enable_agent_mode),
       outline: (project as any).outline_json ? JSON.parse((project as any).outline_json) : null,
       chapters: chapters.map((ch: any) => `${ch.chapter_index.toString().padStart(3, '0')}.md`),
     };

@@ -49,6 +49,7 @@ import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
 import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS, getSupportPassMaxTokens } from './utils/aiModelHelpers.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
+import { writeChapterWithAgent } from './agent/agentChapterEngine.js';
 import { z } from 'zod';
 
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
@@ -194,6 +195,12 @@ export type EnhancedWriteChapterParams = {
   skipSummaryUpdate?: boolean;
   /** 跳过状态更新 */
   skipStateUpdate?: boolean;
+  /** 启用 Agent 模式（ReAct 循环） */
+  enableAgentMode?: boolean;
+  /** Agent 最大推理轮次（默认 8） */
+  agentMaxTurns?: number;
+  /** Agent AI 调用预算（默认 15） */
+  agentMaxAICalls?: number;
   /** 进度回调 */
   onProgress?: (message: string, status?: 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary') => void;
 };
@@ -287,6 +294,9 @@ async function generateChapterDraft(
 export async function writeEnhancedChapter(
   params: EnhancedWriteChapterParams
 ): Promise<EnhancedWriteChapterResult> {
+  if (params.enableAgentMode) {
+    return writeChapterWithAgent(params);
+  }
   const startedAt = Date.now();
   const tracer = new AICallTracer();
   const {
