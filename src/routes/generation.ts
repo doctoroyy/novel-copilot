@@ -1708,7 +1708,9 @@ export async function runChapterGenerationTaskInBackground(params: {
           taskId,
           userId,
           aiConfig,
-          chaptersToGenerate
+          fallbackConfigs,
+          chaptersToGenerate,
+          enqueuedAt: Date.now(),
         });
       } catch (queueError) {
         console.error('[Queue] Failed to enqueue next step:', queueError);
@@ -1929,12 +1931,6 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   }
 
   const isResumed = Boolean(runningTaskCheck.isRunning && runningTaskCheck.taskId && isRunningTaskFresh);
-  const runningTaskKickThresholdMs = 25 * 1000;
-  const shouldKickResumedTask = Boolean(
-    isResumed
-    && runningTaskUpdatedAt > 0
-    && (Date.now() - runningTaskUpdatedAt) >= runningTaskKickThresholdMs
-  );
 
   const taskId = isResumed
     ? (runningTaskCheck.taskId as number)
@@ -1946,11 +1942,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       startingIndex
     );
 
-  // For resumed active tasks, avoid duplicate enqueue storms caused by reconnect.
-  // Only kick when the task looks stalled for a short period.
-  if (!isResumed || shouldKickResumedTask) {
+  // A resumed task is already running in the queue. Re-enqueueing it from a reconnect
+  // can start duplicate workers for the same chapter and stall the pipeline.
+  if (!isResumed) {
     const fallbackConfigs = await getFallbackAIConfigsFromRegistry(c.env.DB, aiConfig.model);
-    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
+    await startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
   }
 
   const initialTask = await getTaskById(c.env.DB, taskId, userId);
@@ -2195,7 +2191,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
     const origin = new URL(c.req.url).origin;
 
     const fallbackConfigs = await getFallbackAIConfigsFromRegistry(c.env.DB, aiConfig.model);
-    startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
+    await startGenerationChain(c, taskId, userId, aiConfig, chaptersToGenerate, fallbackConfigs);
 
     // We return immediately, the task runs in background (via startGenerationChain -> waitUntil)
     // Client can poll task status or listen to SSE
