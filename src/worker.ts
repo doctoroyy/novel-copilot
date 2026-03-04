@@ -259,6 +259,7 @@ export default {
           await runChapterGenerationTaskInBackground({
             env,
             aiConfig: payload.aiConfig,
+            fallbackConfigs: payload.fallbackConfigs,
             userId: payload.userId,
             taskId: payload.taskId,
             chaptersToGenerate: payload.chaptersToGenerate,
