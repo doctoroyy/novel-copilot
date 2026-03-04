@@ -59,6 +59,8 @@ export class AICallTracer {
 export interface AICallOptions {
   tracer?: AICallTracer;
   phase?: AICallPhase;
+  timeoutMs?: number;
+  maxRetries?: number;
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
@@ -160,7 +162,8 @@ export async function generateText(
   const startTime = Date.now();
   const model = toPiAiModel(config);
   const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), AI_REQUEST_TIMEOUT_MS);
+  const timeoutMs = callOptions?.timeoutMs ?? AI_REQUEST_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
@@ -211,7 +214,7 @@ export async function generateText(
   } catch (error) {
     // Wrap AbortError with a clearer message
     const actualError = abortController.signal.aborted
-      ? new Error(`AI request timed out after ${AI_REQUEST_TIMEOUT_MS / 1000}s (${config.provider}/${config.model})`)
+      ? new Error(`AI request timed out after ${timeoutMs / 1000}s (${config.provider}/${config.model})`)
       : error as Error;
     // Record failed trace
     if (callOptions?.tracer) {
@@ -331,8 +334,9 @@ export async function generateTextWithRetry(
 ): Promise<string> {
   let lastError: Error | undefined;
   const requestArgs: Parameters<typeof generateText>[1] = { ...args };
+  const retryLimit = callOptions?.maxRetries ?? maxRetries;
 
-  for (let i = 0; i < maxRetries; i++) {
+  for (let i = 0; i < retryLimit; i++) {
     try {
       return await generateText(config, requestArgs, callOptions);
     } catch (error) {
@@ -361,7 +365,7 @@ export async function generateTextWithRetry(
     }
   }
 
-  throw new Error(`Failed after ${maxRetries} retries: ${lastError?.message}`);
+  throw new Error(`Failed after ${retryLimit} retries: ${lastError?.message}`);
 }
 
 
@@ -385,6 +389,7 @@ export async function generateTextWithFallback(
 ): Promise<string> {
   const allConfigs = [configs.primary, ...(configs.fallback || [])];
   const switchOn = configs.switchConditions || ['rate_limit', 'server_error', 'timeout'];
+  const retryLimit = callOptions?.maxRetries ?? maxRetriesPerProvider;
 
   let lastError: Error | undefined;
 
@@ -393,7 +398,7 @@ export async function generateTextWithFallback(
     const isLastProvider = providerIndex === allConfigs.length - 1;
     const requestArgs: Parameters<typeof generateText>[1] = { ...args };
 
-    for (let attempt = 0; attempt < maxRetriesPerProvider; attempt++) {
+    for (let attempt = 0; attempt < retryLimit; attempt++) {
       try {
         return await generateText(config, requestArgs, callOptions);
       } catch (error) {
@@ -426,7 +431,7 @@ export async function generateTextWithFallback(
           throw lastError;
         }
 
-        if (attempt === maxRetriesPerProvider - 1 && switchOn.includes(errorType) && !isLastProvider) {
+        if (attempt === retryLimit - 1 && switchOn.includes(errorType) && !isLastProvider) {
           console.log(`Switching to fallback provider after ${errorType}...`);
           break;
         }

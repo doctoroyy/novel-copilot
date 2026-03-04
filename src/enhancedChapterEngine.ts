@@ -57,6 +57,8 @@ const MAX_CHAPTER_WORDS_LIMIT = 20000;
 const PLAN_MAX_TOKENS = 700;
 const SELF_REVIEW_MAX_TOKENS = 500;
 const SUMMARY_UPDATE_MAX_TOKENS = 1200;
+const PLANNING_CALL_TIMEOUT_MS = 90 * 1000;
+const PLANNING_CALL_MAX_RETRIES = 2;
 
 function normalizeMinChapterWords(value: number | undefined): number {
   const parsed = Number.parseInt(String(value ?? DEFAULT_MIN_CHAPTER_WORDS), 10);
@@ -357,7 +359,7 @@ export async function writeEnhancedChapter(
   let summaryCalls = 0;
 
   if (enableContextOptimization) {
-    params.onProgress?.('正在优化上下文...', 'analyzing');
+    params.onProgress?.('正在构建上下文...', 'analyzing');
     const contextBuildStartedAt = Date.now();
     // 使用优化后的上下文
     optimizedContext = buildOptimizedContext({
@@ -378,6 +380,7 @@ export async function writeEnhancedChapter(
     contextBuildDurationMs = Date.now() - contextBuildStartedAt;
 
     if (enablePlanning) {
+      params.onProgress?.('正在生成章节计划...', 'planning');
       planningCalls++;
       const planningStartedAt = Date.now();
       chapterPlanText = await generateChapterPlan(
@@ -398,10 +401,12 @@ ${buildChapterGoalSection(params, enhancedOutline)}
 请写出本章内容：`;
   } else {
     // 使用传统上下文构建
+    params.onProgress?.('正在整理上下文...', 'analyzing');
     const contextBuildStartedAt = Date.now();
     if (enablePlanning) {
       const planningContext = buildPlanningContext(params, narrativeGuide);
       contextBuildDurationMs = Date.now() - contextBuildStartedAt;
+      params.onProgress?.('正在生成章节计划...', 'planning');
       planningCalls++;
       const planningStartedAt = Date.now();
       chapterPlanText = await generateChapterPlan(
@@ -1079,6 +1084,11 @@ async function generateChapterPlan(
   chapterGoal: string,
   callOptions?: AICallOptions
 ): Promise<string | undefined> {
+  const planningCallOptions: AICallOptions = {
+    ...callOptions,
+    timeoutMs: callOptions?.timeoutMs ?? PLANNING_CALL_TIMEOUT_MS,
+    maxRetries: callOptions?.maxRetries ?? PLANNING_CALL_MAX_RETRIES,
+  };
   const system = `
 你是小说策划助手。请基于上下文给出本章写作计划。
 只输出严格的 JSON，不要输出任何其他文字。
@@ -1108,7 +1118,7 @@ ${chapterGoal}
     prompt,
     temperature: 0.4,
     maxTokens: getEnhancedSupportPassMaxTokens(aiConfig, 'planning'),
-  }, callOptions);
+  }, planningCallOptions);
   const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
 
   try {
