@@ -478,7 +478,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
       const vol = masterOutline.volumes[i];
       const previousVolumeEndState = i > 0
         ? masterOutline.volumes[i - 1].volumeEndState ||
-        `${masterOutline.volumes[i - 1].climax}（主角已达成：${masterOutline.volumes[i - 1].goal}）`
+        `${masterOutline.volumes[i - 1].title}\n目标: ${masterOutline.volumes[i - 1].goal}\n高潮: ${masterOutline.volumes[i - 1].climax}`
         : null;
 
       await updateTaskMessage(
@@ -612,10 +612,11 @@ async function runAppendVolumesMode(params: {
     if (i === 0 && existingVolumes.length > 0) {
       const lastExisting = existingVolumes[existingVolumes.length - 1];
       previousVolumeSummary = lastExisting.volumeEndState ||
-        `${lastExisting.climax}（主角已达成：${lastExisting.goal}）`;
+        `${lastExisting.title}\n目标: ${lastExisting.goal}\n高潮: ${lastExisting.climax}`;
     } else if (i > 0) {
       const prevNew = newVolumeSkeletons[i - 1];
-      previousVolumeSummary = `${prevNew.climax}（主角已达成：${prevNew.goal}）`;
+      previousVolumeSummary = prevNew.volumeEndState ||
+        `${prevNew.title}\n目标: ${prevNew.goal}\n高潮: ${prevNew.climax}`;
     }
 
     const chapters = await generateVolumeChapters(aiConfig, {
@@ -1358,7 +1359,28 @@ export async function runChapterGenerationTaskInBackground(params: {
           const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
           if (ch) {
             outlineTitle = ch.title;
-            chapterGoalHint = `【章节大纲】\n- 标题: ${ch.title}\n- 目标: ${ch.goal}\n- 章末钩子: ${ch.hook}`;
+
+            const parts = [
+              `【章节大纲】`,
+              `- 标题: ${ch.title}`,
+              `- 目标: ${ch.goal}`,
+              `- 章末钩子: ${ch.hook}`,
+            ];
+
+            // 卷边界：如果是本卷第一章，注入卷级上下文
+            if (chapterIndex === Number(vol.startChapter)) {
+              parts.push(`\n【本卷目标】${vol.goal}`);
+              parts.push(`【本卷核心冲突】${vol.conflict}`);
+
+              const volIndex = outline.volumes.indexOf(vol);
+              if (volIndex > 0) {
+                const prevVol = outline.volumes[volIndex - 1];
+                parts.push(`\n【上卷结局】${prevVol.volumeEndState || prevVol.climax}`);
+                parts.push(`【衔接要求】本章开头需自然承接上卷结局，不要重复叙述已发生的事件`);
+              }
+            }
+
+            chapterGoalHint = parts.join('\n');
             break;
           }
         }
@@ -2667,10 +2689,11 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           if (i === 0 && existingVolumes.length > 0) {
             const lastExisting = existingVolumes[existingVolumes.length - 1];
             previousVolumeSummary = lastExisting.volumeEndState ||
-              `${lastExisting.climax}（主角已达成：${lastExisting.goal}）`;
+              `${lastExisting.title}\n目标: ${lastExisting.goal}\n高潮: ${lastExisting.climax}`;
           } else if (i > 0) {
             const prevNew = newVolumeSkeletons[i - 1];
-            previousVolumeSummary = `${prevNew.climax}（主角已达成：${prevNew.goal}）`;
+            previousVolumeSummary = prevNew.volumeEndState ||
+              `${prevNew.title}\n目标: ${prevNew.goal}\n高潮: ${prevNew.climax}`;
           }
 
           const chapters = await generateVolumeChapters(aiConfig, {
@@ -2866,7 +2889,7 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
           if (idx > 0) {
             const prevVol = volumes[idx - 1];
             previousVolumeSummary = prevVol.volumeEndState ||
-              `${prevVol.climax}（主角已达成：${prevVol.goal}）`;
+              `${prevVol.title}\n目标: ${prevVol.goal}\n高潮: ${prevVol.climax}`;
           }
 
           const chaptersData = await generateVolumeChapters(aiConfig, {
