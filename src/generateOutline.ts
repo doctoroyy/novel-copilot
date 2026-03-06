@@ -391,9 +391,11 @@ export async function generateVolumeChapters(
     volume: Omit<VolumeOutline, 'chapters'>;
     previousVolumeSummary?: string;
     minChapterWords?: number;
+    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
+    actualStorySummary?: string;
   }
 ): Promise<ChapterOutline[]> {
-  const { bible, masterOutline, volume, previousVolumeSummary, minChapterWords = 2500 } = args;
+  const { bible, masterOutline, volume, previousVolumeSummary, minChapterWords = 2500, actualStorySummary } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
 
@@ -433,7 +435,9 @@ ${bible.slice(0, 4000)}
 - 本卷高潮: ${volume.climax}
 - 每章最低字数: ${minChapterWords} 字
 
-${previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
+${actualStorySummary
+    ? `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`
+    : previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
 
 请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”：
 `.trim();
@@ -480,9 +484,11 @@ export async function generateAdditionalVolumes(
     newVolumeCount: number;
     chaptersPerVolume: number;
     minChapterWords?: number;
+    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
+    actualStorySummary?: string;
   }
 ): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[] }> {
-  const { bible, existingOutline, newVolumeCount, chaptersPerVolume, minChapterWords = 2500 } = args;
+  const { bible, existingOutline, newVolumeCount, chaptersPerVolume, minChapterWords = 2500, actualStorySummary } = args;
 
   // 计算新卷的起始章节号
   const lastVolume = existingOutline.volumes[existingOutline.volumes.length - 1];
@@ -536,7 +542,9 @@ ${bible}
 ${existingVolumesSummary}
 
 【上一卷结尾状态】
-${lastVolume ? `${lastVolume.volumeEndState || lastVolume.climax}\n目标达成: ${lastVolume.goal}\n高潮: ${lastVolume.climax}` : '这是第一卷'}
+${actualStorySummary
+    ? `【实际剧情进展（以此为准）】\n${actualStorySummary}`
+    : lastVolume ? `${lastVolume.volumeEndState || lastVolume.climax}\n目标达成: ${lastVolume.goal}\n高潮: ${lastVolume.climax}` : '这是第一卷'}
 
 【追加要求】
 - 新增 ${newVolumeCount} 卷
