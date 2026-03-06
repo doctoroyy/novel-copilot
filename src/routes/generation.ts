@@ -565,6 +565,12 @@ async function runAppendVolumesMode(params: {
   const existingOutline = JSON.parse(outlineRecord.outline_json);
   const existingVolumes = existingOutline.volumes || [];
 
+  // 获取实际剧情摘要（rolling_summary），用于确保新卷与实际内容对齐
+  const stateRecord = await env.DB.prepare(`
+    SELECT rolling_summary FROM states WHERE project_id = ?
+  `).bind(project.id).first() as { rolling_summary?: string } | null;
+  const actualStorySummary = stateRecord?.rolling_summary || undefined;
+
   await updateTaskMessage(env.DB, taskId, `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷的骨架...`, 10);
 
   // 生成新卷骨架
@@ -580,6 +586,7 @@ async function runAppendVolumesMode(params: {
     newVolumeCount,
     chaptersPerVolume,
     minChapterWords: effectiveMinChapterWords,
+    actualStorySummary,
   });
 
   const newVolumeSkeletons = newVolumesResult.volumes || [];
@@ -625,6 +632,8 @@ async function runAppendVolumesMode(params: {
       volume: vol,
       previousVolumeSummary,
       minChapterWords: effectiveMinChapterWords,
+      // 第一个新卷使用实际剧情摘要，确保与已生成内容对齐
+      actualStorySummary: i === 0 ? actualStorySummary : undefined,
     });
 
     const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);
@@ -2618,6 +2627,12 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
         const existingOutline = JSON.parse((outlineRecord as any).outline_json);
         const existingVolumes = existingOutline.volumes || [];
 
+        // 获取实际剧情摘要
+        const sseStateRecord = await c.env.DB.prepare(`
+          SELECT rolling_summary FROM states WHERE project_id = ?
+        `).bind(projectId).first() as { rolling_summary?: string } | null;
+        const actualStorySummary = sseStateRecord?.rolling_summary || undefined;
+
         // 注册到任务中心
         const bgResult = await createBackgroundTask(
           c.env.DB,
@@ -2657,6 +2672,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           newVolumeCount,
           chaptersPerVolume,
           minChapterWords: effectiveMinChapterWords,
+          actualStorySummary,
         });
 
         const newVolumeSkeletons = newVolumesResult.volumes || [];
@@ -2702,6 +2718,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
             volume: vol,
             previousVolumeSummary,
             minChapterWords: effectiveMinChapterWords,
+            actualStorySummary: i === 0 ? actualStorySummary : undefined,
           });
 
           const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);
