@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
+import { normalizeNovelOutline } from '../utils/outline.js';
 
 export const editingRoutes = new Hono<{ Bindings: Env }>();
 
@@ -241,22 +242,30 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
     }
 
     const projectId = (project as any).id;
+    const normalizedOutline = normalizeNovelOutline(outline, {
+      fallbackMinChapterWords: (project as any).min_chapter_words,
+      fallbackTotalChapters: (project as any).total_chapters,
+    });
+
+    if (!normalizedOutline) {
+      return c.json({ success: false, error: 'outline 格式不正确' }, 400);
+    }
 
     // Check if outline exists
     const existing = await c.env.DB.prepare(`
-      SELECT id FROM outlines WHERE project_id = ?
+      SELECT project_id FROM outlines WHERE project_id = ?
     `).bind(projectId).first();
 
     if (existing) {
       // Update
       await c.env.DB.prepare(`
-        UPDATE outlines SET outline_json = ?, updated_at = (unixepoch() * 1000) WHERE project_id = ?
-      `).bind(JSON.stringify(outline), projectId).run();
+        UPDATE outlines SET outline_json = ? WHERE project_id = ?
+      `).bind(JSON.stringify(normalizedOutline), projectId).run();
     } else {
       // Insert (should strictly not happen if calling update, but good fallback)
       await c.env.DB.prepare(`
         INSERT INTO outlines (project_id, outline_json) VALUES (?, ?)
-      `).bind(projectId, JSON.stringify(outline)).run();
+      `).bind(projectId, JSON.stringify(normalizedOutline)).run();
     }
 
     return c.json({ success: true });

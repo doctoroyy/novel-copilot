@@ -69,6 +69,248 @@ export type ProjectDetail = {
   chapters: string[];
 };
 
+function asOutlineRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function firstOutlineText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+function toOutlineInteger(value: unknown, fallback: number): number {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeOutlineMilestones(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => firstOutlineText(item))
+    .filter(Boolean);
+}
+
+function normalizeOutlineChapter(raw: unknown, fallbackIndex: number): ChapterOutline {
+  const record = asOutlineRecord(raw);
+  const index = toOutlineInteger(record?.index ?? record?.chapterIndex, fallbackIndex);
+  return {
+    index,
+    title: firstOutlineText(record?.title) || `第${index}章`,
+    goal: firstOutlineText(record?.goal, record?.summary, record?.description, record?.objective),
+    hook: firstOutlineText(record?.hook, record?.hooks, record?.cliffhanger, record?.summary),
+  };
+}
+
+function buildOutlineVolumes(chapters: ChapterOutline[]): VolumeOutline[] {
+  if (chapters.length === 0) return [];
+
+  const volumeCount = chapters.length >= 24 ? 3 : chapters.length >= 12 ? 2 : 1;
+  const chunkSize = Math.ceil(chapters.length / volumeCount);
+  const volumes: VolumeOutline[] = [];
+
+  for (let index = 0; index < volumeCount; index += 1) {
+    const chunk = chapters.slice(index * chunkSize, (index + 1) * chunkSize);
+    if (chunk.length === 0) continue;
+
+    const firstChapter = chunk[0];
+    const lastChapter = chunk[chunk.length - 1];
+
+    volumes.push({
+      title: volumeCount === 1 ? '全书主线' : `第${index + 1}卷`,
+      startChapter: firstChapter.index,
+      endChapter: lastChapter.index,
+      goal: firstChapter.goal || `推进第 ${firstChapter.index}-${lastChapter.index} 章主线`,
+      conflict: chunk.find((chapter) => chapter.hook)?.hook || '',
+      climax: lastChapter.hook || lastChapter.title,
+      chapters: chunk,
+    });
+  }
+
+  return volumes;
+}
+
+function normalizeOutlineValue(raw: unknown, minChapterWords?: number, totalChaptersFallback?: number): NovelOutline | null {
+  if (!raw) return null;
+
+  let volumes: VolumeOutline[] = [];
+  let mainGoal = '';
+  let milestones: string[] = [];
+  let rawTotalChapters: unknown;
+  let rawTargetWordCount: unknown;
+
+  if (Array.isArray(raw)) {
+    const chapters = raw
+      .map((chapter, index) => normalizeOutlineChapter(chapter, index + 1))
+      .sort((left, right) => left.index - right.index);
+    volumes = buildOutlineVolumes(chapters);
+    mainGoal = chapters[chapters.length - 1]?.goal || chapters[0]?.goal || '';
+  } else {
+    const record = asOutlineRecord(raw);
+    if (!record) return null;
+
+    rawTotalChapters = record.totalChapters;
+    rawTargetWordCount = record.targetWordCount;
+    mainGoal = firstOutlineText(record.mainGoal, record.goal, record.summary);
+    milestones = normalizeOutlineMilestones(record.milestones);
+
+    if (Array.isArray(record.volumes) && record.volumes.length > 0) {
+      volumes = record.volumes
+        .map((volume, volumeIndex) => {
+          const volumeRecord = asOutlineRecord(volume);
+          if (!volumeRecord || !Array.isArray(volumeRecord.chapters) || volumeRecord.chapters.length === 0) {
+            return null;
+          }
+          const chapters = volumeRecord.chapters
+            .map((chapter, chapterIndex) => normalizeOutlineChapter(
+              chapter,
+              toOutlineInteger(volumeRecord.startChapter, chapterIndex + 1),
+            ))
+            .sort((left, right) => left.index - right.index);
+          const firstChapter = chapters[0];
+          const lastChapter = chapters[chapters.length - 1];
+          return {
+            title: firstOutlineText(volumeRecord.title) || `第${volumeIndex + 1}卷`,
+            startChapter: toOutlineInteger(volumeRecord.startChapter, firstChapter.index),
+            endChapter: toOutlineInteger(volumeRecord.endChapter, lastChapter.index),
+            goal: firstOutlineText(volumeRecord.goal, firstChapter.goal),
+            conflict: firstOutlineText(volumeRecord.conflict),
+            climax: firstOutlineText(volumeRecord.climax, lastChapter.hook, lastChapter.title),
+            chapters,
+          };
+        })
+        .filter((volume): volume is VolumeOutline => Boolean(volume));
+    } else if (Array.isArray(record.chapters) && record.chapters.length > 0) {
+      const chapters = record.chapters
+        .map((chapter, index) => normalizeOutlineChapter(chapter, index + 1))
+        .sort((left, right) => left.index - right.index);
+      volumes = buildOutlineVolumes(chapters);
+    }
+  }
+
+  if (volumes.length === 0) return null;
+
+  const allChapters = volumes
+    .flatMap((volume) => volume.chapters)
+    .sort((left, right) => left.index - right.index);
+  const fallbackTotalChapters = totalChaptersFallback && totalChaptersFallback > 0
+    ? totalChaptersFallback
+    : (allChapters[allChapters.length - 1]?.index || allChapters.length);
+  const totalChapters = toOutlineInteger(rawTotalChapters, fallbackTotalChapters);
+  const targetWordCount = toOutlineInteger(
+    rawTargetWordCount,
+    Math.max(1, Math.ceil((totalChapters * Math.max(500, minChapterWords || 2500)) / 10000)),
+  );
+
+  if (!mainGoal) {
+    mainGoal = allChapters[allChapters.length - 1]?.goal || allChapters[0]?.goal || `推进全书主线，共 ${totalChapters} 章`;
+  }
+
+  if (milestones.length === 0) {
+    milestones = volumes.map((volume) => volume.goal
+      ? `${volume.title}：${volume.goal}`
+      : `${volume.title}：完成第 ${volume.startChapter}-${volume.endChapter} 章`);
+  }
+
+  return {
+    totalChapters,
+    targetWordCount,
+    volumes,
+    mainGoal,
+    milestones,
+  };
+}
+
+export type AgentSkill = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  sourceUrl: string | null;
+  instructions: string;
+  starterPrompts: string[];
+  references: string[];
+  toolAllowlist: string[];
+  defaultEnabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ProjectCopilotSettings = {
+  enabled: boolean;
+  enabledSkillIds: string[];
+};
+
+export type AgentSessionSummary = {
+  id: string;
+  title: string;
+  enabledSkillIds: string[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type AgentMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'trace' | 'result' | 'system';
+  content: string;
+  payload: Record<string, unknown> | null;
+  createdAt: number;
+};
+
+export type AgentProposalAction = {
+  type: 'update_project' | 'replace_outline' | 'update_characters' | 'upsert_chapter' | 'delete_chapter';
+  summary: string;
+  payload: Record<string, unknown>;
+};
+
+export type AgentProposal = {
+  id: string;
+  sessionId: string;
+  userMessageId: string | null;
+  assistantMessageId: string | null;
+  goal: string;
+  summary: string;
+  reasoningSummary: string;
+  actions: AgentProposalAction[];
+  preview: {
+    project: string[];
+    outline: string[];
+    characters: string[];
+    chapters: string[];
+  };
+  riskLevel: 'low' | 'medium' | 'high';
+  status: 'pending' | 'confirmed' | 'executed' | 'failed' | 'rejected';
+  resultSummary: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  executedAt: number | null;
+};
+
+export type CopilotEntry =
+  | { kind: 'message'; message: AgentMessage; createdAt: number }
+  | { kind: 'proposal'; proposal: AgentProposal; createdAt: number };
+
+export type AgentSessionDetail = {
+  session: AgentSessionSummary;
+  entries: CopilotEntry[];
+};
+
+export type CopilotWorkspace = {
+  project: {
+    id: string;
+    name: string;
+  };
+  settings: ProjectCopilotSettings;
+  skills: AgentSkill[];
+  sessions: AgentSessionSummary[];
+};
+
 export type BibleImagineTemplate = {
   id: string;
   name: string;
@@ -168,6 +410,104 @@ function parseTemplateRefreshJob(raw: any): BibleTemplateRefreshJob {
   };
 }
 
+function parseAgentSkill(raw: any): AgentSkill {
+  return {
+    id: String(raw?.id || ''),
+    slug: String(raw?.slug || ''),
+    name: String(raw?.name || ''),
+    description: String(raw?.description || ''),
+    sourceUrl: raw?.sourceUrl ? String(raw.sourceUrl) : raw?.source_url ? String(raw.source_url) : null,
+    instructions: String(raw?.instructions || ''),
+    starterPrompts: Array.isArray(raw?.starterPrompts) ? raw.starterPrompts.map((item: any) => String(item)) : [],
+    references: Array.isArray(raw?.references) ? raw.references.map((item: any) => String(item)) : [],
+    toolAllowlist: Array.isArray(raw?.toolAllowlist) ? raw.toolAllowlist.map((item: any) => String(item)) : [],
+    defaultEnabled: Boolean(raw?.defaultEnabled ?? raw?.default_enabled),
+    createdAt: Number(raw?.createdAt ?? raw?.created_at ?? 0),
+    updatedAt: Number(raw?.updatedAt ?? raw?.updated_at ?? 0),
+  };
+}
+
+function parseAgentSessionSummary(raw: any): AgentSessionSummary {
+  return {
+    id: String(raw?.id || ''),
+    title: String(raw?.title || '新会话'),
+    enabledSkillIds: Array.isArray(raw?.enabledSkillIds)
+      ? raw.enabledSkillIds.map((item: any) => String(item))
+      : Array.isArray(raw?.enabled_skill_ids)
+        ? raw.enabled_skill_ids.map((item: any) => String(item))
+        : [],
+    createdAt: Number(raw?.createdAt ?? raw?.created_at ?? 0),
+    updatedAt: Number(raw?.updatedAt ?? raw?.updated_at ?? 0),
+  };
+}
+
+function parseAgentMessage(raw: any): AgentMessage {
+  return {
+    id: String(raw?.id || ''),
+    role: (raw?.role || 'assistant') as AgentMessage['role'],
+    content: String(raw?.content || ''),
+    payload: raw?.payload && typeof raw.payload === 'object' ? raw.payload : null,
+    createdAt: Number(raw?.createdAt ?? raw?.created_at ?? 0),
+  };
+}
+
+function parseAgentProposal(raw: any): AgentProposal {
+  return {
+    id: String(raw?.id || ''),
+    sessionId: String(raw?.sessionId ?? raw?.session_id ?? ''),
+    userMessageId: raw?.userMessageId ? String(raw.userMessageId) : raw?.user_message_id ? String(raw.user_message_id) : null,
+    assistantMessageId: raw?.assistantMessageId ? String(raw.assistantMessageId) : raw?.assistant_message_id ? String(raw.assistant_message_id) : null,
+    goal: String(raw?.goal || ''),
+    summary: String(raw?.summary || ''),
+    reasoningSummary: String(raw?.reasoningSummary ?? raw?.reasoning_summary ?? ''),
+    actions: Array.isArray(raw?.actions)
+      ? raw.actions.map((action: any) => ({
+        type: (action?.type || 'update_project') as AgentProposalAction['type'],
+        summary: String(action?.summary || ''),
+        payload: action?.payload && typeof action.payload === 'object' ? action.payload : {},
+      }))
+      : [],
+    preview: {
+      project: Array.isArray(raw?.preview?.project) ? raw.preview.project.map((item: any) => String(item)) : [],
+      outline: Array.isArray(raw?.preview?.outline) ? raw.preview.outline.map((item: any) => String(item)) : [],
+      characters: Array.isArray(raw?.preview?.characters) ? raw.preview.characters.map((item: any) => String(item)) : [],
+      chapters: Array.isArray(raw?.preview?.chapters) ? raw.preview.chapters.map((item: any) => String(item)) : [],
+    },
+    riskLevel: (raw?.riskLevel ?? raw?.risk_level ?? 'medium') as AgentProposal['riskLevel'],
+    status: (raw?.status || 'pending') as AgentProposal['status'],
+    resultSummary: raw?.resultSummary ? String(raw.resultSummary) : raw?.result_summary ? String(raw.result_summary) : null,
+    errorMessage: raw?.errorMessage ? String(raw.errorMessage) : raw?.error_message ? String(raw.error_message) : null,
+    createdAt: Number(raw?.createdAt ?? raw?.created_at ?? 0),
+    updatedAt: Number(raw?.updatedAt ?? raw?.updated_at ?? 0),
+    executedAt: raw?.executedAt == null && raw?.executed_at == null ? null : Number(raw?.executedAt ?? raw?.executed_at ?? 0),
+  };
+}
+
+function parseCopilotEntry(raw: any): CopilotEntry {
+  if (raw?.kind === 'proposal') {
+    const proposal = parseAgentProposal(raw?.proposal);
+    return {
+      kind: 'proposal',
+      proposal,
+      createdAt: Number(raw?.createdAt ?? raw?.created_at ?? proposal.createdAt),
+    };
+  }
+
+  const message = parseAgentMessage(raw?.message);
+  return {
+    kind: 'message',
+    message,
+    createdAt: Number(raw?.createdAt ?? raw?.created_at ?? message.createdAt),
+  };
+}
+
+function parseAgentSessionDetail(raw: any): AgentSessionDetail {
+  return {
+    session: parseAgentSessionSummary(raw?.session),
+    entries: Array.isArray(raw?.entries) ? raw.entries.map(parseCopilotEntry) : [],
+  };
+}
+
 // Helper to merge headers with auth
 function mergeHeaders(base: Record<string, string>, extra?: Record<string, string>): Record<string, string> {
   return { ...getAuthHeaders(), ...base, ...extra };
@@ -202,10 +542,16 @@ export async function fetchProject(name: string): Promise<ProjectDetail> {
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   const id = String(data.project.id || data.project.path || '');
+  const outline = normalizeOutlineValue(
+    data.project.outline,
+    Number(data.project?.state?.minChapterWords || 0),
+    Number(data.project?.state?.totalChapters || 0),
+  );
   return {
     ...data.project,
     id,
     path: String(data.project.path || id),
+    outline,
   } as ProjectDetail;
 }
 
@@ -1151,6 +1497,175 @@ export async function updateProject(
   const json = await res.json();
   if (!json.success) throw new Error(json.error);
   if (!json.success) throw new Error(json.error);
+}
+
+export async function fetchCopilotWorkspace(projectRef: string): Promise<CopilotWorkspace> {
+  const res = await fetch(`${API_BASE}/agent/projects/${encodeURIComponent(projectRef)}/workspace`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || '加载 Copilot 工作区失败');
+  return {
+    project: {
+      id: String(data.workspace?.project?.id || ''),
+      name: String(data.workspace?.project?.name || ''),
+    },
+    settings: {
+      enabled: Boolean(data.workspace?.settings?.enabled),
+      enabledSkillIds: Array.isArray(data.workspace?.settings?.enabledSkillIds)
+        ? data.workspace.settings.enabledSkillIds.map((item: any) => String(item))
+        : [],
+    },
+    skills: Array.isArray(data.workspace?.skills) ? data.workspace.skills.map(parseAgentSkill) : [],
+    sessions: Array.isArray(data.workspace?.sessions) ? data.workspace.sessions.map(parseAgentSessionSummary) : [],
+  };
+}
+
+export async function updateCopilotSettings(
+  projectRef: string,
+  data: Partial<ProjectCopilotSettings>
+): Promise<ProjectCopilotSettings> {
+  const res = await fetch(`${API_BASE}/agent/projects/${encodeURIComponent(projectRef)}/settings`, {
+    method: 'PUT',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || '更新 Copilot 设置失败');
+  return {
+    enabled: Boolean(json.settings?.enabled),
+    enabledSkillIds: Array.isArray(json.settings?.enabledSkillIds)
+      ? json.settings.enabledSkillIds.map((item: any) => String(item))
+      : [],
+  };
+}
+
+export async function createCopilotSession(
+  projectRef: string,
+  title?: string
+): Promise<AgentSessionSummary> {
+  const res = await fetch(`${API_BASE}/agent/projects/${encodeURIComponent(projectRef)}/sessions`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ title }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || '创建 Copilot 会话失败');
+  return parseAgentSessionSummary(json.session);
+}
+
+export async function fetchCopilotSession(sessionId: string): Promise<AgentSessionDetail> {
+  const res = await fetch(`${API_BASE}/agent/sessions/${encodeURIComponent(sessionId)}`, {
+    headers: defaultHeaders(),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || '加载 Copilot 会话失败');
+  return parseAgentSessionDetail(json.detail);
+}
+
+export async function sendCopilotMessage(
+  sessionId: string,
+  content: string
+): Promise<AgentSessionDetail> {
+  const res = await fetch(`${API_BASE}/agent/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ content }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || '发送 Copilot 消息失败');
+  return parseAgentSessionDetail(json.detail);
+}
+
+export async function sendCopilotMessageStream(
+  sessionId: string,
+  content: string,
+  callbacks?: {
+    onMessage?: (message: AgentMessage) => void;
+    onAssistantDelta?: (delta: string) => void;
+    onProposal?: (proposal: AgentProposal) => void;
+    onDone?: (detail: AgentSessionDetail) => void;
+    onError?: (error: string) => void;
+  }
+): Promise<AgentSessionDetail> {
+  const res = await fetch(`${API_BASE}/agent/sessions/${encodeURIComponent(sessionId)}/messages?stream=1`, {
+    method: 'POST',
+    headers: mergeHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    }),
+    body: JSON.stringify({ content }),
+  });
+
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(json.error || '发送 Copilot 消息失败');
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalDetail: AgentSessionDetail | null = null;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+
+        try {
+          const event = JSON.parse(jsonStr);
+          if (event.type === 'message' && event.message) {
+            callbacks?.onMessage?.(parseAgentMessage(event.message));
+          } else if (event.type === 'assistant_delta') {
+            callbacks?.onAssistantDelta?.(String(event.delta || ''));
+          } else if (event.type === 'proposal' && event.proposal) {
+            callbacks?.onProposal?.(parseAgentProposal(event.proposal));
+          } else if (event.type === 'done' && event.detail) {
+            finalDetail = parseAgentSessionDetail(event.detail);
+            callbacks?.onDone?.(finalDetail);
+          } else if (event.type === 'error') {
+            const errorMessage = String(event.error || '发送 Copilot 消息失败');
+            callbacks?.onError?.(errorMessage);
+            throw new Error(errorMessage);
+          }
+        } catch (error) {
+          if (error instanceof SyntaxError) continue;
+          throw error;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!finalDetail) {
+    throw new Error('Copilot stream ended without final detail');
+  }
+
+  return finalDetail;
+}
+
+export async function confirmCopilotProposal(proposalId: string): Promise<AgentSessionDetail> {
+  const res = await fetch(`${API_BASE}/agent/proposals/${encodeURIComponent(proposalId)}/confirm`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) throw new Error(json.error || '执行 proposal 失败');
+  return parseAgentSessionDetail(json.detail);
 }
 
 export interface ConsistencyIssue {
