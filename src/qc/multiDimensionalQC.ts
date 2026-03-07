@@ -12,7 +12,7 @@
 import type { AIConfig } from '../services/aiClient.js';
 import type { CharacterStateRegistry } from '../types/characterState.js';
 import type { NarrativeGuide, EnhancedChapterOutline } from '../types/narrative.js';
-import { quickEndingHeuristic } from '../qc.js';
+import { getChapterLengthTolerance, quickEndingHeuristic } from '../qc.js';
 import { checkCharacterConsistency, type CharacterQCResult } from './characterConsistencyCheck.js';
 import { checkPacingAlignment, type PacingQCResult } from './pacingCheck.js';
 import { checkGoalAchievement, type GoalQCResult } from './goalCheck.js';
@@ -243,17 +243,26 @@ function checkPrematureEnding(
   const result = quickEndingHeuristic(chapterText);
   const issues: QCIssue[] = [];
 
-  if (result.hit) {
+  if (result.blockingReasons.length > 0) {
     issues.push({
       type: 'ending',
       severity: 'critical',
-      description: `检测到提前完结信号：${result.reasons.join('; ')}`,
+      description: `检测到提前完结信号：${result.blockingReasons.join('; ')}`,
       suggestion: '请重写章节，移除完结相关的表达，保持剧情张力和悬念',
     });
   }
 
+  if (result.reviewReasons.length > 0) {
+    issues.push({
+      type: 'ending',
+      severity: 'major',
+      description: `检测到可疑收尾信号：${result.reviewReasons.join('; ')}`,
+      suggestion: '确认这是否真的是悬念式结尾；若像结局或总结收尾，再改成事件/冲突/抉择式钩子',
+    });
+  }
+
   return {
-    score: result.hit ? 0 : 100,
+    score: result.blockingReasons.length > 0 ? 0 : result.reviewReasons.length > 0 ? 70 : 100,
     issues,
   };
 }
@@ -287,7 +296,8 @@ function checkStructuralIntegrity(
 
   // 检查字数
   const charCount = chapterText.length;
-  if (charCount < normalizedMinWords) {
+  const wordTolerance = getChapterLengthTolerance(normalizedMinWords);
+  if (charCount + wordTolerance < normalizedMinWords) {
     issues.push({
       type: 'structure',
       severity: 'major',
@@ -295,6 +305,14 @@ function checkStructuralIntegrity(
       suggestion: '请扩充章节内容，增加场景描写或角色互动',
     });
     score -= 30;
+  } else if (charCount < normalizedMinWords) {
+    issues.push({
+      type: 'structure',
+      severity: 'minor',
+      description: `章节字数略低 (${charCount}字)，接近最低要求 ${normalizedMinWords} 字`,
+      suggestion: '如阅读完整且场景成立可保留；若明显有场景未展开，再补写细节',
+    });
+    score -= 5;
   } else if (charCount > 5000) {
     issues.push({
       type: 'structure',
