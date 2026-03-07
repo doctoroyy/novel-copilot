@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertTriangle, Lightbulb, XCircle } from 'lucide-react';
 import { checkConsistency, type ConsistencyReport } from '@/lib/api';
 
 interface ConsistencyCheckDialogProps {
@@ -157,8 +157,11 @@ export function ConsistencyCheckDialog({
                           )}
                           
                           {issue.suggestion && (
-                            <div className="mt-3 text-sm bg-green-50/50 p-3 rounded text-green-800 dark:text-green-300 dark:bg-green-900/20">
-                              <strong>💡 建议:</strong> {issue.suggestion}
+                            <div className="mt-3 flex items-start gap-2 text-sm bg-green-50/50 p-3 rounded text-green-800 dark:text-green-300 dark:bg-green-900/20">
+                              <Lightbulb className="h-4 w-4 mt-0.5 shrink-0" />
+                              <div>
+                                <strong>建议:</strong> {issue.suggestion}
+                              </div>
                             </div>
                           )}
                         </div>

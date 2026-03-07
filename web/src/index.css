@@ -65,7 +65,7 @@
   - Dark Mode: Deep Space, Obsidian, Vibrant Accents (Not just gray)
 */
 
-/* Light Theme (Default: Ember 🔥) */
+/* Light Theme (Default: Ember) */
 :root, :root.light, .light {
   --radius: 0.75rem;
   color-scheme: light;
@@ -200,7 +200,7 @@
 
 /* ========== Color Theme Overrides ========== */
 
-/* 🌿 Jade — Literary Emerald */
+/* Jade — Literary Emerald */
 [data-theme="jade"] {
   --primary: #059669;
   --primary-foreground: #ffffff;
@@ -235,7 +235,7 @@
   --gradient-border-to: rgba(16, 185, 129, 0.1);
 }
 
-/* 🌊 Ocean — Cool Cyan */
+/* Ocean — Cool Cyan */
 [data-theme="ocean"] {
   --primary: #0891b2;
   --primary-foreground: #ffffff;
@@ -270,7 +270,7 @@
   --gradient-border-to: rgba(6, 182, 212, 0.1);
 }
 
-/* 📰 Editorial — Sophisticated Slate */
+/* Editorial — Sophisticated Slate */
 [data-theme="editorial"] {
   --primary: #475569;
   --primary-foreground: #ffffff;

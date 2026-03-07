@@ -1,5 +1,18 @@
 import { Button } from '@/components/ui/button';
-import { PanelRightClose, Power, FileText, Loader2, Circle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Circle,
+  Eye,
+  FileText,
+  Loader2,
+  PanelRightClose,
+  Power,
+  Rocket,
+  Save,
+  Search,
+  Wrench,
+  XCircle,
+} from 'lucide-react';
 import type { ProgressEvent } from '@/hooks/useServerEvents';
 import {
   Tooltip,
@@ -51,31 +64,30 @@ export function ActivityPanel({
     }
   };
 
-  const getStatusEmoji = (status: ProgressEvent['status']) => {
-     // ... (rest of getStatusEmoji implementation)
+  const getStatusIcon = (status: ProgressEvent['status']) => {
     switch (status) {
       case 'starting':
-        return '🚀';
+        return <Rocket className="h-5 w-5" />;
       case 'analyzing':
-        return '🔍';
+        return <Search className="h-5 w-5" />;
       case 'planning':
-        return '🗺️';
+        return <FileText className="h-5 w-5" />;
       case 'generating':
-        return '✍️';
+        return <Loader2 className="h-5 w-5 animate-spin" />;
       case 'reviewing':
-        return '👀';
+        return <Eye className="h-5 w-5" />;
       case 'repairing':
-        return '🔧';
+        return <Wrench className="h-5 w-5" />;
       case 'saving':
-        return '💾';
+        return <Save className="h-5 w-5" />;
       case 'updating_summary':
-        return '📝';
+        return <FileText className="h-5 w-5" />;
       case 'done':
-        return '✅';
+        return <CheckCircle2 className="h-5 w-5" />;
       case 'error':
-        return '❌';
+        return <XCircle className="h-5 w-5" />;
       default:
-        return '⏳';
+        return <Loader2 className="h-5 w-5 animate-spin" />;
     }
   };
 
@@ -125,7 +137,7 @@ export function ActivityPanel({
         <div className="p-3 border-b border-border">
           <div className="glass-card rounded-lg p-4">
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-xl">{getStatusEmoji(progress.status)}</span>
+              <span className={`${getStatusColor(progress.status)}`}>{getStatusIcon(progress.status)}</span>
               <div className="flex-1">
                 <div className={`text-sm font-medium ${getStatusColor(progress.status)}`}>
                   {progress.message || '处理中...'}
@@ -156,13 +168,13 @@ export function ActivityPanel({
           {logs.slice().reverse().map((log, i) => {
             // Detect log level from prefix
             let levelClass = 'text-muted-foreground';
-            if (log.includes('✅') || log.includes('成功') || log.includes('完成')) {
+            if (log.includes('[OK]') || log.includes('成功') || log.includes('完成')) {
               levelClass = 'text-green-400';
-            } else if (log.includes('❌') || log.includes('失败') || log.includes('错误')) {
+            } else if (log.includes('[ERR]') || log.includes('失败') || log.includes('错误')) {
               levelClass = 'text-red-400';
-            } else if (log.includes('⚠️') || log.includes('警告')) {
+            } else if (log.includes('[WARN]') || log.includes('警告')) {
               levelClass = 'text-amber-400';
-            } else if (log.includes('📋') || log.includes('📝') || log.includes('📚')) {
+            } else if (log.includes('[INFO]') || log.includes('任务') || log.includes('章节')) {
               levelClass = 'text-blue-400';
             }
 

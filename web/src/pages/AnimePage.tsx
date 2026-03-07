@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { Clapperboard, Play, Rocket } from 'lucide-react';
 
 interface AnimeProject {
   id: string;
@@ -194,8 +195,9 @@ export function AnimePage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-white bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-500">
-              🎬 小说转AI动漫
+            <h1 className="text-3xl font-bold text-white bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-pink-500 flex items-center gap-3">
+              <Clapperboard className="h-8 w-8 text-purple-300" />
+              小说转AI动漫
             </h1>
             <p className="text-gray-400 mt-1">自动将小说转换为60集AI动漫视频</p>
           </div>
@@ -278,7 +280,12 @@ export function AnimePage() {
                       disabled={generating || !apiKey}
                       className="bg-gradient-to-r from-green-500 to-emerald-500"
                     >
-                      {generating ? '生成中...' : '🚀 开始生成'}
+                      {generating ? '生成中...' : (
+                        <>
+                          <Rocket className="mr-2 h-4 w-4" />
+                          开始生成
+                        </>
+                      )}
                     </Button>
                   </div>
                   <Progress value={getProgress(episodes)} className="mt-4" />
@@ -302,7 +309,10 @@ export function AnimePage() {
                         </div>
                         {episode.video_r2_key && (
                           <button className="mt-2 text-xs text-purple-400 hover:text-purple-300">
-                            ▶ 预览
+                            <span className="inline-flex items-center gap-1">
+                              <Play className="h-3 w-3" />
+                              预览
+                            </span>
                           </button>
                         )}
                       </div>
@@ -313,7 +323,7 @@ export function AnimePage() {
             ) : (
               <Card className="bg-slate-800/50 border-slate-700 backdrop-blur h-full flex items-center justify-center">
                 <CardContent className="text-center py-20">
-                  <div className="text-6xl mb-4">🎬</div>
+                  <Clapperboard className="mx-auto mb-4 h-12 w-12 text-purple-300" />
                   <p className="text-gray-400">选择一个项目查看详情</p>
                 </CardContent>
               </Card>

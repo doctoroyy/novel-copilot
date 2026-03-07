@@ -34,6 +34,7 @@ import {
   Search,
   Loader2,
   Sparkles,
+  User,
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ProviderManagementPanel } from '@/components/admin/ProviderManagementPanel';
@@ -289,7 +290,10 @@ export function AdminPage() {
           </Button>
           <h1 className="text-lg font-semibold">管理后台</h1>
           <div className="flex-1" />
-          <span className="text-sm text-muted-foreground">👤 {user?.username}</span>
+          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            <User className="h-4 w-4" />
+            {user?.username}
+          </span>
           <Button variant="outline" size="sm" onClick={fetchData}>
             <RefreshCcw className="h-4 w-4" />
           </Button>

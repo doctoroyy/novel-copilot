@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { getAuthHeaders } from '@/lib/auth';
-import { Film, Loader2, ArrowLeft, RefreshCw, FileText, Layout, PauseCircle, Trash2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Film, Loader2, ArrowLeft, RefreshCw, FileText, Layout, PauseCircle, Trash2, Sparkles } from 'lucide-react';
 
 interface AnimeEpisodeDetailProps {
   project: any;
@@ -335,13 +335,16 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
             <div className="px-6 border-b bg-muted/5 shrink-0">
                 <TabsList className="h-12 bg-transparent p-0 gap-6">
                     <TabsTrigger value="script" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4">
-                        📜 剧本
+                        <FileText className="mr-2 h-4 w-4" />
+                        剧本
                     </TabsTrigger>
                     <TabsTrigger value="storyboard" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4">
-                        🖼️ 分镜
+                        <Layout className="mr-2 h-4 w-4" />
+                        分镜
                     </TabsTrigger>
                      <TabsTrigger value="video" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-4">
-                        🎥 视频
+                        <Film className="mr-2 h-4 w-4" />
+                        视频
                     </TabsTrigger>
                 </TabsList>
             </div>
@@ -404,8 +407,9 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
                         </div>
                         
                         {!episode.script && (
-                            <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 p-4 rounded-lg mb-6 text-sm">
-                                ⚠️ 请先生成剧本后再生成分镜
+                            <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 p-4 rounded-lg mb-6 text-sm">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                请先生成剧本后再生成分镜
                             </div>
                         )}
                         
@@ -469,8 +473,9 @@ export function AnimeEpisodeDetail({ project, episodeId, onBack }: AnimeEpisodeD
                         </div>
 
                         {!episode.storyboard_json && (
-                            <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 p-4 rounded-lg mb-6 text-sm">
-                                ⚠️ 请先生成分镜后再生成视频
+                            <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 p-4 rounded-lg mb-6 text-sm">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                请先生成分镜后再生成视频
                             </div>
                         )}
 

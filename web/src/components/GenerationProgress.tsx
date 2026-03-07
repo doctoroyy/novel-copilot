@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { CheckCircle2, Loader2, Save, Wand2, XCircle } from 'lucide-react';
 
 interface GenerationProgressProps {
   isGenerating: boolean;
@@ -18,14 +19,6 @@ const statusLabels: Record<string, string> = {
   saving: '保存中',
   done: '完成',
   error: '错误',
-};
-
-const statusEmojis: Record<string, string> = {
-  preparing: '🔄',
-  generating: '✍️',
-  saving: '💾',
-  done: '✅',
-  error: '❌',
 };
 
 export function GenerationProgress({
@@ -131,6 +124,23 @@ export function GenerationProgress({
     return `${mins}分${secs}秒`;
   };
 
+  const statusIcon = (() => {
+    switch (status) {
+      case 'preparing':
+        return <Loader2 className="h-5 w-5 animate-spin text-primary" />;
+      case 'generating':
+        return <Wand2 className="h-5 w-5 text-primary" />;
+      case 'saving':
+        return <Save className="h-5 w-5 text-primary" />;
+      case 'done':
+        return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+      case 'error':
+        return <XCircle className="h-5 w-5 text-destructive" />;
+      default:
+        return <Loader2 className="h-5 w-5 animate-spin text-primary" />;
+    }
+  })();
+
   return (
     <Card className="generation-progress-card overflow-hidden border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10">
       <CardContent className="p-4 lg:p-6">
@@ -138,8 +148,8 @@ export function GenerationProgress({
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-lg animate-pulse">
-                {statusEmojis[status] || '⏳'}
+              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
+                {statusIcon}
               </div>
               {status === 'generating' && (
                 <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />

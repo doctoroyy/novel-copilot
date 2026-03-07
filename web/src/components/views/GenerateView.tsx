@@ -422,7 +422,7 @@ export function GenerateView({
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base lg:text-lg">
-            <span className="text-xl">🧭</span>
+            <Wand2 className="h-5 w-5 text-primary" />
             生成流程可视化
           </CardTitle>
           <CardDescription className="text-xs lg:text-sm">

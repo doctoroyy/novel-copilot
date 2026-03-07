@@ -17,7 +17,20 @@ import { getAuthHeaders } from '@/lib/auth';
 
 import { useServerEventsContext } from '@/contexts/ServerEventsContext';
 import type { ProjectDetail } from '@/lib/api';
-import { Play, FileText, ImageIcon, Film, Loader2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clapperboard,
+  Eye,
+  FileText,
+  Film,
+  ImageIcon,
+  Loader2,
+  Play,
+  RefreshCw,
+  Sparkles,
+  Users,
+} from 'lucide-react';
 
 
 interface AnimeEpisode {
@@ -448,7 +461,9 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
       <div className="p-6 max-w-2xl mx-auto">
         <Card className="glass-card">
           <CardHeader className="text-center">
-            <div className="text-6xl mb-4">🎬</div>
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Clapperboard className="h-8 w-8" />
+            </div>
             <CardTitle className="gradient-text">将小说转换为AI动漫</CardTitle>
             <CardDescription>
               自动将《{project.name}》的 {project.chapters.length} 章内容转换为 AI 动漫视频
@@ -475,9 +490,15 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">AI 配置</span>
                 {isConfigured ? (
-                  <span className="text-sm text-green-400">✓ 已配置 ({maskedApiKey})</span>
+                  <span className="inline-flex items-center gap-1.5 text-sm text-green-400">
+                    <CheckCircle2 className="h-4 w-4" />
+                    已配置 ({maskedApiKey})
+                  </span>
                 ) : (
-                  <span className="text-sm text-red-400">✗ 未配置 (请在设置中配置)</span>
+                  <span className="inline-flex items-center gap-1.5 text-sm text-red-400">
+                    <AlertTriangle className="h-4 w-4" />
+                    未配置 (请在设置中配置)
+                  </span>
                 )}
               </div>
             </div>
@@ -516,7 +537,8 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
               disabled={loading || project.chapters.length === 0 || !isConfigured}
               className="w-full gradient-bg hover:opacity-90"
             >
-              🚀 开始创建动漫项目
+              <Clapperboard className="mr-2 h-4 w-4" />
+              开始创建动漫项目
             </Button>
 
             {project.chapters.length === 0 && (
@@ -541,7 +563,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold flex items-center gap-3">
-            <span className="text-4xl">🎬</span>
+            <Clapperboard className="h-8 w-8 text-primary" />
              AI 动漫生成
           </h2>
           <div className="flex items-center gap-4 mt-2">
@@ -566,9 +588,18 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="mb-6 bg-muted/20 p-1 rounded-lg">
-          <TabsTrigger value="script" className="px-6">📜 系列剧本 (Series Script)</TabsTrigger>
-          <TabsTrigger value="characters" className="px-6">👥 角色库 (Characters)</TabsTrigger>
-          <TabsTrigger value="episodes" className="px-6">🎬 分集制作 (Episodes)</TabsTrigger>
+          <TabsTrigger value="script" className="px-6">
+            <FileText className="mr-2 h-4 w-4" />
+            系列剧本
+          </TabsTrigger>
+          <TabsTrigger value="characters" className="px-6">
+            <Users className="mr-2 h-4 w-4" />
+            角色库
+          </TabsTrigger>
+          <TabsTrigger value="episodes" className="px-6">
+            <Clapperboard className="mr-2 h-4 w-4" />
+            分集制作
+          </TabsTrigger>
         </TabsList>
 
         {/* ================= SCRIPT TAB ================= */}
@@ -708,7 +739,8 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                                   setPreviewImage({ url: char.image_url, name: char.name });
                                               }}
                                           >
-                                              👁️ 预览大图
+                                              <Eye className="mr-2 h-4 w-4" />
+                                              预览大图
                                           </Button>
                                       )}
                                       <Button 
@@ -742,9 +774,15 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                           {isGenerating ? (
                                               <><Loader2 className="w-3 h-3 mr-1 animate-spin"/> 生成中...</>
                                           ) : char.status === 'generated' ? (
-                                              '🔄 重新生成'
+                                              <>
+                                                <RefreshCw className="mr-1 h-3 w-3" />
+                                                重新生成
+                                              </>
                                           ) : (
-                                              '✨ 生成立绘'
+                                              <>
+                                                <Sparkles className="mr-1 h-3 w-3" />
+                                                生成立绘
+                                              </>
                                           )}
                                       </Button>
                                  </div>
@@ -888,7 +926,7 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
 
             {episodes.length === 0 && (
                 <div className="text-center py-20 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
-                <div className="text-6xl mb-4">📺</div>
+                <Film className="mx-auto mb-4 h-12 w-12 opacity-30" />
                 <p className="text-lg">暂无集数数据</p>
                 </div>
             )}
@@ -902,7 +940,10 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
             <div className="flex items-center justify-between">
                 <div className="space-y-1">
                     <DialogTitle className="flex items-center gap-3 text-xl">
-                    <span>🎬 第 {selectedEpisode?.episode_num} 集</span>
+                    <span className="inline-flex items-center gap-2">
+                      <Clapperboard className="h-5 w-5 text-primary" />
+                      第 {selectedEpisode?.episode_num} 集
+                    </span>
                     {selectedEpisode?.status === 'done' && 
                         <Badge className="bg-green-500/20 text-green-400 hover:bg-green-500/30 border-0">Completed</Badge>
                     }
@@ -938,13 +979,16 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
             <div className="px-6 border-b bg-muted/5">
                 <TabsList className="w-full justify-start h-12 bg-transparent p-0 gap-6">
                     <TabsTrigger value="script" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 pt-2">
-                        📜 剧本 (Script)
+                        <FileText className="mr-2 h-4 w-4" />
+                        剧本
                     </TabsTrigger>
                     <TabsTrigger value="storyboard" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 pt-2">
-                        🖼️ 分镜 (Storyboard)
+                        <ImageIcon className="mr-2 h-4 w-4" />
+                        分镜
                     </TabsTrigger>
                      <TabsTrigger value="video" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 pt-2">
-                        🎥 视频 (Video)
+                        <Film className="mr-2 h-4 w-4" />
+                        视频
                     </TabsTrigger>
                 </TabsList>
             </div>
@@ -1048,7 +1092,8 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                     className="w-full gradient-bg mt-4"
                                     onClick={() => selectedEpisode && handleGenerateEpisode(selectedEpisode)}
                                 >
-                                    🎬 开始生成视频
+                                    <Film className="mr-2 h-4 w-4" />
+                                    开始生成视频
                                 </Button>
                             )}
                             
@@ -1058,7 +1103,8 @@ export function AnimeView({ project, onEpisodeSelect }: AnimeViewProps) {
                                     className="w-full bg-zinc-800 hover:bg-zinc-700 mt-4 border border-zinc-700"
                                     onClick={() => selectedEpisode && handleGenerateEpisode(selectedEpisode)}
                                 >
-                                    🔄 重新生成
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    重新生成
                                 </Button>
                             )}
                         </div>
