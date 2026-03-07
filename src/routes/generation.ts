@@ -35,6 +35,7 @@ export const generationRoutes = new Hono<{ Bindings: Env }>();
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
+const CHAPTER_TASK_STALE_THRESHOLD_MS = 12 * 60 * 1000;
 
 function normalizeMinChapterWords(value: unknown): number | null {
   if (value === undefined || value === null || value === '') {
@@ -1426,7 +1427,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       const narrativeArc = project.narrative_arc_json
         ? JSON.parse(project.narrative_arc_json)
         : (outline ? generateNarrativeArc(outline.volumes || [], project.total_chapters) : undefined);
-      const enableSelfReview = chapterIndex > task.startChapter || Boolean(project.character_states_json || project.plot_graph_json);
+      const shouldEnablePlanning = !String(chapterGoalHint || '').trim();
 
       let result: Awaited<ReturnType<typeof writeEnhancedChapter>> | undefined;
       let lastChapterError: unknown;
@@ -1475,8 +1476,9 @@ export async function runChapterGenerationTaskInBackground(params: {
           chapterPromptProfile: project.chapter_prompt_profile,
           chapterPromptCustom: project.chapter_prompt_custom,
           enableContextOptimization: true,
-          enablePlanning: true,
-          enableSelfReview,
+          // Outline-derived title/goal/hook already provide structured guidance.
+          enablePlanning: shouldEnablePlanning,
+          enableSelfReview: false,
           enableFullQC: false,
           enableAutoRepair: false,
           enableAgentMode: Boolean(project.enable_agent_mode),
@@ -1918,15 +1920,16 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       return 0;
     })();
 
-    const runningTaskFreshThresholdMs = 30 * 60 * 1000;
+    const runningTaskFreshThresholdMs = CHAPTER_TASK_STALE_THRESHOLD_MS;
     isRunningTaskFresh = runningTaskUpdatedAt > 0 && (Date.now() - runningTaskUpdatedAt) < runningTaskFreshThresholdMs;
 
     if (!isRunningTaskFresh) {
+      const staleMinutes = Math.round(runningTaskFreshThresholdMs / 60000);
       await completeTask(
         c.env.DB,
         runningTaskCheck.taskId!,
         false,
-        '任务长时间无进展，已标记失败，请重新发起'
+        `任务超过 ${staleMinutes} 分钟无进展，已自动标记失败，请重新发起`
       );
       // Update local check so we can fall through to "Smart Resume" logic
       // Note: isRunningTaskFresh remains FALSE, which correctly prevents isResumed=true later.

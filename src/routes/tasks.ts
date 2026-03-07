@@ -8,6 +8,8 @@ export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
 type ActiveTaskStatus = 'running' | 'paused' | 'completed' | 'failed';
 const TASK_STREAM_POLL_INTERVAL_MS = 1500;
 const TASK_STREAM_KEEPALIVE_MS = 15000;
+const CHAPTER_TASK_STALE_THRESHOLD_MS = 12 * 60 * 1000;
+const DEFAULT_TASK_STALE_THRESHOLD_MS = 30 * 60 * 1000;
 
 function toTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -54,6 +56,41 @@ function parseJsonNumberArray(value: unknown): number[] {
   } catch {
     return [];
   }
+}
+
+function getTaskStaleThresholdMs(taskType: TaskType): number {
+  return taskType === 'chapters'
+    ? CHAPTER_TASK_STALE_THRESHOLD_MS
+    : DEFAULT_TASK_STALE_THRESHOLD_MS;
+}
+
+function getStaleTaskMessage(taskType: TaskType): string {
+  const staleMinutes = Math.round(getTaskStaleThresholdMs(taskType) / 60000);
+  return `任务超过 ${staleMinutes} 分钟无进展，已自动标记失败，请重新发起`;
+}
+
+async function expireStaleTaskRow(db: D1Database, task: any): Promise<any | null> {
+  const taskType = (task?.task_type || 'chapters') as TaskType;
+  if (!task?.id || task?.status !== 'running' || task?.cancel_requested) {
+    return task;
+  }
+
+  const updatedAtMs = toTimestampMs(task.updated_at);
+  if (updatedAtMs <= 0) {
+    return task;
+  }
+
+  if ((Date.now() - updatedAtMs) < getTaskStaleThresholdMs(taskType)) {
+    return task;
+  }
+
+  const message = getStaleTaskMessage(taskType);
+  await db.prepare(`
+    UPDATE generation_tasks
+    SET status = 'failed', current_message = ?, error_message = ?, updated_at = (unixepoch() * 1000)
+    WHERE id = ? AND status = 'running'
+  `).bind(message, message, task.id).run();
+  return null;
 }
 
 function isTaskStreamRequest(c: { req: { query: (key: string) => string | undefined; header: (name: string) => string | undefined } }): boolean {
@@ -219,7 +256,15 @@ async function getActiveTasksForUser(db: D1Database, userId: string): Promise<Ge
     ORDER BY CASE WHEN t.status = 'running' THEN 0 ELSE 1 END, t.created_at DESC
   `).bind(userId).all();
 
-  const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
+  const activeGenerationRows: any[] = [];
+  for (const row of (generationTasks as any[])) {
+    const activeRow = await expireStaleTaskRow(db, row);
+    if (activeRow) {
+      activeGenerationRows.push(activeRow);
+    }
+  }
+
+  const mergedTasks: GenerationTask[] = activeGenerationRows.map(mapGenerationTaskRow);
 
   // Template jobs are optional for old DBs that haven't run migration 0021 yet.
   try {
@@ -270,7 +315,8 @@ async function getActiveChapterTaskForProject(
     LIMIT 1
   `).bind(projectId, userId).first() as any;
 
-  return task ? mapGenerationTaskRow(task) : null;
+  const activeTask = task ? await expireStaleTaskRow(db, task) : null;
+  return activeTask ? mapGenerationTaskRow(activeTask) : null;
 }
 
 // Get all active tasks for the current user (global endpoint)
@@ -901,25 +947,26 @@ export async function getTaskById(
     LIMIT 1
   `).bind(taskId, userId).first() as any;
 
-  if (!task) return null;
+  const activeTask = task ? await expireStaleTaskRow(db, task) : null;
+  if (!activeTask) return null;
 
-  const createdAtMs = toTimestampMs(task.created_at);
-  const updatedAtMs = toTimestampMs(task.updated_at);
+  const createdAtMs = toTimestampMs(activeTask.created_at);
+  const updatedAtMs = toTimestampMs(activeTask.updated_at);
   return {
-    id: task.id,
-    taskType: (task.task_type || 'chapters') as TaskType,
-    projectId: task.project_id,
-    projectName: task.project_name,
-    userId: task.user_id,
-    targetCount: task.target_count,
-    startChapter: task.start_chapter,
-    completedChapters: JSON.parse(task.completed_chapters || '[]'),
-    failedChapters: JSON.parse(task.failed_chapters || '[]'),
-    currentProgress: task.current_progress || 0,
-    currentMessage: task.current_message || null,
-    cancelRequested: Boolean(task.cancel_requested),
-    status: task.status,
-    errorMessage: task.error_message,
+    id: activeTask.id,
+    taskType: (activeTask.task_type || 'chapters') as TaskType,
+    projectId: activeTask.project_id,
+    projectName: activeTask.project_name,
+    userId: activeTask.user_id,
+    targetCount: activeTask.target_count,
+    startChapter: activeTask.start_chapter,
+    completedChapters: JSON.parse(activeTask.completed_chapters || '[]'),
+    failedChapters: JSON.parse(activeTask.failed_chapters || '[]'),
+    currentProgress: activeTask.current_progress || 0,
+    currentMessage: activeTask.current_message || null,
+    cancelRequested: Boolean(activeTask.cancel_requested),
+    status: activeTask.status,
+    errorMessage: activeTask.error_message,
     createdAt: createdAtMs,
     updatedAt: updatedAtMs,
     updatedAtMs,
