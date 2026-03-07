@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
+import { normalizeNovelOutline } from '../utils/outline.js';
 
 export const projectsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -121,7 +122,12 @@ projectsRoutes.get('/:name', async (c) => {
       chapter_prompt_profile: (project as any).chapter_prompt_profile,
       chapter_prompt_custom: (project as any).chapter_prompt_custom,
       enable_agent_mode: Boolean((project as any).enable_agent_mode),
-      outline: (project as any).outline_json ? JSON.parse((project as any).outline_json) : null,
+      outline: (project as any).outline_json
+        ? normalizeNovelOutline(JSON.parse((project as any).outline_json), {
+          fallbackMinChapterWords: (project as any).min_chapter_words,
+          fallbackTotalChapters: (project as any).total_chapters,
+        })
+        : null,
       chapters: chapters.map((ch: any) => `${ch.chapter_index.toString().padStart(3, '0')}.md`),
     };
 

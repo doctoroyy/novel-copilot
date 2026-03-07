@@ -1,6 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
-import { Sidebar, Header, ActivityPanel } from '@/components/layout';
+import { Sidebar, Header, CopilotPanel } from '@/components/layout';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { FloatingProgressButton } from '@/components/FloatingProgressButton';
 import { Button } from '@/components/ui/button';
@@ -47,12 +47,6 @@ function ProjectLayoutInner() {
     activeTab,
     handleSelectProject,
     handleTabChange,
-    connected,
-    logs,
-    clearLogs,
-    eventsEnabled,
-    toggleEvents,
-    generationState,
     showSettingsDialog,
     setShowSettingsDialog,
     showNewProjectDialog,
@@ -284,7 +278,7 @@ function ProjectLayoutInner() {
         </main>
       </div>
 
-      {/* Activity Panel */}
+      {/* Copilot Panel */}
       {activityPanelOpen && (
         <>
           {isMobile && (
@@ -296,25 +290,12 @@ function ProjectLayoutInner() {
           <div className={`
             ${isMobile 
               ? 'fixed inset-y-0 right-0 z-50'
-              : 'relative'
+              : 'relative min-h-0'
             }
           `}>
-            <ActivityPanel
-              logs={logs}
-              onClear={clearLogs}
-              onToggle={toggleActivityPanel}
-              progress={generationState.isGenerating ? {
-                type: 'progress' as const,
-                projectName: generationState.projectName || '',
-                status: (generationState.status === 'preparing' ? 'starting' : generationState.status) as 'starting' | 'analyzing' | 'planning' | 'generating' | 'reviewing' | 'repairing' | 'saving' | 'updating_summary' | 'done' | 'error',
-                current: generationState.current,
-                total: generationState.total,
-                chapterIndex: generationState.currentChapter || 0,
-                message: generationState.message,
-              } : null}
-              connected={connected}
-              enabled={eventsEnabled}
-              onToggleEnabled={toggleEvents}
+            <CopilotPanel
+              project={selectedProject}
+              onProjectRefresh={handleRefresh}
             />
           </div>
         </>

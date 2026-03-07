@@ -11,6 +11,7 @@ import { adminRoutes } from './routes/admin.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { editingRoutes } from './routes/editing.js';
 import { creditRoutes } from './routes/credit.js';
+import { agentRoutes } from './routes/agent.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
@@ -47,6 +48,7 @@ app.use('/api/anime/*', async (c, next) => {
 });
 app.use('/api/admin/*', authMiddleware());
 app.use('/api/credit/*', authMiddleware());
+app.use('/api/agent/*', authMiddleware());
 app.use('/api/active-tasks', authMiddleware());
 app.use('/api/tasks/*', authMiddleware());
 app.use('/api/bible-templates/refresh', authMiddleware());
@@ -65,6 +67,7 @@ app.route('/api/context', contextRoutes);
 app.route('/api/anime', animeRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/credit', creditRoutes);
+app.route('/api/agent', agentRoutes);
 
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');

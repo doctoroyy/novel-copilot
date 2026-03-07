@@ -5,7 +5,6 @@ import { CreditDisplay } from '@/components/CreditDisplay';
 import type { ProjectDetail } from '@/lib/api';
 import { 
   PanelLeftOpen, 
-  PanelRightOpen, 
   LogOut,
   LayoutDashboard,
   ScrollText,
@@ -21,6 +20,7 @@ import {
   Download,
   Trash2,
   User,
+  Sparkles,
   type LucideIcon
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -199,17 +199,15 @@ export function Header({
             </>
           )}
           
-          {/* Activity Panel Toggle (Only show if closed) */}
-          {!activityPanelOpen && (
-            <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={onToggleActivityPanel}
-                className="text-muted-foreground h-9 w-9"
-            >
-                <PanelRightOpen className="h-4 w-4" />
-            </Button>
-          )}
+          <Button
+            variant={activityPanelOpen ? 'secondary' : 'ghost'}
+            size="icon"
+            onClick={onToggleActivityPanel}
+            className={activityPanelOpen ? 'text-primary' : 'text-muted-foreground'}
+            title={activityPanelOpen ? '关闭 Copilot' : '打开 Copilot'}
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
           
           <ThemeToggle />
         </div>
