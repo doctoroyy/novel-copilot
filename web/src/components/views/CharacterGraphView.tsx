@@ -6,6 +6,7 @@ import type { CharacterRelationGraph, CharacterProfile } from '@/types/character
 import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Loader2, Network, RefreshCw, Sparkles, X } from 'lucide-react';
 
 interface CharacterGraphViewProps {
   project: ProjectDetail;
@@ -215,7 +216,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
     return (
       <div className="flex items-center justify-center h-full bg-slate-950">
         <div className="text-center space-y-4">
-            <div className="animate-spin text-4xl mb-4">🔮</div>
+            <Loader2 className="h-10 w-10 mx-auto animate-spin text-blue-400" />
             <p className="text-slate-400 animate-pulse">正在编织命运之网...</p>
         </div>
       </div>
@@ -227,7 +228,9 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
       <div className="flex flex-col items-center justify-center h-full space-y-6 bg-slate-950 text-slate-100 text-center">
         <div className="relative">
             <div className="absolute inset-0 bg-blue-500 blur-3xl opacity-20 animate-pulse"></div>
-            <div className="text-8xl relative z-10">🕸️</div>
+            <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-3xl border border-blue-500/20 bg-slate-900/70">
+              <Network className="h-12 w-12 text-blue-300" />
+            </div>
         </div>
         <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
             暂无人物关系图谱
@@ -236,7 +239,17 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
             让 AI 深度分析您的设定集，构建一张盘根错节的人物关系网，让故事脉络清晰可见。
         </p>
         <Button onClick={handleGenerate} disabled={loading} size="lg" className="gradient-bg text-lg px-8 py-6 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 transition-all">
-          {loading ? '生成中...' : '✨ 立即生成图谱'}
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              生成中...
+            </>
+          ) : (
+            <>
+              <Sparkles className="mr-2 h-5 w-5" />
+              立即生成图谱
+            </>
+          )}
         </Button>
         {error && <p className="text-destructive bg-destructive/10 px-4 py-2 rounded">{error}</p>}
       </div>
@@ -297,7 +310,8 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
         {/* Action Buttons */}
         <div className="absolute bottom-6 left-6 pointer-events-auto">
              <Button variant="outline" size="sm" onClick={handleGenerate} className="bg-background/50 backdrop-blur border-slate-700 hover:bg-slate-800 text-slate-300">
-                🔄 重新生成
+                <RefreshCw className="mr-2 h-4 w-4" />
+                重新生成
              </Button>
         </div>
       </div>
@@ -319,7 +333,7 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
                             <p className="text-sm text-slate-400 mt-1">{selectedNode.basic?.identity || '角色'}</p>
                         </div>
                         <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white">
-                            ✕
+                            <X className="h-4 w-4" />
                         </Button>
                     </div>
                      <div className="flex flex-wrap gap-2 mt-3">
@@ -357,15 +371,15 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
                             <h3 className="text-xs uppercase tracking-wider text-slate-500 font-semibold">内心世界</h3>
                             <div className="space-y-2">
                                 <div className="flex gap-3 text-sm">
-                                    <span className="text-rose-400 shrink-0 w-16">❤️ 欲望</span>
+                                    <span className="text-rose-400 shrink-0 w-16">欲望</span>
                                     <span className="text-slate-300">{selectedNode.personality?.desires?.join('、') || '无'}</span>
                                 </div>
                                 <div className="flex gap-3 text-sm">
-                                    <span className="text-indigo-400 shrink-0 w-16">😱 恐惧</span>
+                                    <span className="text-indigo-400 shrink-0 w-16">恐惧</span>
                                     <span className="text-slate-300">{selectedNode.personality?.fears?.join('、') || '无'}</span>
                                 </div>
                                 <div className="flex gap-3 text-sm">
-                                    <span className="text-amber-400 shrink-0 w-16">⚡️ 缺陷</span>
+                                    <span className="text-amber-400 shrink-0 w-16">缺陷</span>
                                     <span className="text-slate-300">{selectedNode.personality?.flaws?.join('、') || '无'}</span>
                                 </div>
                             </div>

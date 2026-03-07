@@ -5,6 +5,8 @@ import { setToken } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { BrandMark } from '@/components/BrandMark';
+import { Loader2 } from 'lucide-react';
 
 export function LoginPage() {
   const { login, register, refreshUser, loading, error, clearError } = useAuth();
@@ -91,7 +93,9 @@ export function LoginPage() {
         <div className="glass-card p-8 rounded-2xl">
           {/* Logo/Title */}
           <div className="text-center mb-8">
-            <div className="text-5xl mb-4">📚</div>
+            <div className="mb-4 flex justify-center">
+              <BrandMark className="h-16 w-16" />
+            </div>
             <h1 className="text-2xl font-bold gradient-text">Novel Copilot</h1>
             <p className="text-muted-foreground text-sm mt-2">
               {mode === 'login' ? '登录以继续' : '创建新账户'}
@@ -219,7 +223,7 @@ export function LoginPage() {
             >
               {loading ? (
                 <span className="flex items-center gap-2">
-                  <span className="animate-spin">⏳</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
                   处理中...
                 </span>
               ) : (

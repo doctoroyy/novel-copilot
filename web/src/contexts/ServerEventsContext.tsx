@@ -29,13 +29,13 @@ export function ServerEventsProvider({ children }: { children: ReactNode }) {
     enabled,
     onLog: useCallback((event: LogMessage) => {
       const prefixMap: Record<string, string> = {
-        info: '📋',
-        success: '✅',
-        warning: '⚠️',
-        error: '❌',
+        info: 'INFO',
+        success: 'OK',
+        warning: 'WARN',
+        error: 'ERR',
       };
       const prefix = prefixMap[event.level];
-      setLogs((prev) => [...prev, `[${event.timestamp}] ${prefix} ${event.message}`]);
+      setLogs((prev) => [...prev, `[${event.timestamp}] [${prefix}] ${event.message}`]);
     }, []),
     
     onProgress: useCallback((event: ProgressEvent) => {

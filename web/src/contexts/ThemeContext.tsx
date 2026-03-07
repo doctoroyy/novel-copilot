@@ -3,11 +3,11 @@ import { createContext, useContext, useEffect, useState } from 'react';
 type Theme = 'light' | 'dark' | 'system';
 export type ColorTheme = 'ember' | 'jade' | 'ocean' | 'editorial';
 
-export const COLOR_THEMES: { id: ColorTheme; label: string; icon: string; color: string }[] = [
-  { id: 'ember', label: '炽焰', icon: '🔥', color: '#ea580c' },
-  { id: 'jade', label: '翡翠', icon: '🌿', color: '#059669' },
-  { id: 'ocean', label: '海潮', icon: '🌊', color: '#0891b2' },
-  { id: 'editorial', label: '墨韵', icon: '📰', color: '#475569' },
+export const COLOR_THEMES: { id: ColorTheme; label: string; color: string }[] = [
+  { id: 'ember', label: '炽焰', color: '#ea580c' },
+  { id: 'jade', label: '翡翠', color: '#059669' },
+  { id: 'ocean', label: '海潮', color: '#0891b2' },
+  { id: 'editorial', label: '墨韵', color: '#475569' },
 ];
 
 interface ThemeProviderState {

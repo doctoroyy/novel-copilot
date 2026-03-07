@@ -70,7 +70,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <span className="font-medium text-sm">创作能量</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                使用 AI 功能会消耗创作能量。点击顶栏的⚡图标可查看余额和消费记录。
+                使用 AI 功能会消耗创作能量。点击顶栏的创作能量入口可查看余额和消费记录。
               </p>
             </div>
             

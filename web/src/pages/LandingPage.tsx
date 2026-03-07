@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { BrandMark } from '@/components/BrandMark';
 import { 
-  BookOpen, 
   Sparkles, 
   Wand2, 
   Network, 
@@ -29,9 +29,7 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center">
-                <BookOpen className="h-5 w-5 text-white" />
-              </div>
+              <BrandMark className="h-10 w-10 rounded-xl" />
               <span className="font-bold text-xl gradient-text">Novel Copilot</span>
             </div>
             <div className="flex items-center gap-4">
@@ -326,9 +324,7 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg gradient-bg flex items-center justify-center">
-                <BookOpen className="h-4 w-4 text-white" />
-              </div>
+              <BrandMark className="h-8 w-8 rounded-lg" />
               <span className="font-semibold gradient-text">Novel Copilot</span>
             </div>
             <p className="text-sm text-muted-foreground">

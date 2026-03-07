@@ -87,7 +87,7 @@ export function ThemeToggle() {
                   className="w-4 h-4 rounded-full shrink-0 ring-1 ring-black/10"
                   style={{ backgroundColor: ct.color }}
                 />
-                <span className="text-xs">{ct.icon} {ct.label}</span>
+                <span className="text-xs">{ct.label}</span>
                 {colorTheme === ct.id && (
                   <Check className="h-3 w-3 ml-auto text-primary" />
                 )}
