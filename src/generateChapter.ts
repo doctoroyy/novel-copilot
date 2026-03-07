@@ -3,7 +3,12 @@ import { getCharacterContext } from './generateCharacters.js';
 import type { CharacterRelationGraph } from './types/characters.js';
 import type { CharacterStateRegistry } from './types/characterState.js';
 import { buildCharacterStateContext } from './context/characterStateManager.js';
-import { quickEndingHeuristic, quickChapterFormatHeuristic, buildRewriteInstruction } from './qc.js';
+import {
+  quickEndingHeuristic,
+  quickChapterFormatHeuristic,
+  buildRewriteInstruction,
+  judgeQuickChapterSignals,
+} from './qc.js';
 import { normalizeGeneratedChapterText } from './utils/chapterText.js';
 import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
 import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS, getSupportPassMaxTokens } from './utils/aiModelHelpers.js';
@@ -270,28 +275,71 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   let rewriteCount = 0;
 
   // QC 检测：结构（标题+正文）+ 非最终章提前完结检测
+  const evaluateQuickQc = async (): Promise<{
+    action: 'keep' | 'rewrite';
+    reasons: string[];
+    guidance?: string;
+  }> => {
+    const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
+    const endingQc = isFinal
+      ? { hit: false, reasons: [] as string[], blockingReasons: [] as string[], reviewReasons: [] as string[] }
+      : quickEndingHeuristic(chapterText);
+
+    const blockingReasons = [...formatQc.blockingReasons, ...endingQc.blockingReasons];
+    const reviewReasons = [...formatQc.reviewReasons, ...endingQc.reviewReasons];
+
+    if (blockingReasons.length > 0) {
+      return {
+        action: 'rewrite',
+        reasons: [...blockingReasons, ...reviewReasons],
+      };
+    }
+
+    if (reviewReasons.length === 0) {
+      return {
+        action: 'keep',
+        reasons: [],
+      };
+    }
+
+    const judge = await judgeQuickChapterSignals({
+      aiConfig,
+      fallbackConfigs,
+      chapterText,
+      chapterIndex,
+      totalChapters,
+      minChapterWords: normalizedMinChapterWords,
+      reasons: reviewReasons,
+    });
+
+    return {
+      action: judge.action,
+      reasons: judge.reasons?.length ? judge.reasons : reviewReasons,
+      guidance: judge.guidance,
+    };
+  };
+
   for (let attempt = 0; attempt < maxRewriteAttempts; attempt++) {
     params.onProgress?.(`正在进行 QC 检测 (${attempt + 1}/${maxRewriteAttempts})...`, 'reviewing');
-    const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
-    const endingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
-    const reasons = [...formatQc.reasons, ...endingQc.reasons];
+    const qcDecision = await evaluateQuickQc();
 
-    if (reasons.length === 0) {
+    if (qcDecision.action === 'keep') {
       break; // 通过 QC
     }
 
     console.log(`⚠️ 章节 ${chapterIndex} 检测到 QC 异常信号，尝试重写 (${attempt + 1}/${maxRewriteAttempts})`);
-    console.log(`   原因: ${reasons.join('; ')}`);
+    console.log(`   原因: ${qcDecision.reasons.join('; ')}`);
     
-    params.onProgress?.(`检测到问题: ${reasons[0]}，正在修复...`, 'repairing');
+    params.onProgress?.(`检测到问题: ${qcDecision.reasons[0]}，正在修复...`, 'repairing');
 
     // 构建重写 prompt
     const rewriteInstruction = buildRewriteInstruction({
       chapterIndex,
       totalChapters,
-      reasons,
+      reasons: qcDecision.reasons,
       isFinalChapter: isFinal,
       minChapterWords: normalizedMinChapterWords,
+      extraGuidance: qcDecision.guidance,
     });
 
     const rewritePrompt = `${prompt}\n\n${rewriteInstruction}`;
@@ -302,11 +350,9 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
   }
 
   // 最终检查
-  const finalFormatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
-  const finalEndingQc = isFinal ? { hit: false, reasons: [] as string[] } : quickEndingHeuristic(chapterText);
-  const finalReasons = [...finalFormatQc.reasons, ...finalEndingQc.reasons];
-  if (finalReasons.length > 0) {
-    const reason = finalReasons[0] || '章节内容疑似不完整';
+  const finalQcDecision = await evaluateQuickQc();
+  if (finalQcDecision.action === 'rewrite') {
+    const reason = finalQcDecision.reasons[0] || '章节内容疑似不完整';
     console.log(`❌ 章节 ${chapterIndex} 重写后仍存在 QC 问题，需要人工介入`);
     params.onProgress?.(`QC 未通过: ${reason}`, 'reviewing');
     throw new Error(`第 ${chapterIndex} 章 QC 未通过: ${reason}`);
