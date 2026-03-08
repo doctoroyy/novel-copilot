@@ -8,12 +8,38 @@ const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
 
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function normalizeMinChapterWords(value: unknown): number | null {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isInteger(parsed)) return null;
   if (parsed < MIN_CHAPTER_WORDS_LIMIT || parsed > MAX_CHAPTER_WORDS_LIMIT) return null;
   return parsed;
+}
+
+async function reconcileNextChapterIndex(
+  db: D1Database,
+  projectId: string,
+  storedNextChapterIndex: unknown,
+  actualMaxChapterIndex: unknown
+): Promise<number> {
+  const actualMaxChapter = normalizePositiveInteger(actualMaxChapterIndex, 0);
+  const expectedNextChapterIndex = actualMaxChapter + 1;
+  const currentNextChapterIndex = normalizePositiveInteger(storedNextChapterIndex, 1);
+
+  if (currentNextChapterIndex !== expectedNextChapterIndex) {
+    await db.prepare(`
+      UPDATE states
+      SET next_chapter_index = ?
+      WHERE project_id = ?
+    `).bind(expectedNextChapterIndex, projectId).run();
+  }
+
+  return expectedNextChapterIndex;
 }
 
 async function getProjectIdentityByRef(
@@ -44,31 +70,47 @@ projectsRoutes.get('/', async (c) => {
         p.id, p.name, p.created_at,
         s.book_title, s.total_chapters, s.min_chapter_words, s.next_chapter_index, 
         s.rolling_summary, s.open_loops, s.need_human, s.need_human_reason,
-        o.outline_json IS NOT NULL as has_outline
+        o.outline_json IS NOT NULL as has_outline,
+        chapter_stats.max_chapter_index
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
+      LEFT JOIN (
+        SELECT project_id, MAX(chapter_index) AS max_chapter_index
+        FROM chapters
+        WHERE deleted_at IS NULL
+        GROUP BY project_id
+      ) chapter_stats ON p.id = chapter_stats.project_id
       WHERE p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY p.created_at DESC
     `).bind(userId).all();
 
-    const projects = results.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      path: row.id,
-      state: {
-        bookTitle: row.book_title || row.name,
-        totalChapters: row.total_chapters || 100,
-        minChapterWords: row.min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
-        nextChapterIndex: row.next_chapter_index || 1,
-        rollingSummary: row.rolling_summary || '',
-        openLoops: JSON.parse(row.open_loops || '[]'),
-        needHuman: Boolean(row.need_human),
-        needHumanReason: row.need_human_reason,
-      },
-      hasOutline: Boolean(row.has_outline),
-      createdAt: row.created_at,
-      outlineSummary: null,
+    const projects = await Promise.all(results.map(async (row: any) => {
+      const nextChapterIndex = await reconcileNextChapterIndex(
+        c.env.DB,
+        row.id,
+        row.next_chapter_index,
+        row.max_chapter_index
+      );
+
+      return {
+        id: row.id,
+        name: row.name,
+        path: row.id,
+        state: {
+          bookTitle: row.book_title || row.name,
+          totalChapters: row.total_chapters || 100,
+          minChapterWords: row.min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
+          nextChapterIndex,
+          rollingSummary: row.rolling_summary || '',
+          openLoops: JSON.parse(row.open_loops || '[]'),
+          needHuman: Boolean(row.need_human),
+          needHumanReason: row.need_human_reason,
+        },
+        hasOutline: Boolean(row.has_outline),
+        createdAt: row.created_at,
+        outlineSummary: null,
+      };
     }));
 
     return c.json({ success: true, projects });
@@ -102,6 +144,16 @@ projectsRoutes.get('/:name', async (c) => {
       WHERE project_id = ? AND deleted_at IS NULL ORDER BY chapter_index
     `).bind((project as any).id).all();
 
+    const actualMaxChapterIndex = chapters.length > 0
+      ? chapters.reduce((max, ch: any) => Math.max(max, normalizePositiveInteger(ch.chapter_index, 0)), 0)
+      : 0;
+    const nextChapterIndex = await reconcileNextChapterIndex(
+      c.env.DB,
+      (project as any).id,
+      (project as any).next_chapter_index,
+      actualMaxChapterIndex
+    );
+
     const result = {
       id: (project as any).id,
       name: (project as any).name,
@@ -110,7 +162,7 @@ projectsRoutes.get('/:name', async (c) => {
         bookTitle: (project as any).book_title || (project as any).name,
         totalChapters: (project as any).total_chapters || 100,
         minChapterWords: (project as any).min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
-        nextChapterIndex: (project as any).next_chapter_index || 1,
+        nextChapterIndex,
         rollingSummary: (project as any).rolling_summary || '',
         openLoops: JSON.parse((project as any).open_loops || '[]'),
         needHuman: Boolean((project as any).need_human),
