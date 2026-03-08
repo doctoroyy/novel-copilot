@@ -200,6 +200,12 @@ const ProposalResponseSchema = z.object({
 
 type ProposalResponse = z.infer<typeof ProposalResponseSchema>;
 
+type GeneratedProposalResponse = {
+  response: ProposalResponse;
+  rawOutput: string;
+  usedFallback: boolean;
+};
+
 function normalizePreviewGroup(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
@@ -1099,7 +1105,7 @@ async function generateProposalResponse(
   messages: AgentMessageRecord[],
   skills: AgentSkillRecord[],
   userPrompt: string
-): Promise<ProposalResponse> {
+): Promise<GeneratedProposalResponse> {
   const raw = await generateTextWithRetry(aiConfig, {
     system: buildSystemPrompt(skills),
     prompt: buildUserPrompt(projectSnapshot, messages, skills, userPrompt),
@@ -1107,16 +1113,11 @@ async function generateProposalResponse(
     maxTokens: 3600,
   }, 2);
 
-  const extractedJson = extractJsonObject(raw);
-  if (!extractedJson) {
-    const repaired = await repairProposalResponse(aiConfig, raw);
-    if (repaired) {
-      return repaired;
-    }
-
-    return {
-      reply: raw.trim(),
-      reasoning_summary: '模型未返回结构化 proposal，已降级为纯文本答复。',
+  const trimmedRaw = raw.trim();
+  const createFallback = (reason: string): GeneratedProposalResponse => ({
+    response: {
+      reply: '本轮分析已完成，但结构化提案输出异常，原始结果已收起。你可以继续追问、重试，或展开调试原文查看。',
+      reasoning_summary: reason,
       risk_level: 'medium',
       trace: [],
       actions: [],
@@ -1126,7 +1127,23 @@ async function generateProposalResponse(
         characters: [],
         chapters: [],
       },
-    };
+    },
+    rawOutput: trimmedRaw,
+    usedFallback: true,
+  });
+
+  const extractedJson = extractJsonObject(raw);
+  if (!extractedJson) {
+    const repaired = await repairProposalResponse(aiConfig, raw);
+    if (repaired) {
+      return {
+        response: repaired,
+        rawOutput: trimmedRaw,
+        usedFallback: false,
+      };
+    }
+
+    return createFallback('模型未返回结构化 proposal，原始输出已收起。');
   }
 
   let parsedJson: unknown;
@@ -1135,44 +1152,28 @@ async function generateProposalResponse(
   } catch {
     const repaired = await repairProposalResponse(aiConfig, raw);
     if (repaired) {
-      return repaired;
+      return {
+        response: repaired,
+        rawOutput: trimmedRaw,
+        usedFallback: false,
+      };
     }
 
-    return {
-      reply: raw.trim(),
-      reasoning_summary: '模型输出不是合法 JSON，已降级为纯文本答复。',
-      risk_level: 'medium',
-      trace: [],
-      actions: [],
-      preview: {
-        project: [],
-        outline: [],
-        characters: [],
-        chapters: [],
-      },
-    };
+    return createFallback('模型输出不是合法 JSON，原始输出已收起。');
   }
 
   const normalized = normalizeProposalResponse(parsedJson);
   if (!normalized) {
     const repaired = await repairProposalResponse(aiConfig, raw);
     if (repaired) {
-      return repaired;
+      return {
+        response: repaired,
+        rawOutput: trimmedRaw,
+        usedFallback: false,
+      };
     }
 
-    return {
-      reply: raw.trim(),
-      reasoning_summary: '模型输出未通过结构校验，已降级为纯文本答复。',
-      risk_level: 'medium',
-      trace: [],
-      actions: [],
-      preview: {
-        project: [],
-        outline: [],
-        characters: [],
-        chapters: [],
-      },
-    };
+    return createFallback('模型输出未通过结构校验，原始输出已收起。');
   }
 
   const preview = (
@@ -1185,8 +1186,12 @@ async function generateProposalResponse(
     : buildPreviewFromActions(normalized.actions as AgentProposalAction[]);
 
   return {
-    ...normalized,
-    preview,
+    response: {
+      ...normalized,
+      preview,
+    },
+    rawOutput: trimmedRaw,
+    usedFallback: false,
   };
 }
 
@@ -1586,13 +1591,14 @@ export async function sendCopilotMessage(params: {
       : '本轮未启用任何额外 skill，按通用项目 Copilot 策略执行。',
   });
 
-  const response = await generateProposalResponse(
+  const generated = await generateProposalResponse(
     aiConfig as AIConfig,
     projectSnapshot,
     [...existingMessages, userMessage],
     enabledSkills,
     trimmedContent,
   );
+  const response = generated.response;
 
   for (const trace of response.trace.slice(0, 6)) {
     await insertMessage(db, session.id, 'trace', trace.title, {
@@ -1604,6 +1610,10 @@ export async function sendCopilotMessage(params: {
   const assistantContent = response.reply.trim() || '已完成本轮分析，但没有生成额外答复。';
   const assistantMessage = await insertMessage(db, session.id, 'assistant', assistantContent, {
     reasoningSummary: response.reasoning_summary,
+    displayMode: generated.usedFallback ? 'fallback' : 'markdown',
+    ...(generated.usedFallback && generated.rawOutput
+      ? { debugRawOutput: generated.rawOutput }
+      : {}),
   });
 
   if (session.title === '新会话') {
@@ -1705,19 +1715,24 @@ export async function streamCopilotMessage(params: {
     await emit({ type: 'message', message: fallbackTrace });
   }
 
-  const response = await generateProposalResponse(
+  const generated = await generateProposalResponse(
     aiConfig,
     projectSnapshot,
     [...existingMessages, userMessage],
     enabledSkills,
     trimmedContent,
   );
+  const response = generated.response;
 
   const assistantContent = streamedAssistantContent.trim()
     || response.reply.trim()
     || '已完成本轮分析，但没有生成额外答复。';
   const assistantMessage = await insertMessage(db, session.id, 'assistant', assistantContent, {
     reasoningSummary: response.reasoning_summary,
+    displayMode: streamedAssistantContent.trim() || !generated.usedFallback ? 'markdown' : 'fallback',
+    ...(generated.usedFallback && generated.rawOutput
+      ? { debugRawOutput: generated.rawOutput }
+      : {}),
   });
   await emit({ type: 'message', message: assistantMessage });
 

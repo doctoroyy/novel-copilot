@@ -69,6 +69,7 @@ function normalizeVolume(raw: unknown, fallbackIndex: number): VolumeOutline | n
     goal: pickText(record.goal, firstChapter.goal),
     conflict: pickText(record.conflict),
     climax: pickText(record.climax, lastChapter.hook, lastChapter.title),
+    volumeEndState: pickText(record.volumeEndState, record.volume_end_state),
     chapters: normalizedChapters,
   };
 }
@@ -152,7 +153,7 @@ export function normalizeNovelOutline(
   if (volumes.length === 0) return null;
 
   const normalizedVolumes = volumes
-    .map((volume, index) => {
+    .map((volume, index): VolumeOutline | null => {
       const chapters = volume.chapters
         .map((chapter, chapterIndex) => normalizeChapter(chapter, chapterIndex + 1))
         .sort((left, right) => left.index - right.index);
@@ -168,6 +169,7 @@ export function normalizeNovelOutline(
         goal: volume.goal || firstChapter.goal || `推进第 ${firstChapter.index}-${lastChapter.index} 章主线`,
         conflict: volume.conflict || '',
         climax: volume.climax || lastChapter.hook || lastChapter.title,
+        volumeEndState: pickText((volume as any).volumeEndState, (volume as any).volume_end_state),
         chapters,
       };
     })
