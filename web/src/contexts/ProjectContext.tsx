@@ -132,6 +132,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadProjectRequestIdRef = useRef(0);
+  const routeProjectIdRef = useRef<string | null>(projectId ?? null);
+  routeProjectIdRef.current = projectId ?? null;
   // 同步标记：正在切换项目中。用 ref 而非 state，因为 setState 是异步的，
   // 同一渲染周期内后续 effect 读不到更新后的 state 值。
   const switchingProjectRef = useRef(false);
@@ -246,6 +248,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }
     }
   }, []);
+
+  const loadProjectIfRouteActive = useCallback(async (targetProjectId: string) => {
+    if (!targetProjectId) return false;
+    if (routeProjectIdRef.current !== targetProjectId) return false;
+    await loadProject(targetProjectId);
+    return true;
+  }, [loadProject]);
 
   const stopStreamMonitor = useCallback(() => {
     if (streamMonitorAbortRef.current) {
@@ -363,7 +372,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
             endTime: Date.now(),
             details: `生成 ${results.length} 章${failedChapters?.length ? `，失败 ${failedChapters.length} 章` : ''}`,
           });
-          void loadProject(project.id);
+          void loadProjectIfRouteActive(project.id);
         },
         onError: (error) => {
           if (streamMonitorTaskIdRef.current === taskId) {
@@ -423,7 +432,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       }));
       setError((err as Error).message);
     });
-  }, [clearForegroundGeneration, completeGeneration, loadProject, setGenerationState, stopStreamMonitor]);
+  }, [clearForegroundGeneration, completeGeneration, loadProjectIfRouteActive, setGenerationState, stopStreamMonitor]);
 
   // Initial load
   useEffect(() => {
@@ -641,9 +650,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Refresh on generation done
   useEffect(() => {
     if (generationProgress?.status === 'done' && selectedProject?.name === generationProgress.projectName) {
-      loadProject(selectedProject.id);
+      void loadProjectIfRouteActive(selectedProject.id);
     }
-  }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.id, selectedProject?.name, loadProject]);
+  }, [generationProgress?.status, generationProgress?.projectName, selectedProject?.id, selectedProject?.name, loadProjectIfRouteActive]);
 
   // Navigation helpers
   const handleSelectProject = useCallback((targetProjectId: string) => {
@@ -722,9 +731,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const handleRefresh = useCallback(async () => {
     await loadProjects();
     if (selectedProject) {
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     }
-  }, [loadProjects, loadProject, selectedProject]);
+  }, [loadProjects, loadProjectIfRouteActive, selectedProject]);
 
   // Generation handlers
   const handleGenerateOutline = useCallback(async (
@@ -819,7 +828,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           const previewHintChanged = message.includes('可在「大纲/章节」页预览并开写') && message !== lastPreviewHint;
           const shouldRefreshPartial = task.status === 'running' && (progressChanged || previewHintChanged);
           if (shouldRefreshPartial && now - lastPartialRefreshAt > 1200) {
-            await loadProject(selectedProject.id);
+            await loadProjectIfRouteActive(selectedProject.id);
             lastPartialRefreshAt = now;
             lastOutlineProgress = current;
             lastPreviewHint = message;
@@ -835,7 +844,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
               endTime: Date.now(),
               details: '后台任务执行完成',
             });
-            await loadProject(selectedProject.id);
+            await loadProjectIfRouteActive(selectedProject.id);
             break;
           }
 
@@ -873,7 +882,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     } finally {
       // Use generation logic will handle state through activeTasks
     }
-  }, [selectedProject, isConfigured, loadProject, startTask, updateTask, completeTask]);
+  }, [selectedProject, isConfigured, loadProjectIfRouteActive, startTask, updateTask, completeTask]);
 
   const handleGenerateChapters = useCallback(async (
     count: string,
@@ -1045,7 +1054,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         foregroundAbortController.signal,
         { index, regenerate, minChapterWords: parsedMinChapterWords }
       );
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     } catch (err) {
       clearForegroundGeneration();
       setGenerationState(prev => ({
@@ -1060,7 +1069,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       clearForegroundGeneration();
       setLoading(false);
     }
-  }, [selectedProject, isConfigured, clearForegroundGeneration, startGeneration, completeGeneration, setGenerationState, loadProject, generationState.startTime, generationState.isGenerating, generationState.projectName, stopStreamMonitor]);
+  }, [selectedProject, isConfigured, clearForegroundGeneration, startGeneration, completeGeneration, setGenerationState, loadProjectIfRouteActive, generationState.startTime, generationState.isGenerating, generationState.projectName, stopStreamMonitor]);
 
   const handleCancelGeneration = useCallback(async (projectNameOverride?: string) => {
     const targetProjectName = projectNameOverride || selectedProject?.name || generationState.projectName;
@@ -1100,14 +1109,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           : prev
       ));
       if (selectedProject?.id) {
-        void loadProject(selectedProject.id);
+        void loadProjectIfRouteActive(selectedProject.id);
       }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setCancelingGeneration(false);
     }
-  }, [selectedProject, generationState.projectName, generationState.taskId, clearForegroundGeneration, setGenerationState, stopStreamMonitor, loadProject]);
+  }, [selectedProject, generationState.projectName, generationState.taskId, clearForegroundGeneration, setGenerationState, stopStreamMonitor, loadProjectIfRouteActive]);
 
   const handleResetProject = useCallback(async () => {
     if (!selectedProject) return;
@@ -1115,13 +1124,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await resetProject(selectedProject.id);
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [selectedProject, loadProject]);
+  }, [selectedProject, loadProjectIfRouteActive]);
 
   // Chapter handlers
   const handleViewChapter = useCallback(async (index: number): Promise<string> => {
@@ -1133,23 +1142,23 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     if (!selectedProject) return;
     try {
       await deleteChapter(selectedProject.id, index);
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
       throw err;
     }
-  }, [selectedProject, loadProject]);
+  }, [selectedProject, loadProjectIfRouteActive]);
 
   const handleBatchDeleteChapters = useCallback(async (indices: number[]): Promise<void> => {
     if (!selectedProject) return;
     try {
       await batchDeleteChapters(selectedProject.id, indices);
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
       throw err;
     }
-  }, [selectedProject, loadProject]);
+  }, [selectedProject, loadProjectIfRouteActive]);
 
   const handleDownloadBook = useCallback(async () => {
     if (!selectedProject) return;
@@ -1201,13 +1210,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await generateBible();
-      await loadProject(selectedProject.id);
+      await loadProjectIfRouteActive(selectedProject.id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [selectedProject, isConfigured, loadProject]);
+  }, [selectedProject, isConfigured, loadProjectIfRouteActive]);
 
   const value: ProjectContextType = {
     projects,
