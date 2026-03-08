@@ -44,6 +44,7 @@ export type VolumeOutline = {
   goal: string;
   conflict: string;
   climax: string;
+  volumeEndState?: string;
   chapters: ChapterOutline[];
 };
 
@@ -128,6 +129,7 @@ function buildOutlineVolumes(chapters: ChapterOutline[]): VolumeOutline[] {
       goal: firstChapter.goal || `推进第 ${firstChapter.index}-${lastChapter.index} 章主线`,
       conflict: chunk.find((chapter) => chapter.hook)?.hook || '',
       climax: lastChapter.hook || lastChapter.title,
+      volumeEndState: '',
       chapters: chunk,
     });
   }
@@ -161,7 +163,7 @@ function normalizeOutlineValue(raw: unknown, minChapterWords?: number, totalChap
 
     if (Array.isArray(record.volumes) && record.volumes.length > 0) {
       volumes = record.volumes
-        .map((volume, volumeIndex) => {
+        .map((volume, volumeIndex): VolumeOutline | null => {
           const volumeRecord = asOutlineRecord(volume);
           if (!volumeRecord || !Array.isArray(volumeRecord.chapters) || volumeRecord.chapters.length === 0) {
             return null;
@@ -181,6 +183,7 @@ function normalizeOutlineValue(raw: unknown, minChapterWords?: number, totalChap
             goal: firstOutlineText(volumeRecord.goal, firstChapter.goal),
             conflict: firstOutlineText(volumeRecord.conflict),
             climax: firstOutlineText(volumeRecord.climax, lastChapter.hook, lastChapter.title),
+            volumeEndState: firstOutlineText(volumeRecord.volumeEndState, volumeRecord.volume_end_state),
             chapters,
           };
         })
@@ -268,6 +271,8 @@ export type AgentProposalAction = {
   payload: Record<string, unknown>;
 };
 
+export type AgentProposalPreviewItem = unknown;
+
 export type AgentProposal = {
   id: string;
   sessionId: string;
@@ -278,10 +283,10 @@ export type AgentProposal = {
   reasoningSummary: string;
   actions: AgentProposalAction[];
   preview: {
-    project: string[];
-    outline: string[];
-    characters: string[];
-    chapters: string[];
+    project: AgentProposalPreviewItem[];
+    outline: AgentProposalPreviewItem[];
+    characters: AgentProposalPreviewItem[];
+    chapters: AgentProposalPreviewItem[];
   };
   riskLevel: 'low' | 'medium' | 'high';
   status: 'pending' | 'confirmed' | 'executed' | 'failed' | 'rejected';
@@ -468,10 +473,10 @@ function parseAgentProposal(raw: any): AgentProposal {
       }))
       : [],
     preview: {
-      project: Array.isArray(raw?.preview?.project) ? raw.preview.project.map((item: any) => String(item)) : [],
-      outline: Array.isArray(raw?.preview?.outline) ? raw.preview.outline.map((item: any) => String(item)) : [],
-      characters: Array.isArray(raw?.preview?.characters) ? raw.preview.characters.map((item: any) => String(item)) : [],
-      chapters: Array.isArray(raw?.preview?.chapters) ? raw.preview.chapters.map((item: any) => String(item)) : [],
+      project: Array.isArray(raw?.preview?.project) ? raw.preview.project : [],
+      outline: Array.isArray(raw?.preview?.outline) ? raw.preview.outline : [],
+      characters: Array.isArray(raw?.preview?.characters) ? raw.preview.characters : [],
+      chapters: Array.isArray(raw?.preview?.chapters) ? raw.preview.chapters : [],
     },
     riskLevel: (raw?.riskLevel ?? raw?.risk_level ?? 'medium') as AgentProposal['riskLevel'],
     status: (raw?.status || 'pending') as AgentProposal['status'],
@@ -683,69 +688,91 @@ export async function refineOutline(
     body: JSON.stringify({ volumeIndex }),
   });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  const data = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || `Request failed: ${res.status}`);
   }
 
-  if (!res.body) {
-    throw new Error('No response body');
+  if (data.completed) {
+    const latestProject = await fetchProject(name);
+    if (!latestProject.outline) {
+      throw new Error('当前项目没有可用大纲');
+    }
+    callbacks?.onDone?.(latestProject.outline, data.message || 'Outline is already complete');
+    return latestProject.outline;
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let resultOutline: NovelOutline | null = null;
+  const taskId = Number(data.taskId);
+  if (!Number.isFinite(taskId)) {
+    throw new Error('未收到有效的任务 ID');
+  }
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  const totalVolumes = Number(data.totalVolumes) || 0;
+  callbacks?.onStart?.(totalVolumes);
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  let networkRetry = 0;
+  let lastProgress = -1;
+  const MAX_NETWORK_RETRY = 30;
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr) {
-            try {
-              const event = JSON.parse(jsonStr);
+  while (true) {
+    try {
+      const task = await getTaskById(taskId);
+      if (!task) {
+        throw new Error('大纲完善任务不存在或已失效');
+      }
 
-              if (event.type === 'heartbeat') continue;
+      if (task.currentMessage) {
+        const progressPayload = {
+          current: Math.max(0, Number(task.currentProgress || 0)),
+          total: Math.max(0, Number(task.targetCount || totalVolumes)),
+          volumeIndex: typeof volumeIndex === 'number' ? volumeIndex : Math.max(0, Number(task.currentProgress || 0) - 1),
+          volumeTitle: '',
+          message: task.currentMessage,
+        };
+        callbacks?.onProgress?.(progressPayload);
 
-              if (event.type === 'start') {
-                callbacks?.onStart?.(event.totalVolumes);
-              } else if (event.type === 'progress') {
-                callbacks?.onProgress?.(event);
-              } else if (event.type === 'volume_complete') {
-                callbacks?.onVolumeComplete?.(event);
-              } else if (event.type === 'done') {
-                resultOutline = event.outline;
-                callbacks?.onDone?.(event.outline, event.message);
-                reader.releaseLock();
-                return event.outline as NovelOutline;
-              } else if (event.type === 'error') {
-                callbacks?.onError?.(event.error);
-                throw new Error(event.error || 'Refine failed');
-              }
-            } catch (e) {
-              if (e instanceof SyntaxError) continue;
-              throw e;
-            }
-          }
+        if (progressPayload.current > 0 && progressPayload.current > lastProgress) {
+          lastProgress = progressPayload.current;
+          callbacks?.onVolumeComplete?.({
+            ...progressPayload,
+            chapterCount: 0,
+          });
         }
       }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 
-  if (!resultOutline) {
-    throw new Error('No outline received from refine');
+      if (task.status === 'completed') {
+        const latestProject = await fetchProject(name);
+        if (!latestProject.outline) {
+          throw new Error('任务已完成，但未读取到大纲数据');
+        }
+        callbacks?.onDone?.(latestProject.outline, task.currentMessage || data.message || '大纲完善完成');
+        return latestProject.outline;
+      }
+
+      if (task.status === 'failed') {
+        throw new Error(task.errorMessage || task.currentMessage || '大纲完善失败');
+      }
+
+      networkRetry = 0;
+      await sleep(1500);
+    } catch (error) {
+      if (isLikelyNetworkError(error) && networkRetry < MAX_NETWORK_RETRY) {
+        networkRetry += 1;
+        callbacks?.onProgress?.({
+          current: Math.max(0, lastProgress),
+          total: Math.max(0, totalVolumes),
+          volumeIndex: typeof volumeIndex === 'number' ? volumeIndex : Math.max(0, lastProgress - 1),
+          volumeTitle: '',
+          message: `网络波动，后台仍在执行，重连中（${networkRetry}/${MAX_NETWORK_RETRY}）...`,
+        });
+        await sleep(Math.min(5000, 800 * networkRetry));
+        continue;
+      }
+      callbacks?.onError?.((error as Error).message);
+      throw error;
+    }
   }
-  return resultOutline;
 }
 
 // 新增卷 - SSE 流式

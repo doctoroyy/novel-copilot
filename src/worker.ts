@@ -257,6 +257,8 @@ export default {
             appendMode: payload.appendMode,
             newVolumeCount: payload.newVolumeCount,
             chaptersPerVolume: payload.chaptersPerVolume,
+            refineMode: payload.refineMode,
+            refineVolumeIndices: payload.refineVolumeIndices,
           });
         } else {
           await runChapterGenerationTaskInBackground({

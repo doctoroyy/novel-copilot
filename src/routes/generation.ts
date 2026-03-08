@@ -239,9 +239,51 @@ function normalizeVolume(vol: any, volIndex: number, chapters: any[]): any {
     goal: vol.goal || vol.summary || vol.volume_goal || '',
     conflict: vol.conflict || '',
     climax: vol.climax || '',
+    volumeEndState: vol.volumeEndState || vol.volume_end_state || '',
     // Use startChapter + i as the correct fallback index for each chapter
     chapters: chapters.map((ch, i) => normalizeChapter(ch, startChapter + i)),
   };
+}
+
+const TIMELINE_RESET_PATTERN = /(重置(?:了)?时间线|时间线(?:被)?重置|新的轮回|重新轮回|轮回重启|回到(?:故事)?开始|回到.*(?:过去|最初|起点|开端)|时光倒流|逆转时间|世界线改写|改写世界线|回档|读档重来|重来一次|从头再来)/;
+
+function buildPreviousVolumeSummary(volume: any): string | undefined {
+  if (!volume) return undefined;
+
+  const parts: string[] = [];
+  if (volume.title) parts.push(`卷名: ${volume.title}`);
+  if (volume.startChapter && volume.endChapter) {
+    parts.push(`章节范围: 第${volume.startChapter}-${volume.endChapter}章`);
+  }
+  if (volume.goal) parts.push(`本卷目标: ${volume.goal}`);
+  if (volume.conflict) parts.push(`核心冲突: ${volume.conflict}`);
+  if (volume.climax) parts.push(`卷末高潮: ${volume.climax}`);
+  if (volume.volumeEndState) parts.push(`卷末状态: ${volume.volumeEndState}`);
+
+  const tailChapters = Array.isArray(volume.chapters)
+    ? volume.chapters
+        .slice()
+        .sort((left: any, right: any) => Number(left?.index || 0) - Number(right?.index || 0))
+        .slice(-3)
+        .map((chapter: any) => {
+          const chapterNo = chapter?.index ? `第${chapter.index}章` : '章节';
+          const chapterParts = [chapter?.title ? `${chapterNo}「${chapter.title}」` : chapterNo];
+          if (chapter?.goal) chapterParts.push(String(chapter.goal));
+          if (chapter?.hook) chapterParts.push(`钩子: ${chapter.hook}`);
+          return chapterParts.join(' | ');
+        })
+        .filter(Boolean)
+    : [];
+
+  if (tailChapters.length > 0) {
+    parts.push(`最后关键章节:\n- ${tailChapters.join('\n- ')}`);
+  }
+
+  if (TIMELINE_RESET_PATTERN.test(parts.join('\n'))) {
+    parts.push('时间线规则: 上一卷已出现时间线重置/轮回重启信号，续写必须以重置后的世界状态为新的基线，不得直接沿用重置前已被覆盖的主冲突。');
+  }
+
+  return parts.join('\n') || undefined;
 }
 
 // Normalize milestones - ensure it's an array of strings
@@ -312,6 +354,9 @@ type OutlineQueuePayload = {
   appendMode?: boolean;
   newVolumeCount?: number;
   chaptersPerVolume?: number;
+  // 大纲完善模式
+  refineMode?: boolean;
+  refineVolumeIndices?: number[];
 };
 
 const OUTLINE_TASK_PROGRESS_TOTAL = 100;
@@ -323,6 +368,37 @@ function computeOutlineProgress(volumeIndex: number, totalVolumes: number): numb
   const ratio = (volumeIndex + 1) / totalVolumes;
   const scaled = 20 + Math.round(ratio * 60);
   return Math.max(20, Math.min(80, scaled));
+}
+
+function detectVolumesToRefine(volumes: any[]): number[] {
+  const indices: number[] = [];
+
+  for (let i = 0; i < volumes.length; i++) {
+    const volume = volumes[i];
+    const chapters = Array.isArray(volume?.chapters) ? volume.chapters : [];
+    const expectedCount = Math.max(0, Number(volume?.endChapter) - Number(volume?.startChapter) + 1);
+    const hasContentCount = chapters.filter((chapter: any) => chapter?.goal && String(chapter.goal).length > 5).length;
+    const isPlaceholder = chapters.length <= 1;
+    const isEmpty = hasContentCount < Math.max(5, expectedCount * 0.1);
+
+    if (isPlaceholder || isEmpty) {
+      indices.push(i);
+    }
+  }
+
+  return indices;
+}
+
+function getRefineVolumeIndices(volumes: any[], requestedIndices?: number[]): number[] {
+  if (Array.isArray(requestedIndices) && requestedIndices.length > 0) {
+    return Array.from(new Set(
+      requestedIndices
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0 && value < volumes.length)
+    )).sort((a, b) => a - b);
+  }
+
+  return detectVolumesToRefine(volumes);
 }
 
 async function enqueueOutlineTask(c: any, payload: OutlineQueuePayload): Promise<void> {
@@ -343,6 +419,11 @@ async function enqueueOutlineTask(c: any, payload: OutlineQueuePayload): Promise
       customPrompt: payload.customPrompt,
       minChapterWords: payload.minChapterWords,
       aiConfig: payload.aiConfig,
+      appendMode: payload.appendMode,
+      newVolumeCount: payload.newVolumeCount,
+      chaptersPerVolume: payload.chaptersPerVolume,
+      refineMode: payload.refineMode,
+      refineVolumeIndices: payload.refineVolumeIndices,
     })
   );
 }
@@ -361,6 +442,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
   appendMode?: boolean;
   newVolumeCount?: number;
   chaptersPerVolume?: number;
+  // 大纲完善模式
+  refineMode?: boolean;
+  refineVolumeIndices?: number[];
 }) {
   const {
     env,
@@ -375,6 +459,8 @@ export async function runOutlineGenerationTaskInBackground(params: {
     appendMode,
     newVolumeCount,
     chaptersPerVolume,
+    refineMode,
+    refineVolumeIndices,
   } = params;
 
   try {
@@ -411,7 +497,25 @@ export async function runOutlineGenerationTaskInBackground(params: {
         ? Number(project.min_chapter_words)
         : DEFAULT_MIN_CHAPTER_WORDS);
 
-    await updateTaskMessage(env.DB, taskId, appendMode ? '正在准备追加卷...' : '正在准备大纲生成...', 5);
+    await updateTaskMessage(
+      env.DB,
+      taskId,
+      refineMode ? '正在准备大纲完善...' : (appendMode ? '正在准备追加卷...' : '正在准备大纲生成...'),
+      refineMode ? 0 : 5
+    );
+
+    if (refineMode) {
+      await runRefineOutlineMode({
+        env,
+        taskId,
+        project,
+        bible: project.bible,
+        aiConfig,
+        effectiveMinChapterWords,
+        refineVolumeIndices,
+      });
+      return;
+    }
 
     try {
       await consumeCredit(env.DB, userId, 'generate_outline', appendMode ? `追加卷: ${project.name}` : `生成大纲: ${project.name}`);
@@ -478,8 +582,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
 
       const vol = masterOutline.volumes[i];
       const previousVolumeEndState = i > 0
-        ? masterOutline.volumes[i - 1].volumeEndState ||
-        `${masterOutline.volumes[i - 1].title}\n目标: ${masterOutline.volumes[i - 1].goal}\n高潮: ${masterOutline.volumes[i - 1].climax}`
+        ? buildPreviousVolumeSummary(masterOutline.volumes[i - 1])
         : null;
 
       await updateTaskMessage(
@@ -619,12 +722,10 @@ async function runAppendVolumesMode(params: {
     let previousVolumeSummary: string | undefined;
     if (i === 0 && existingVolumes.length > 0) {
       const lastExisting = existingVolumes[existingVolumes.length - 1];
-      previousVolumeSummary = lastExisting.volumeEndState ||
-        `${lastExisting.title}\n目标: ${lastExisting.goal}\n高潮: ${lastExisting.climax}`;
+      previousVolumeSummary = buildPreviousVolumeSummary(lastExisting);
     } else if (i > 0) {
       const prevNew = newVolumeSkeletons[i - 1];
-      previousVolumeSummary = prevNew.volumeEndState ||
-        `${prevNew.title}\n目标: ${prevNew.goal}\n高潮: ${prevNew.climax}`;
+      previousVolumeSummary = buildPreviousVolumeSummary(prevNew);
     }
 
     const chapters = await generateVolumeChapters(aiConfig, {
@@ -676,6 +777,91 @@ async function runAppendVolumesMode(params: {
   `).bind(newTotalChapters, project.id).run();
 
   await updateTaskMessage(env.DB, taskId, `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`, OUTLINE_TASK_PROGRESS_TOTAL);
+  await completeTask(env.DB, taskId, true, undefined);
+}
+
+async function runRefineOutlineMode(params: {
+  env: Env;
+  taskId: number;
+  project: { id: string; bible: string; name: string };
+  bible: string;
+  aiConfig: AIConfig;
+  effectiveMinChapterWords: number;
+  refineVolumeIndices?: number[];
+}) {
+  const { env, taskId, project, bible, aiConfig, effectiveMinChapterWords, refineVolumeIndices } = params;
+
+  const outlineRecord = await env.DB.prepare(`
+    SELECT outline_json FROM outlines WHERE project_id = ?
+  `).bind(project.id).first() as { outline_json?: string } | null;
+
+  if (!outlineRecord?.outline_json) {
+    await completeTask(env.DB, taskId, false, 'Outline not found');
+    return;
+  }
+
+  let outline = JSON.parse(outlineRecord.outline_json);
+  const volumes = Array.isArray(outline?.volumes) ? [...outline.volumes] : [];
+  const targetIndices = getRefineVolumeIndices(volumes, refineVolumeIndices);
+
+  if (targetIndices.length === 0) {
+    await updateTaskMessage(env.DB, taskId, '当前大纲已完整，无需完善', 0);
+    await completeTask(env.DB, taskId, true, undefined);
+    return;
+  }
+
+  await updateTaskMessage(env.DB, taskId, `发现 ${targetIndices.length} 卷需要完善，开始生成...`, 0);
+
+  for (let i = 0; i < targetIndices.length; i++) {
+    const runtime = await getTaskRuntimeControl(env.DB, taskId);
+    if (!runtime.exists || runtime.status !== 'running') {
+      return;
+    }
+    if (runtime.cancelRequested) {
+      await completeTask(env.DB, taskId, false, '任务已取消');
+      return;
+    }
+
+    const volumeIndex = targetIndices[i];
+    const volume = volumes[volumeIndex];
+    if (!volume) {
+      continue;
+    }
+
+    await updateTaskMessage(
+      env.DB,
+      taskId,
+      `正在生成第 ${volumeIndex + 1} 卷「${volume.title}」的章节大纲... (${i + 1}/${targetIndices.length})`,
+      i
+    );
+
+    const chapters = await generateVolumeChapters(aiConfig, {
+      bible,
+      masterOutline: outline,
+      volume,
+      previousVolumeSummary: volumeIndex > 0 ? buildPreviousVolumeSummary(volumes[volumeIndex - 1]) : undefined,
+      minChapterWords: effectiveMinChapterWords,
+    });
+
+    volumes[volumeIndex] = normalizeVolume({ ...volume, chapters }, volumeIndex, chapters);
+    outline = {
+      ...outline,
+      volumes: [...volumes],
+    };
+
+    await env.DB.prepare(`
+      UPDATE outlines SET outline_json = ? WHERE project_id = ?
+    `).bind(JSON.stringify(outline), project.id).run();
+
+    await updateTaskMessage(
+      env.DB,
+      taskId,
+      `第 ${volumeIndex + 1} 卷「${volume.title}」已完善并保存`,
+      i + 1
+    );
+  }
+
+  await updateTaskMessage(env.DB, taskId, '大纲完善完成', targetIndices.length);
   await completeTask(env.DB, taskId, true, undefined);
 }
 
@@ -1385,7 +1571,7 @@ export async function runChapterGenerationTaskInBackground(params: {
               const volIndex = outline.volumes.indexOf(vol);
               if (volIndex > 0) {
                 const prevVol = outline.volumes[volIndex - 1];
-                parts.push(`\n【上卷结局】${prevVol.volumeEndState || prevVol.climax}`);
+                parts.push(`\n【上卷结局】${buildPreviousVolumeSummary(prevVol) || prevVol.volumeEndState || prevVol.climax}`);
                 parts.push(`【衔接要求】本章开头需自然承接上卷结局，不要重复叙述已发生的事件`);
               }
             }
@@ -2707,12 +2893,10 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           let previousVolumeSummary: string | undefined;
           if (i === 0 && existingVolumes.length > 0) {
             const lastExisting = existingVolumes[existingVolumes.length - 1];
-            previousVolumeSummary = lastExisting.volumeEndState ||
-              `${lastExisting.title}\n目标: ${lastExisting.goal}\n高潮: ${lastExisting.climax}`;
+            previousVolumeSummary = buildPreviousVolumeSummary(lastExisting);
           } else if (i > 0) {
             const prevNew = newVolumeSkeletons[i - 1];
-            previousVolumeSummary = prevNew.volumeEndState ||
-              `${prevNew.title}\n目标: ${prevNew.goal}\n高潮: ${prevNew.climax}`;
+            previousVolumeSummary = buildPreviousVolumeSummary(prevNew);
           }
 
           const chapters = await generateVolumeChapters(aiConfig, {
@@ -2788,7 +2972,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
   });
 });
 
-// Refine outline (regenerate missing/incomplete volumes) - SSE streaming
+// Refine outline (regenerate missing/incomplete volumes) - queue-backed
 generationRoutes.post('/projects/:name/outline/refine', async (c) => {
   const name = c.req.param('name');
   const userId = c.get('userId') as string | null;
@@ -2801,167 +2985,85 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
     return c.json({ success: false, error: 'Missing AI configuration' }, 400);
   }
 
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      const sendEvent = (type: string, data: any) => {
-        try {
-          const payload = JSON.stringify({ type, ...data });
-          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-        } catch (e) {
-          console.error('Error sending SSE event', e);
-        }
-      };
-
-      // Heartbeat to keep connection alive
-      const heartbeatInterval = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
-        } catch {
-          clearInterval(heartbeatInterval);
-        }
-      }, 5000);
-
-      try {
-        // Get project (user-scoped)
-        const project = await c.env.DB.prepare(`
-          SELECT id, bible
-          FROM projects
-          WHERE (id = ? OR name = ?) AND user_id = ?
-          ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
-          LIMIT 1
-        `).bind(name, name, userId, name).first();
-
-        if (!project) {
-          sendEvent('error', { error: 'Project not found' });
-          clearInterval(heartbeatInterval);
-          controller.close();
-          return;
-        }
-
-        // Get current outline
-        const outlineRecord = await c.env.DB.prepare(`
-          SELECT outline_json FROM outlines WHERE project_id = ?
-        `).bind((project as any).id).first();
-
-        if (!outlineRecord) {
-          sendEvent('error', { error: 'Outline not found' });
-          clearInterval(heartbeatInterval);
-          controller.close();
-          return;
-        }
-
-        let outline = JSON.parse((outlineRecord as any).outline_json);
-        const bible = (project as any).bible;
-
-        let volumeIndex: number | undefined;
-        try {
-          const body = await c.req.json();
-          volumeIndex = body.volumeIndex;
-        } catch (e) {
-          // Start with undefined
-        }
-
-        let updated = false;
-        const volumes = outline.volumes || [];
-        const volumesToRefine: number[] = [];
-
-        if (typeof volumeIndex === 'number' && volumeIndex >= 0 && volumeIndex < volumes.length) {
-          volumesToRefine.push(volumeIndex);
-        } else {
-          // Auto-detect incomplete volumes
-          for (let i = 0; i < volumes.length; i++) {
-            const vol = volumes[i];
-            const chapters = vol.chapters || [];
-            const expectedCount = (vol.endChapter - vol.startChapter) + 1;
-            const hasContentCount = chapters.filter((c: any) => c.goal && c.goal.length > 5).length;
-            const isPlaceholder = chapters.length <= 1;
-            const isEmpty = hasContentCount < (Math.max(5, expectedCount * 0.1));
-
-            if (isPlaceholder || isEmpty) {
-              volumesToRefine.push(i);
-            }
-          }
-        }
-
-        sendEvent('start', {
-          totalVolumes: volumesToRefine.length,
-          volumeIndices: volumesToRefine,
-        });
-
-        for (let vi = 0; vi < volumesToRefine.length; vi++) {
-          const idx = volumesToRefine[vi];
-          const vol = volumes[idx];
-
-          sendEvent('progress', {
-            current: vi + 1,
-            total: volumesToRefine.length,
-            volumeIndex: idx,
-            volumeTitle: vol.title,
-            message: `正在生成第 ${idx + 1} 卷「${vol.title}」的章节大纲... (${vi + 1}/${volumesToRefine.length})`,
-          });
-
-          console.log(`Refining Volume ${idx + 1}: ${vol.title}`);
-
-          // Build previousVolumeSummary from the preceding volume for context alignment
-          let previousVolumeSummary: string | undefined;
-          if (idx > 0) {
-            const prevVol = volumes[idx - 1];
-            previousVolumeSummary = prevVol.volumeEndState ||
-              `${prevVol.title}\n目标: ${prevVol.goal}\n高潮: ${prevVol.climax}`;
-          }
-
-          const chaptersData = await generateVolumeChapters(aiConfig, {
-            bible,
-            masterOutline: outline,
-            volume: vol,
-            previousVolumeSummary,
-          });
-          volumes[idx] = normalizeVolume({ ...vol, chapters: chaptersData }, idx, chaptersData);
-          updated = true;
-
-          sendEvent('volume_complete', {
-            current: vi + 1,
-            total: volumesToRefine.length,
-            volumeIndex: idx,
-            volumeTitle: vol.title,
-            chapterCount: chaptersData.length,
-            message: `第 ${idx + 1} 卷「${vol.title}」完成 (${chaptersData.length} 章)`,
-          });
-        }
-
-        if (updated) {
-          outline.volumes = volumes;
-
-          // Save updated outline
-          await c.env.DB.prepare(`
-            UPDATE outlines SET outline_json = ? WHERE project_id = ?
-          `).bind(JSON.stringify(outline), (project as any).id).run();
-
-          sendEvent('done', { success: true, message: 'Outline refined successfully', outline });
-        } else {
-          sendEvent('done', { success: true, message: 'Outline is already complete', outline });
-        }
-
-        clearInterval(heartbeatInterval);
-        controller.close();
-      } catch (error) {
-        console.error('Refine outline error:', error);
-        sendEvent('error', { error: (error as Error).message });
-        clearInterval(heartbeatInterval);
-        controller.close();
-      }
+  try {
+    let volumeIndex: number | undefined;
+    try {
+      const body = await c.req.json();
+      volumeIndex = body.volumeIndex;
+    } catch {
+      volumeIndex = undefined;
     }
-  });
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+    const project = await c.env.DB.prepare(`
+      SELECT p.id
+      FROM projects p
+      WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
+      ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
+      LIMIT 1
+    `).bind(name, name, userId, name).first() as { id: string } | null;
+
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const outlineRecord = await c.env.DB.prepare(`
+      SELECT outline_json FROM outlines WHERE project_id = ?
+    `).bind(project.id).first() as { outline_json?: string } | null;
+
+    if (!outlineRecord?.outline_json) {
+      return c.json({ success: false, error: 'Outline not found' }, 404);
+    }
+
+    const outline = JSON.parse(outlineRecord.outline_json);
+    const refineVolumeIndices = getRefineVolumeIndices(
+      Array.isArray(outline?.volumes) ? outline.volumes : [],
+      Number.isInteger(volumeIndex) ? [Number(volumeIndex)] : undefined,
+    );
+
+    if (refineVolumeIndices.length === 0) {
+      return c.json({
+        success: true,
+        completed: true,
+        message: 'Outline is already complete',
+      });
+    }
+
+    const { taskId, created } = await createBackgroundTask(
+      c.env.DB,
+      project.id,
+      userId,
+      'outline',
+      refineVolumeIndices.length,
+      0,
+      `正在准备完善 ${refineVolumeIndices.length} 卷大纲...`
+    );
+
+    if (created) {
+      await enqueueOutlineTask(c, {
+        taskType: 'outline',
+        taskId,
+        userId,
+        projectId: project.id,
+        targetChapters: Number(outline?.totalChapters) || 0,
+        targetWordCount: Number(outline?.targetWordCount) || 0,
+        aiConfig,
+        refineMode: true,
+        refineVolumeIndices,
+      });
+    }
+
+    return c.json({
+      success: true,
+      taskId,
+      totalVolumes: refineVolumeIndices.length,
+      message: created
+        ? 'Outline refine task has been enqueued in the background.'
+        : 'An outline task is already running in the background.',
+    }, 202);
+  } catch (error) {
+    console.error('Outline refine enqueue failed:', error);
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
 });
 
 // Migration endpoint to normalize existing outline data
@@ -2994,6 +3096,7 @@ generationRoutes.post('/migrate-outlines', async (c) => {
             goal: vol.goal || vol.summary || vol.volume_goal || '',
             conflict: vol.conflict || '',
             climax: vol.climax || '',
+            volumeEndState: vol.volumeEndState || vol.volume_end_state || '',
             chapters: (vol.chapters || []).map((ch: any, chIndex: number) => normalizeChapter(ch, chIndex + 1)),
           })),
         };

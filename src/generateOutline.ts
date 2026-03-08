@@ -160,6 +160,60 @@ function deriveHookFromGoal(goal: string): string {
   return tail.length > 20 ? tail.slice(0, 20) : tail;
 }
 
+const TIMELINE_RESET_PATTERN = /(重置(?:了)?时间线|时间线(?:被)?重置|新的轮回|重新轮回|轮回重启|回到(?:故事)?开始|回到.*(?:过去|最初|起点|开端)|时光倒流|逆转时间|世界线改写|改写世界线|回档|读档重来|重来一次|从头再来)/;
+
+function describeChapterForContinuation(chapter: Partial<ChapterOutline> | null | undefined): string | null {
+  if (!chapter) return null;
+
+  const index = Number(chapter.index);
+  const title = typeof chapter.title === 'string' ? chapter.title.trim() : '';
+  const goal = typeof chapter.goal === 'string' ? chapter.goal.trim() : '';
+  const hook = typeof chapter.hook === 'string' ? chapter.hook.trim() : '';
+  const chapterNo = Number.isFinite(index) && index > 0 ? `第${index}章` : '章节';
+  const parts = [title ? `${chapterNo}「${title}」` : chapterNo];
+
+  if (goal) parts.push(goal);
+  if (hook) parts.push(`钩子: ${hook}`);
+
+  return parts.join(' | ');
+}
+
+function buildVolumeContinuationSummary(
+  volume: (Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }) | null | undefined
+): string {
+  if (!volume) return '';
+
+  const parts: string[] = [
+    `卷名: ${volume.title}`,
+    `章节范围: 第${volume.startChapter}-${volume.endChapter}章`,
+  ];
+
+  if (volume.goal) parts.push(`本卷目标: ${volume.goal}`);
+  if (volume.conflict) parts.push(`核心冲突: ${volume.conflict}`);
+  if (volume.climax) parts.push(`卷末高潮: ${volume.climax}`);
+  if (volume.volumeEndState) parts.push(`卷末状态: ${volume.volumeEndState}`);
+
+  const tailChapters = Array.isArray(volume.chapters)
+    ? volume.chapters
+        .slice()
+        .sort((left, right) => left.index - right.index)
+        .slice(-3)
+        .map(describeChapterForContinuation)
+        .filter((item): item is string => Boolean(item))
+    : [];
+
+  if (tailChapters.length > 0) {
+    parts.push(`最后关键章节:\n- ${tailChapters.join('\n- ')}`);
+  }
+
+  const combined = parts.join('\n');
+  if (TIMELINE_RESET_PATTERN.test(combined)) {
+    parts.push('时间线规则: 上一卷已出现时间线重置/轮回重启信号，续写必须以重置后的世界状态为新的基线，不得直接沿用重置前已被覆盖的主冲突。');
+  }
+
+  return parts.join('\n');
+}
+
 function parseStructuredVolumeChapterText(
   raw: string,
   startChapter: number,
@@ -433,11 +487,17 @@ ${bible.slice(0, 4000)}
 - 本卷目标: ${volume.goal}
 - 本卷冲突: ${volume.conflict}
 - 本卷高潮: ${volume.climax}
+- 本卷结束状态: ${volume.volumeEndState || '请围绕本卷目标收束出清晰的卷末状态'}
 - 每章最低字数: ${minChapterWords} 字
 
 ${actualStorySummary
     ? `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`
     : previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
+
+【续写硬约束】
+- 第一批章节必须直接承接上一卷最后一幕造成的局面变化，不能像没发生过一样切回旧冲突
+- 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
+- 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
 
 请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”：
 `.trim();
@@ -477,7 +537,7 @@ export async function generateAdditionalVolumes(
     existingOutline: {
       mainGoal: string;
       milestones: string[];
-      volumes: Omit<VolumeOutline, 'chapters'>[];
+      volumes: Array<Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }>;
       totalChapters: number;
       targetWordCount: number;
     };
@@ -496,7 +556,13 @@ export async function generateAdditionalVolumes(
 
   // 构建已有卷的摘要
   const existingVolumesSummary = existingOutline.volumes.map((vol, i) =>
-    `第${i + 1}卷「${vol.title}」: 第${vol.startChapter}-${vol.endChapter}章 | 目标: ${vol.goal} | 高潮: ${vol.climax}`
+    [
+      `第${i + 1}卷「${vol.title}」: 第${vol.startChapter}-${vol.endChapter}章`,
+      vol.goal ? `目标: ${vol.goal}` : '',
+      vol.conflict ? `冲突: ${vol.conflict}` : '',
+      vol.climax ? `高潮: ${vol.climax}` : '',
+      vol.volumeEndState ? `结束状态: ${vol.volumeEndState}` : '',
+    ].filter(Boolean).join(' | ')
   ).join('\n');
 
   const system = `
@@ -512,6 +578,7 @@ export async function generateAdditionalVolumes(
 5. 悬念管理：每卷结尾必须留大悬念
 6. 禁止水卷：每卷都要有明确的核心矛盾和高潮
 7. 篇幅规划：每章不少于 ${minChapterWords} 字
+8. 时间线一致：如果上一卷出现“时间线重置/轮回重启/回到开端”等设定，新卷必须以重置后的状态为新的起点，不能无理由回到旧时间线已经结束或被覆盖的冲突
 
 输出严格的 JSON 格式，不要有其他文字。
 
@@ -544,7 +611,12 @@ ${existingVolumesSummary}
 【上一卷结尾状态】
 ${actualStorySummary
     ? `【实际剧情进展（以此为准）】\n${actualStorySummary}`
-    : lastVolume ? `${lastVolume.volumeEndState || lastVolume.climax}\n目标达成: ${lastVolume.goal}\n高潮: ${lastVolume.climax}` : '这是第一卷'}
+    : lastVolume ? buildVolumeContinuationSummary(lastVolume) : '这是第一卷'}
+
+【续写硬约束】
+- 新卷必须从“上一卷结尾状态/最后关键章节”自然接续，先处理卷末遗留的直接后果，再展开新矛盾
+- 如果上一卷已经发生时间线重置、回到开端、轮回重启，新卷第一阶段必须围绕“重置后的新处境”展开
+- 已经被重置覆盖、已经解决、或明显属于旧时间线的冲突，不得直接拿来当新卷主线；除非你先写明它如何在新时间线中重新成立
 
 【追加要求】
 - 新增 ${newVolumeCount} 卷
@@ -615,7 +687,7 @@ export async function generateFullOutline(args: {
     console.log(`   ✅ 生成了 ${chapters.length} 章大纲`);
 
     // 为下一卷准备摘要
-    previousVolumeSummary = `${vol.title}\n目标: ${vol.goal}\n高潮: ${vol.climax}\n结束状态: ${vol.volumeEndState || vol.climax}`;
+    previousVolumeSummary = buildVolumeContinuationSummary({ ...vol, chapters });
 
     // 卷间延迟
     if (i < master.volumes.length - 1) {

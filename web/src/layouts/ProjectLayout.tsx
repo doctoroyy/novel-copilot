@@ -295,6 +295,7 @@ function ProjectLayoutInner() {
           `}>
             <CopilotPanel
               project={selectedProject}
+              isMobile={isMobile}
               onProjectRefresh={handleRefresh}
             />
           </div>
