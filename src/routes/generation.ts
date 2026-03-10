@@ -9,6 +9,12 @@ import { initializeRegistryFromGraph } from '../context/characterStateManager.js
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
 import {
+  buildEnhancedOutlineFromChapterContext,
+  getOutlineChapterContext,
+  normalizeNovelOutline,
+} from '../utils/outline.js';
+import { hasStoryContract } from '../utils/storyContract.js';
+import {
   createGenerationTask,
   createBackgroundTask,
   updateTaskProgress,
@@ -1357,77 +1363,6 @@ function formatDurationMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-const FALLOUT_TRIGGER_PATTERN = /(异象|裂缝|天劫|使者|神圣|法则|封锁空间|围攻|大战|绝境|反杀|血祭|绑架|爆炸|坠楼|重伤|巨物|黑色液体|东海异变|空间异常)/;
-const FALLOUT_RESOLUTION_PATTERN = /(余波|善后|收尾|后果|代价|恢复|安抚|震动|调查|清点|反应|解释|复盘|疗伤|处置)/;
-
-function findOutlineChapter(outline: any, chapterIndex: number): any | null {
-  if (!outline?.volumes) return null;
-  for (const vol of outline.volumes) {
-    const chapter = vol?.chapters?.find((item: any) => Number(item?.index) === chapterIndex);
-    if (chapter) return chapter;
-  }
-  return null;
-}
-
-function shouldForceFalloutBridge(params: {
-  chapterIndex: number;
-  outline: any;
-  lastChapters: Array<{ content?: string }>;
-  currentChapter?: { title?: string; goal?: string; hook?: string } | null;
-}): boolean {
-  const { chapterIndex, outline, lastChapters, currentChapter } = params;
-  if (chapterIndex <= 1) return false;
-
-  const prevChapter = findOutlineChapter(outline, chapterIndex - 1);
-  const previousSignals = [
-    prevChapter?.title,
-    prevChapter?.goal,
-    prevChapter?.hook,
-    lastChapters[lastChapters.length - 1]?.content,
-  ].filter(Boolean).join('\n');
-
-  if (!FALLOUT_TRIGGER_PATTERN.test(previousSignals)) {
-    return false;
-  }
-
-  const currentSignals = [
-    currentChapter?.title,
-    currentChapter?.goal,
-    currentChapter?.hook,
-  ].filter(Boolean).join('\n');
-
-  if (FALLOUT_RESOLUTION_PATTERN.test(currentSignals)) {
-    return false;
-  }
-
-  const currentVolume = outline?.volumes?.find((vol: any) =>
-    chapterIndex >= Number(vol?.startChapter) && chapterIndex <= Number(vol?.endChapter)
-  );
-  const isVolumeBoundary = currentVolume && chapterIndex === Number(currentVolume.startChapter);
-  return Boolean(isVolumeBoundary || FALLOUT_TRIGGER_PATTERN.test(previousSignals));
-}
-
-function buildStoryGuardrails(params: {
-  chapterIndex: number;
-  outline: any;
-  lastChapters: Array<{ content?: string }>;
-  currentChapter?: { title?: string; goal?: string; hook?: string } | null;
-}): string[] {
-  const { chapterIndex, outline, lastChapters, currentChapter } = params;
-  const lines = [
-    '【剧情护栏】',
-    '- 本章只允许 1 个主危机，可附带 1 个副事件；其他冲突只埋钩子，不并发展开',
-    '- 除非大纲明确要求，不要突然引入比当前主线更高一级的世界观、战力层级或敌人规模',
-  ];
-
-  if (shouldForceFalloutBridge({ chapterIndex, outline, lastChapters, currentChapter })) {
-    lines.push('- 上一章属于高强度冲突或世界观升级，本章前半段必须先处理余波、代价、角色反应或势力后果，再切入新事件');
-    lines.push('- 若本章是新卷开篇，必须把上卷结果转化为当前现实处境，禁止直接跳到全新日常或无关支线');
-  }
-
-  return lines;
-}
-
 async function appendSummaryMemorySnapshot(params: {
   db: D1Database;
   projectId: string;
@@ -1682,48 +1617,39 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       let chapterGoalHint: string | undefined;
       let outlineTitle: string | undefined;
-      let currentOutlineChapter: any | null = null;
-      const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
-      if (outline) {
-        for (const vol of outline.volumes) {
-          const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
-          if (ch) {
-            currentOutlineChapter = ch;
-            outlineTitle = ch.title;
+      let enhancedOutline: ReturnType<typeof buildEnhancedOutlineFromChapterContext> | undefined;
+      const outline = project.outline_json
+        ? normalizeNovelOutline(JSON.parse(project.outline_json), {
+            fallbackMinChapterWords: Number(project.min_chapter_words) || DEFAULT_MIN_CHAPTER_WORDS,
+            fallbackTotalChapters: project.total_chapters,
+          })
+        : null;
+      const outlineContext = getOutlineChapterContext(outline, chapterIndex);
+      if (outlineContext) {
+        const { chapter, volume, previousVolume } = outlineContext;
+        outlineTitle = chapter.title;
+        enhancedOutline = buildEnhancedOutlineFromChapterContext(outlineContext);
 
-            const parts = [
-              `【章节大纲】`,
-              `- 标题: ${ch.title}`,
-              `- 目标: ${ch.goal}`,
-              `- 章末钩子: ${ch.hook}`,
-            ];
+        const parts = [
+          `【章节大纲】`,
+          `- 标题: ${chapter.title}`,
+          `- 目标: ${chapter.goal}`,
+          `- 章末钩子: ${chapter.hook}`,
+        ];
 
-            // 卷边界：如果是本卷第一章，注入卷级上下文
-            if (chapterIndex === Number(vol.startChapter)) {
-              parts.push(`\n【本卷目标】${vol.goal}`);
-              parts.push(`【本卷核心冲突】${vol.conflict}`);
+        if (chapterIndex === Number(volume.startChapter)) {
+          parts.push(`\n【本卷目标】${volume.goal}`);
+          parts.push(`【本卷核心冲突】${volume.conflict}`);
 
-              const volIndex = outline.volumes.indexOf(vol);
-              if (volIndex > 0) {
-                const prevVol = outline.volumes[volIndex - 1];
-                parts.push(`\n【上卷结局】${buildPreviousVolumeSummary(prevVol) || prevVol.volumeEndState || prevVol.climax}`);
-                parts.push(`【衔接要求】本章开头需自然承接上卷结局，不要重复叙述已发生的事件`);
-              }
-            }
-
-            parts.push('');
-            parts.push(...buildStoryGuardrails({
-              chapterIndex,
-              outline,
-              lastChapters: lastChapters as Array<{ content?: string }>,
-              currentChapter: currentOutlineChapter,
-            }));
-
-            chapterGoalHint = parts.join('\n');
-            break;
+          if (previousVolume) {
+            parts.push(`\n【上卷结局】${buildPreviousVolumeSummary(previousVolume) || previousVolume.volumeEndState || previousVolume.climax}`);
+            parts.push(`【衔接要求】本章开头需自然承接上卷结局，不要重复叙述已发生的事件`);
           }
         }
+
+        chapterGoalHint = parts.join('\n');
       }
+      const shouldEnforceStoryContract = hasStoryContract(enhancedOutline?.storyContract);
 
       const summaryUpdateInterval = await getSummaryUpdateInterval(env.DB, env);
       const forceSummaryRetry = await hasPendingSummaryRetry(env.DB, project.id, chapterIndex);
@@ -1819,14 +1745,16 @@ export async function runChapterGenerationTaskInBackground(params: {
           characterStates,
           plotGraph,
           narrativeArc,
+          enhancedOutline,
           chapterPromptProfile: project.chapter_prompt_profile,
           chapterPromptCustom: project.chapter_prompt_custom,
           enableContextOptimization: true,
           // Outline-derived title/goal/hook already provide structured guidance.
           enablePlanning: shouldEnablePlanning,
           enableSelfReview: false,
-          enableFullQC: false,
-          enableAutoRepair: false,
+          enableFullQC: shouldEnforceStoryContract,
+          enableAutoRepair: shouldEnforceStoryContract,
+          failOnFullQCFailure: shouldEnforceStoryContract,
           enableAgentMode: Boolean(project.enable_agent_mode),
           skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
           onProgress: (message, status) => {

@@ -3,8 +3,9 @@ import path from 'node:path';
 import 'dotenv/config';
 import { writeEnhancedChapter } from './enhancedChapterEngine.js';
 import { readBible, readLastChapters, readState } from './memory.js';
-import { getChapterOutline, readOutline } from './generateOutline.js';
+import { readOutline } from './generateOutline.js';
 import type { AIConfig } from './services/aiClient.js';
+import { buildEnhancedOutlineFromChapterContext, getOutlineChapterContext } from './utils/outline.js';
 
 type OptionalJson = Record<string, unknown> | Array<unknown> | null;
 
@@ -48,14 +49,17 @@ async function main(): Promise<void> {
 
   const chapterIndex = requestedChapterIndex || state.nextChapterIndex;
   const totalChapters = state.totalChapters;
-  const chapterOutline = outline ? getChapterOutline(outline, chapterIndex) : null;
-  const chapterTitle = chapterOutline?.title;
-  const chapterGoalHint = chapterOutline
+  const outlineContext = getOutlineChapterContext(outline, chapterIndex);
+  const enhancedOutline = outlineContext
+    ? buildEnhancedOutlineFromChapterContext(outlineContext)
+    : undefined;
+  const chapterTitle = outlineContext?.chapter.title;
+  const chapterGoalHint = outlineContext
     ? [
       '【章节大纲】',
-      `- 标题: ${chapterOutline.title}`,
-      `- 目标: ${chapterOutline.goal}`,
-      `- 章末钩子: ${chapterOutline.hook}`,
+      `- 标题: ${outlineContext.chapter.title}`,
+      `- 目标: ${outlineContext.chapter.goal}`,
+      `- 章末钩子: ${outlineContext.chapter.hook}`,
     ].join('\n')
     : undefined;
 
@@ -76,6 +80,7 @@ async function main(): Promise<void> {
     minChapterWords: state.minChapterWords,
     chapterGoalHint,
     chapterTitle,
+    enhancedOutline,
     characters: (characters || undefined) as any,
     characterStates: (characterStates || undefined) as any,
     plotGraph: (plotGraph || undefined) as any,

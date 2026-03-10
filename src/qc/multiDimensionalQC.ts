@@ -16,6 +16,8 @@ import { getChapterLengthTolerance, quickEndingHeuristic } from '../qc.js';
 import { checkCharacterConsistency, type CharacterQCResult } from './characterConsistencyCheck.js';
 import { checkPacingAlignment, type PacingQCResult } from './pacingCheck.js';
 import { checkGoalAchievement, type GoalQCResult } from './goalCheck.js';
+import { checkStoryContractCompliance } from './storyContractCheck.js';
+import { hasStoryContract } from '../utils/storyContract.js';
 
 /**
  * QC 问题严重程度
@@ -194,6 +196,21 @@ export async function runMultiDimensionalQC(params: QCParams): Promise<QCResult>
     }
   }
 
+  // 6. 章节合同合规检测 (需要 AI)
+  if (useAI && chapterOutline && hasStoryContract(chapterOutline.storyContract)) {
+    try {
+      const contractResult = await checkStoryContractCompliance(
+        aiConfig,
+        chapterText,
+        chapterOutline,
+      );
+      allIssues.push(...contractResult.issues);
+      dimensionScores.structure = Math.min(dimensionScores.structure, contractResult.score);
+    } catch (error) {
+      console.warn('Story contract check failed:', error);
+    }
+  }
+
   // 计算综合评分
   const weights = {
     ending: 0.25,
@@ -300,9 +317,9 @@ function checkStructuralIntegrity(
   if (charCount + wordTolerance < normalizedMinWords) {
     issues.push({
       type: 'structure',
-      severity: 'major',
-      description: `章节字数过少 (${charCount}字)，最低要求 ${normalizedMinWords} 字`,
-      suggestion: '请扩充章节内容，增加场景描写或角色互动',
+      severity: 'critical',
+      description: `章节字数严重不足 (${charCount}字)，最低要求 ${normalizedMinWords} 字`,
+      suggestion: '请扩充正文，直到达到项目的最低字数要求后再落库',
     });
     score -= 30;
   } else if (charCount < normalizedMinWords) {
@@ -503,14 +520,15 @@ function generateSuggestions(issues: QCIssue[]): string[] {
 export function runQuickQC(
   chapterText: string,
   chapterIndex: number,
-  totalChapters: number
+  totalChapters: number,
+  minChapterWords?: number,
 ): QCResult {
   const allIssues: QCIssue[] = [];
 
   const endingResult = checkPrematureEnding(chapterText, chapterIndex, totalChapters);
   allIssues.push(...endingResult.issues);
 
-  const structureResult = checkStructuralIntegrity(chapterText, chapterIndex);
+  const structureResult = checkStructuralIntegrity(chapterText, chapterIndex, minChapterWords);
   allIssues.push(...structureResult.issues);
 
   const score = Math.round((endingResult.score + structureResult.score) / 2);

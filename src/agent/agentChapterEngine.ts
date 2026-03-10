@@ -38,6 +38,7 @@ import {
   checkEventDuplication,
 } from '../context/timelineManager.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from '../utils/rollingSummary.js';
+import { formatStoryContractForPrompt } from '../utils/storyContract.js';
 import { generateTextWithRetry, generateTextWithFallback, type FallbackConfig } from '../services/aiClient.js';
 import { getSupportPassMaxTokens } from '../utils/aiModelHelpers.js';
 
@@ -356,6 +357,7 @@ function buildGoalSection(params: EnhancedWriteChapterParams): string {
     if (enhancedOutline.foreshadowingOps.length > 0) {
       parts.push(`伏笔操作: ${enhancedOutline.foreshadowingOps.map(f => `${f.action}:${f.description}`).join('; ')}`);
     }
+    parts.push(...formatStoryContractForPrompt(enhancedOutline.storyContract));
     return parts.join('\n');
   }
   return chapterGoalHint || '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。';
