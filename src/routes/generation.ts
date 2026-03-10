@@ -13,6 +13,10 @@ import {
   getOutlineChapterContext,
   normalizeNovelOutline,
 } from '../utils/outline.js';
+import {
+  loadSummarySnapshotUpToChapter,
+  rebaseProjectStateToContinuity,
+} from '../utils/projectContinuity.js';
 import { hasStoryContract } from '../utils/storyContract.js';
 import {
   createGenerationTask,
@@ -997,21 +1001,11 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       project.min_chapter_words = parsedMinChapterWords;
     }
 
-    // Validate state: check if nextChapterIndex matches actual chapter data
-    const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-    `).bind(project.id).first() as any;
-
-    const actualMaxChapter = maxChapterResult?.max_index || 0;
-    const expectedNextIndex = actualMaxChapter + 1;
-
-    if (project.next_chapter_index !== expectedNextIndex) {
-      console.log(`State mismatch: next_chapter_index=${project.next_chapter_index}, actual max=${actualMaxChapter}. Auto-correcting to ${expectedNextIndex}`);
-      project.next_chapter_index = expectedNextIndex;
-      await c.env.DB.prepare(`
-        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-      `).bind(expectedNextIndex, project.id).run();
-    }
+    const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, project.id);
+    project.next_chapter_index = rebasedState.nextChapterIndex;
+    project.rolling_summary = rebasedState.rollingSummary;
+    project.summary_base_chapter_index = rebasedState.summaryBaseChapterIndex;
+    project.open_loops = JSON.stringify(rebasedState.openLoops);
 
     const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
     const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
@@ -1180,6 +1174,7 @@ type SummaryUpdatePlan = {
 type HistoricalGenerationContext = {
   rollingSummary: string;
   openLoops: string[];
+  summaryBaseChapterIndex: number;
 };
 
 async function hasPendingSummaryRetry(
@@ -1252,34 +1247,11 @@ async function loadHistoricalGenerationContext(
   chapterIndex: number
 ): Promise<HistoricalGenerationContext> {
   try {
-    const row = await db.prepare(`
-      SELECT rolling_summary, open_loops
-      FROM summary_memories
-      WHERE project_id = ? AND chapter_index < ?
-      ORDER BY chapter_index DESC, id DESC
-      LIMIT 1
-    `).bind(projectId, chapterIndex).first() as {
-      rolling_summary?: string;
-      open_loops?: string;
-    } | null;
-
-    if (!row) {
-      return {
-        rollingSummary: '',
-        openLoops: [],
-      };
-    }
-
-    let openLoops: string[] = [];
-    try {
-      openLoops = row.open_loops ? JSON.parse(row.open_loops) : [];
-    } catch {
-      openLoops = [];
-    }
-
+    const snapshot = await loadSummarySnapshotUpToChapter(db, projectId, chapterIndex - 1);
     return {
-      rollingSummary: String(row.rolling_summary || ''),
-      openLoops,
+      rollingSummary: snapshot.rollingSummary,
+      openLoops: snapshot.openLoops,
+      summaryBaseChapterIndex: snapshot.summaryBaseChapterIndex,
     };
   } catch (error) {
     console.warn(
@@ -1289,6 +1261,7 @@ async function loadHistoricalGenerationContext(
     return {
       rollingSummary: '',
       openLoops: [],
+      summaryBaseChapterIndex: 0,
     };
   }
 }
@@ -1368,6 +1341,7 @@ async function appendSummaryMemorySnapshot(params: {
   projectId: string;
   chapterIndex: number;
   rollingSummary: string;
+  summaryBaseChapterIndex: number;
   openLoops: string[];
   summaryUpdated: boolean;
   updateReason: SummaryUpdatePlan['reason'];
@@ -1380,16 +1354,18 @@ async function appendSummaryMemorySnapshot(params: {
         project_id,
         chapter_index,
         rolling_summary,
+        summary_base_chapter_index,
         open_loops,
         summary_updated,
         update_reason,
         model_provider,
         model_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       params.projectId,
       params.chapterIndex,
       params.rollingSummary,
+      params.summaryBaseChapterIndex,
       JSON.stringify(params.openLoops || []),
       params.summaryUpdated ? 1 : 0,
       params.updateReason,
@@ -1517,6 +1493,12 @@ export async function runChapterGenerationTaskInBackground(params: {
       return;
     }
 
+    const rebasedState = await rebaseProjectStateToContinuity(env.DB, project.id);
+    project.next_chapter_index = rebasedState.nextChapterIndex;
+    project.rolling_summary = rebasedState.rollingSummary;
+    project.summary_base_chapter_index = rebasedState.summaryBaseChapterIndex;
+    project.open_loops = JSON.stringify(rebasedState.openLoops);
+
     // 3. Check Task Status
     const completedCount = getContiguousCompletedCount(task.startChapter, task.completedChapters);
     const failedCount = task.failedChapters.length;
@@ -1552,6 +1534,22 @@ export async function runChapterGenerationTaskInBackground(params: {
     // 5. Identify Next Chapter
     const currentStepIndex = completedCount;
     const chapterIndex = task.startChapter + currentStepIndex;
+
+    if (chapterIndex > rebasedState.nextChapterIndex) {
+      const message = `检测到章节断档，当前必须先处理第 ${rebasedState.nextChapterIndex} 章，不能直接生成第 ${chapterIndex} 章。`;
+      await updateTaskMessage(env.DB, taskId, message, rebasedState.nextChapterIndex);
+      await completeTask(env.DB, taskId, false, message);
+      await emitProgressEvent({
+        userId,
+        projectName: project.name,
+        current: completedCount,
+        total: task.targetCount,
+        chapterIndex,
+        status: 'error',
+        message,
+      });
+      return;
+    }
 
     if (chapterIndex > project.total_chapters) {
       await completeTask(env.DB, taskId, true, '已达到项目总章节数');
@@ -1602,18 +1600,19 @@ export async function runChapterGenerationTaskInBackground(params: {
       const { results: lastChapters } = await env.DB.prepare(`
             SELECT content FROM chapters
             WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
+              AND chapter_index < ?
             ORDER BY chapter_index DESC LIMIT 2
-          `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
+          `).bind(project.id, Math.max(1, chapterIndex - 2), chapterIndex).all();
 
-      const existingChapterStats = await env.DB.prepare(`
-            SELECT MAX(chapter_index) as max_index
+      const existingChapterRecord = await env.DB.prepare(`
+            SELECT id
             FROM chapters
-            WHERE project_id = ? AND deleted_at IS NULL
-          `).bind(project.id).first() as {
-            max_index?: number | null;
+            WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
+            LIMIT 1
+          `).bind(project.id, chapterIndex).first() as {
+            id?: string | null;
           } | null;
-      const maxExistingChapter = Number(existingChapterStats?.max_index || 0);
-      const isHistoricalRewrite = chapterIndex <= maxExistingChapter;
+      const isHistoricalRewrite = Boolean(existingChapterRecord?.id);
 
       let chapterGoalHint: string | undefined;
       let outlineTitle: string | undefined;
@@ -1683,6 +1682,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         : {
             rollingSummary: project.rolling_summary || '',
             openLoops: JSON.parse(project.open_loops || '[]'),
+            summaryBaseChapterIndex: Number(project.summary_base_chapter_index || 0),
           };
 
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
@@ -1839,16 +1839,22 @@ export async function runChapterGenerationTaskInBackground(params: {
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
 
+      const nextSummaryBaseChapterIndex = !result.skippedSummary
+        ? chapterIndex
+        : runtimeContext.summaryBaseChapterIndex;
+
       if (!isHistoricalRewrite) {
         await env.DB.prepare(`
               UPDATE states SET
                 next_chapter_index = ?,
                 rolling_summary = ?,
+                summary_base_chapter_index = ?,
                 open_loops = ?
               WHERE project_id = ?
             `).bind(
           chapterIndex + 1,
           result.updatedSummary,
+          nextSummaryBaseChapterIndex,
           JSON.stringify(result.updatedOpenLoops),
           project.id
         ).run();
@@ -1907,6 +1913,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         projectId: project.id,
         chapterIndex,
         rollingSummary: result.updatedSummary,
+        summaryBaseChapterIndex: nextSummaryBaseChapterIndex,
         openLoops: result.updatedOpenLoops,
         summaryUpdated: !result.skippedSummary,
         updateReason: isHistoricalRewrite ? 'rewrite' : summaryUpdatePlan.reason,
@@ -2096,43 +2103,31 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     (project as any).min_chapter_words = parsedMinChapterWords;
   }
 
-  const maxChapterResult = await c.env.DB.prepare(`
-    SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-  `).bind(project.id).first() as { max_index: number | null } | null;
-
-  const actualMaxChapter = maxChapterResult?.max_index || 0;
-  let firstMissingChapter: number | null = null;
-
-  if (actualMaxChapter > 1) {
-    const { results: chapterRows } = await c.env.DB.prepare(`
-      SELECT chapter_index
-      FROM chapters
-      WHERE project_id = ? AND deleted_at IS NULL
-      ORDER BY chapter_index ASC
-    `).bind(project.id).all();
-
-    let expectedChapter = 1;
-    for (const row of chapterRows as Array<{ chapter_index: number | string | null }>) {
-      const chapterIndex = Number(row.chapter_index);
-      if (!Number.isFinite(chapterIndex) || chapterIndex < expectedChapter) {
-        continue;
-      }
-      if (chapterIndex > expectedChapter) {
-        firstMissingChapter = expectedChapter;
-        break;
-      }
-      expectedChapter = chapterIndex + 1;
-    }
-  }
+  const continuity = await rebaseProjectStateToContinuity(c.env.DB, project.id);
+  project.next_chapter_index = continuity.nextChapterIndex;
+  const actualMaxChapter = continuity.maxChapterIndex;
+  const firstMissingChapter = continuity.firstMissingChapter;
 
   let startingIndex = project.next_chapter_index;
   let chaptersToGenerate = requestedCount;
 
   if (targetIndex !== undefined) {
+    if (firstMissingChapter !== null && targetIndex > firstMissingChapter) {
+      return c.json({
+        success: false,
+        error: `当前存在断档，必须先处理第 ${firstMissingChapter} 章，再继续操作第 ${targetIndex} 章。`,
+      }, 400);
+    }
     if (targetIndex > actualMaxChapter + 1) {
       return c.json({ success: false, error: `无法跳过生成。当前最大章节为第 ${actualMaxChapter} 章，必须先生成第 ${actualMaxChapter + 1} 章。` }, 400);
     }
-    if (targetIndex <= actualMaxChapter && !regenerate) {
+    const existingTargetChapter = await c.env.DB.prepare(`
+      SELECT id
+      FROM chapters
+      WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
+      LIMIT 1
+    `).bind(project.id, targetIndex).first();
+    if (existingTargetChapter && !regenerate) {
       return c.json({ success: false, error: `第 ${targetIndex} 章已存在。如需重写，请使用重新生成功能。` }, 409);
     }
     startingIndex = targetIndex;

@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { normalizeNovelOutline } from '../utils/outline.js';
+import {
+  rebaseProjectStateToContinuity,
+  trimProjectToContinuity,
+} from '../utils/projectContinuity.js';
 
 export const projectsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -8,38 +12,12 @@ const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
 
-function normalizePositiveInteger(value: unknown, fallback: number): number {
-  const parsed = Number.parseInt(String(value), 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function normalizeMinChapterWords(value: unknown): number | null {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isInteger(parsed)) return null;
   if (parsed < MIN_CHAPTER_WORDS_LIMIT || parsed > MAX_CHAPTER_WORDS_LIMIT) return null;
   return parsed;
-}
-
-async function reconcileNextChapterIndex(
-  db: D1Database,
-  projectId: string,
-  storedNextChapterIndex: unknown,
-  actualMaxChapterIndex: unknown
-): Promise<number> {
-  const actualMaxChapter = normalizePositiveInteger(actualMaxChapterIndex, 0);
-  const expectedNextChapterIndex = actualMaxChapter + 1;
-  const currentNextChapterIndex = normalizePositiveInteger(storedNextChapterIndex, 1);
-
-  if (currentNextChapterIndex !== expectedNextChapterIndex) {
-    await db.prepare(`
-      UPDATE states
-      SET next_chapter_index = ?
-      WHERE project_id = ?
-    `).bind(expectedNextChapterIndex, projectId).run();
-  }
-
-  return expectedNextChapterIndex;
 }
 
 async function getProjectIdentityByRef(
@@ -68,30 +46,18 @@ projectsRoutes.get('/', async (c) => {
     const { results } = await c.env.DB.prepare(`
       SELECT 
         p.id, p.name, p.created_at,
-        s.book_title, s.total_chapters, s.min_chapter_words, s.next_chapter_index, 
-        s.rolling_summary, s.open_loops, s.need_human, s.need_human_reason,
-        o.outline_json IS NOT NULL as has_outline,
-        chapter_stats.max_chapter_index
+        s.book_title, s.total_chapters, s.min_chapter_words,
+        s.need_human, s.need_human_reason,
+        o.outline_json IS NOT NULL as has_outline
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       LEFT JOIN outlines o ON p.id = o.project_id
-      LEFT JOIN (
-        SELECT project_id, MAX(chapter_index) AS max_chapter_index
-        FROM chapters
-        WHERE deleted_at IS NULL
-        GROUP BY project_id
-      ) chapter_stats ON p.id = chapter_stats.project_id
       WHERE p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY p.created_at DESC
     `).bind(userId).all();
 
     const projects = await Promise.all(results.map(async (row: any) => {
-      const nextChapterIndex = await reconcileNextChapterIndex(
-        c.env.DB,
-        row.id,
-        row.next_chapter_index,
-        row.max_chapter_index
-      );
+      const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, row.id);
 
       return {
         id: row.id,
@@ -101,9 +67,9 @@ projectsRoutes.get('/', async (c) => {
           bookTitle: row.book_title || row.name,
           totalChapters: row.total_chapters || 100,
           minChapterWords: row.min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
-          nextChapterIndex,
-          rollingSummary: row.rolling_summary || '',
-          openLoops: JSON.parse(row.open_loops || '[]'),
+          nextChapterIndex: rebasedState.nextChapterIndex,
+          rollingSummary: rebasedState.rollingSummary,
+          openLoops: rebasedState.openLoops,
           needHuman: Boolean(row.need_human),
           needHumanReason: row.need_human_reason,
         },
@@ -139,20 +105,14 @@ projectsRoutes.get('/:name', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
+    const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, (project as any).id);
     const { results: chapters } = await c.env.DB.prepare(`
-      SELECT chapter_index FROM chapters 
-      WHERE project_id = ? AND deleted_at IS NULL ORDER BY chapter_index
-    `).bind((project as any).id).all();
-
-    const actualMaxChapterIndex = chapters.length > 0
-      ? chapters.reduce((max, ch: any) => Math.max(max, normalizePositiveInteger(ch.chapter_index, 0)), 0)
-      : 0;
-    const nextChapterIndex = await reconcileNextChapterIndex(
-      c.env.DB,
-      (project as any).id,
-      (project as any).next_chapter_index,
-      actualMaxChapterIndex
-    );
+      SELECT chapter_index FROM chapters
+      WHERE project_id = ?
+        AND deleted_at IS NULL
+        AND chapter_index <= ?
+      ORDER BY chapter_index
+    `).bind((project as any).id, rebasedState.contiguousChapterIndex).all();
 
     const result = {
       id: (project as any).id,
@@ -162,9 +122,9 @@ projectsRoutes.get('/:name', async (c) => {
         bookTitle: (project as any).book_title || (project as any).name,
         totalChapters: (project as any).total_chapters || 100,
         minChapterWords: (project as any).min_chapter_words || DEFAULT_MIN_CHAPTER_WORDS,
-        nextChapterIndex,
-        rollingSummary: (project as any).rolling_summary || '',
-        openLoops: JSON.parse((project as any).open_loops || '[]'),
+        nextChapterIndex: rebasedState.nextChapterIndex,
+        rollingSummary: rebasedState.rollingSummary,
+        openLoops: rebasedState.openLoops,
         needHuman: Boolean((project as any).need_human),
         needHumanReason: (project as any).need_human_reason,
       },
@@ -363,23 +323,12 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
       UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index = ?
     `).bind(projectId, index).run();
 
-    // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
-    const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-    `).bind(projectId).first();
-
-    const maxChapter = (maxChapterResult as any)?.max_index || 0;
-    const newNextChapterIndex = maxChapter + 1;
-
-    // Update state
-    await c.env.DB.prepare(`
-      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-    `).bind(newNextChapterIndex, projectId).run();
+    const rebasedState = await trimProjectToContinuity(c.env.DB, projectId);
 
     return c.json({
       success: true,
       message: `Chapter ${index} deleted`,
-      newNextChapterIndex,
+      newNextChapterIndex: rebasedState.nextChapterIndex,
     });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -412,24 +361,13 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
       UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index IN (${placeholders}) AND deleted_at IS NULL
     `).bind(projectId, ...indices).run();
 
-    // Recalculate nextChapterIndex based on remaining (non-deleted) chapters
-    const maxChapterResult = await c.env.DB.prepare(`
-      SELECT MAX(chapter_index) as max_index FROM chapters WHERE project_id = ? AND deleted_at IS NULL
-    `).bind(projectId).first();
-
-    const maxChapter = (maxChapterResult as any)?.max_index || 0;
-    const newNextChapterIndex = maxChapter + 1;
-
-    // Update state
-    await c.env.DB.prepare(`
-      UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-    `).bind(newNextChapterIndex, projectId).run();
+    const rebasedState = await trimProjectToContinuity(c.env.DB, projectId);
 
     return c.json({
       success: true,
       message: `Deleted ${indices.length} chapters`,
       deletedIndices: indices,
-      newNextChapterIndex,
+      newNextChapterIndex: rebasedState.nextChapterIndex,
     });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);

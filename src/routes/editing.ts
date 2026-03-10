@@ -3,6 +3,7 @@ import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
 import { normalizeNovelOutline } from '../utils/outline.js';
+import { rebaseProjectStateToContinuity } from '../utils/projectContinuity.js';
 
 export const editingRoutes = new Hono<{ Bindings: Env }>();
 
@@ -32,6 +33,7 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
     }
 
     const projectId = (project as any).id;
+    const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, projectId);
     
     // Determine the chapter index
     let chapterIndex: number;
@@ -52,7 +54,7 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
       }
     } else {
       // Append at the end - use next_chapter_index from state
-      chapterIndex = (project as any).next_chapter_index || 1;
+      chapterIndex = rebasedState.nextChapterIndex;
     }
 
     // Check if chapter already exists (might happen if inserting)
@@ -69,12 +71,7 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
       INSERT INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
     `).bind(projectId, chapterIndex, content).run();
 
-    // Update next_chapter_index in state if we're appending at the end
-    if (!insertAfter || chapterIndex >= ((project as any).next_chapter_index || 1)) {
-      await c.env.DB.prepare(`
-        UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-      `).bind(chapterIndex + 1, projectId).run();
-    }
+    await rebaseProjectStateToContinuity(c.env.DB, projectId);
 
     return c.json({ 
       success: true, 
