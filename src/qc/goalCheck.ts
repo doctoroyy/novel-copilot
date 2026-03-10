@@ -11,6 +11,7 @@
 import { generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
 import type { EnhancedChapterOutline } from '../types/narrative.js';
 import type { QCIssue } from './multiDimensionalQC.js';
+import { formatStoryContractForQc } from '../utils/storyContract.js';
 import { z } from 'zod';
 
 /**
@@ -48,6 +49,7 @@ const GoalCheckSchema = z.object({
   hookAnalysis: z.string(),
   foreshadowingExecuted: z.array(z.string()),
   foreshadowingMissed: z.array(z.string()),
+  contractViolations: z.array(z.string()).optional(),
   score: z.number().min(0).max(100),
   issues: z.array(z.string()),
 });
@@ -69,6 +71,7 @@ export async function checkGoalAchievement(
 3. 场景完成度: 要求的场景是否都出现了
 4. 钩子效果: 章末钩子是否有效（能否吸引读者继续阅读）
 5. 伏笔操作: 要求的伏笔埋设/回收是否执行
+6. 合同遵守: 若提供了章节合同，检查正文是否遵守合同中的范围、危机并发、桥接、线程推进和状态迁移要求
 
 【评分标准】
 - 100: 完美执行大纲，所有目标达成
@@ -91,6 +94,7 @@ export async function checkGoalAchievement(
   "hookAnalysis": "钩子分析",
   "foreshadowingExecuted": ["已执行的伏笔操作"],
   "foreshadowingMissed": ["未执行的伏笔操作"],
+  "contractViolations": ["违反的合同项"],
   "score": 0-100,
   "issues": ["问题1", "问题2"]
 }
@@ -114,6 +118,9 @@ ${outline.scenes.map((s) => `${s.order}. [${s.type}] ${s.purpose} (${s.character
 
 【伏笔操作】
 ${outline.foreshadowingOps.map((f) => `- ${f.action}: ${f.description}`).join('\n') || '无'}
+
+【章节合同】
+${formatStoryContractForQc(outline.storyContract)}
 `.trim();
 
   const prompt = `
@@ -187,6 +194,15 @@ ${chapterText.slice(0, 5000)}
         severity: 'minor',
         description: `伏笔操作未执行: ${result.foreshadowingMissed.join(', ')}`,
         suggestion: '请按大纲要求执行伏笔操作',
+      });
+    }
+
+    if (result.contractViolations && result.contractViolations.length > 0) {
+      issues.push({
+        type: 'structure',
+        severity: 'critical',
+        description: `章节合同未遵守: ${result.contractViolations.join('; ')}`,
+        suggestion: '请按章节合同重写范围、桥接、线程推进或状态落点',
       });
     }
 

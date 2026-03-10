@@ -2,6 +2,13 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
 import { readBible, readState, writeState, type BookState } from './memory.js';
+import type {
+  StoryContract,
+  StoryContractField,
+  StoryContractScalar,
+  StoryContractSection,
+  VolumeStoryContract,
+} from './types/narrative.js';
 
 /**
  * 大纲类型
@@ -34,6 +41,8 @@ export type VolumeOutline = {
   climax: string;
   /** 卷末状态（用于下一卷衔接） */
   volumeEndState?: string;
+  /** 本卷剧情合同 */
+  storyContract?: VolumeStoryContract;
   /** 章节大纲 */
   chapters: ChapterOutline[];
 };
@@ -47,6 +56,8 @@ export type ChapterOutline = {
   goal: string;
   /** 章末钩子 */
   hook: string;
+  /** 本章剧情合同 */
+  storyContract?: StoryContract;
 };
 
 function stripJsonCodeFence(raw: string): string {
@@ -138,6 +149,85 @@ function toShortText(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
   return trimmed || fallback;
+}
+
+function normalizeTextArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => toShortText(item, ''))
+    .filter(Boolean);
+}
+
+function normalizeContractScalar(value: unknown): StoryContractScalar | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'boolean') return value;
+  return undefined;
+}
+
+function normalizeContractField(value: unknown): StoryContractField | undefined {
+  const scalar = normalizeContractScalar(value);
+  if (scalar !== undefined) return scalar;
+  if (!Array.isArray(value)) return undefined;
+
+  const normalized = value
+    .map((item) => normalizeContractScalar(item))
+    .filter((item): item is StoryContractScalar => item !== undefined);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeContractSection(value: unknown): StoryContractSection | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const normalizedEntries = Object.entries(record)
+    .map(([key, rawValue]) => [key.trim(), normalizeContractField(rawValue)] as const)
+    .filter(([key, rawValue]) => key && rawValue !== undefined);
+
+  if (normalizedEntries.length === 0) return undefined;
+  return Object.fromEntries(normalizedEntries);
+}
+
+function normalizeStoryContract(value: unknown): StoryContract | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const scope = normalizeContractSection(record.scope);
+  const crisis = normalizeContractSection(record.crisis);
+  const threads = normalizeContractSection(record.threads);
+  const stateTransition = normalizeContractSection(record.stateTransition);
+  const notes = normalizeTextArray(record.notes);
+
+  if (!scope && !crisis && !threads && !stateTransition && notes.length === 0) {
+    return undefined;
+  }
+
+  return {
+    scope,
+    crisis,
+    threads,
+    stateTransition,
+    notes: notes.length > 0 ? notes : undefined,
+  };
+}
+
+function normalizeVolumeStoryContract(value: unknown): VolumeStoryContract | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const base = normalizeStoryContract(value);
+  const chapterDefaults = normalizeStoryContract(record.chapterDefaults);
+
+  if (!base && !chapterDefaults) return undefined;
+
+  return {
+    ...(base || {}),
+    chapterDefaults,
+  };
 }
 
 function stripCodeFenceText(raw: string): string {
@@ -295,8 +385,47 @@ function normalizeVolumeChapterPayload(payload: unknown, startChapter: number): 
       title: toShortText(record?.title, `第${index}章`),
       goal: toShortText(record?.goal ?? record?.summary ?? record?.description, ''),
       hook: toShortText(record?.hook ?? record?.cliffhanger, ''),
+      storyContract: normalizeStoryContract(record?.storyContract ?? record?.contract),
     };
   });
+}
+
+function normalizeMasterOutlinePayload(payload: unknown): {
+  mainGoal: string;
+  milestones: string[];
+  volumes: Omit<VolumeOutline, 'chapters'>[];
+} {
+  const record = asRecord(payload);
+  if (!record) {
+    throw new Error('Master outline payload is not an object');
+  }
+
+  const rawVolumes = Array.isArray(record.volumes) ? record.volumes : [];
+  if (rawVolumes.length === 0) {
+    throw new Error('Master outline payload has no volumes');
+  }
+
+  return {
+    mainGoal: toShortText(record.mainGoal ?? record.goal, ''),
+    milestones: normalizeTextArray(record.milestones),
+    volumes: rawVolumes.map((volume, offset) => {
+      const vol = asRecord(volume);
+      if (!vol) {
+        throw new Error(`Volume ${offset + 1} is invalid`);
+      }
+
+      return {
+        title: toShortText(vol.title, `第${offset + 1}卷`),
+        startChapter: toNumber(vol.startChapter, offset * 80 + 1),
+        endChapter: toNumber(vol.endChapter, (offset + 1) * 80),
+        goal: toShortText(vol.goal ?? vol.summary, ''),
+        conflict: toShortText(vol.conflict ?? vol.coreConflict, ''),
+        climax: toShortText(vol.climax ?? vol.peak, ''),
+        volumeEndState: toShortText(vol.volumeEndState ?? vol.volume_end_state, '') || undefined,
+        storyContract: normalizeVolumeStoryContract(vol.storyContract ?? vol.contract),
+      };
+    }),
+  };
 }
 
 function normalizeAdditionalVolumePayload(
@@ -326,6 +455,7 @@ function normalizeAdditionalVolumePayload(
       conflict: toShortText(record?.conflict ?? record?.coreConflict, ''),
       climax: toShortText(record?.climax ?? record?.peak, ''),
       volumeEndState: typeof record?.volumeEndState === 'string' ? record.volumeEndState.trim() : undefined,
+      storyContract: normalizeVolumeStoryContract(record?.storyContract ?? record?.contract),
     };
     currentStart = normalizedVolume.endChapter + 1;
     return normalizedVolume;
@@ -377,7 +507,17 @@ JSON 结构：
       "goal": "本卷要完成什么（包含关键转折和阶段性目标）",
       "conflict": "本卷核心冲突（包含对立双方、stakes和冲突升级路径）",
       "climax": "本卷高潮（包含高潮场景、结果和代价）",
-      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念"
+      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念",
+      "storyContract": {
+        "scope": { "ceiling": "本卷允许触达的叙事范围上限" },
+        "crisis": { "maxConcurrent": 2, "requiredBridge": false },
+        "threads": { "mustAdvance": ["本卷必须推进的线程"], "forbiddenIntroductions": ["本卷禁止突兀引入的内容"] },
+        "stateTransition": { "target": "本卷结束时应落到的状态" },
+        "notes": ["额外卷级约束"],
+        "chapterDefaults": {
+          "crisis": { "maxConcurrent": 1 }
+        }
+      }
     },
     ...
   ]
@@ -422,13 +562,13 @@ ${bible}
 - 预计分卷数: ${volumeCount} 卷
 ${charactersSummary}
 
-请生成总大纲：
+请生成总大纲。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
   const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
 
   try {
-    return parseLooseJson(raw, 'object') as { volumes: Omit<VolumeOutline, 'chapters'>[]; mainGoal: string; milestones: string[] };
+    return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
   } catch {
     throw new Error('Failed to parse master outline JSON');
   }
@@ -465,14 +605,32 @@ export async function generateVolumeChapters(
 6. 禁止水章：每章都要推动剧情，不能有纯日常的章节
 7. 篇幅意识：章节设计要支撑单章不少于 ${minChapterWords} 字，避免目标过散导致注水或空章
 
-不要输出 JSON。
-请按“每章一行”的纯文本格式输出，不要有前言、总结、代码块。
-每行固定格式：
-章节序号|章节标题|章节描述
+优先输出严格的 JSON 格式，不要有其他文字。
 
-示例：
-1|初入黑市|主角潜入黑市试探交易线索，却发现有人提前设局，离开前看到旧识留下的警告
-2|假面买家|主角伪装身份接触幕后买家，套出关键情报，但对方突然提出危险交换条件
+JSON 结构：
+{
+  "chapters": [
+    {
+      "index": 1,
+      "title": "章节标题",
+      "goal": "本章目标/剧情描述",
+      "hook": "章末钩子",
+      "storyContract": {
+        "scope": { "ceiling": "本章允许触达的叙事范围上限" },
+        "crisis": { "maxConcurrent": 1, "requiredBridge": false },
+        "threads": {
+          "mustAdvance": ["本章必须推进的线程"],
+          "forbiddenIntroductions": ["本章禁止新开的内容"]
+        },
+        "stateTransition": { "target": "章末应落到的状态" },
+        "notes": ["额外说明"]
+      }
+    }
+  ]
+}
+
+如果你无法稳定输出 JSON，再退化成“每章一行”的纯文本格式：
+章节序号|章节标题|章节描述
 `.trim();
 
   const prompt = `
@@ -489,6 +647,7 @@ ${bible.slice(0, 4000)}
 - 本卷高潮: ${volume.climax}
 - 本卷结束状态: ${volume.volumeEndState || '请围绕本卷目标收束出清晰的卷末状态'}
 - 每章最低字数: ${minChapterWords} 字
+${volume.storyContract ? `- 本卷合同:\n${JSON.stringify(volume.storyContract, null, 2)}` : ''}
 
 ${actualStorySummary
     ? `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`
@@ -499,7 +658,8 @@ ${actualStorySummary
 - 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
 - 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
 
-请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”：
+请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”，并尽量补全每章的 "storyContract"。
+如果本卷已经提供卷级合同，章级合同应在其基础上细化，不要与卷级合同冲突：
 `.trim();
 
   const raw = await generateTextWithRetry(aiConfig, {
@@ -508,22 +668,24 @@ ${actualStorySummary
     temperature: 0.7,
   });
 
+  try {
+    const normalized = normalizeVolumeChapterPayload(
+      parseLooseJson(raw, 'array'),
+      volume.startChapter
+    );
+    if (normalized.length === chapterCount) {
+      return normalized;
+    }
+  } catch {
+    // fall through to text-mode parsing
+  }
+
   const textChapters = parseStructuredVolumeChapterText(raw, volume.startChapter, chapterCount);
   if (textChapters.length === chapterCount) {
     return textChapters;
   }
 
-  try {
-    return normalizeVolumeChapterPayload(
-      parseLooseJson(raw, 'array'),
-      volume.startChapter
-    );
-  } catch {
-    if (textChapters.length > 0) {
-      throw new Error(`Failed to parse volume chapters text: expected ${chapterCount}, got ${textChapters.length}`);
-    }
-    throw new Error('Failed to parse volume chapters response');
-  }
+  throw new Error(`Failed to parse volume chapters response: expected ${chapterCount}, got ${textChapters.length}`);
 }
 
 /**
@@ -592,7 +754,17 @@ JSON 结构：
       "goal": "本卷要完成什么（包含关键转折和阶段性目标）",
       "conflict": "本卷核心冲突（包含对立双方、stakes和冲突升级路径）",
       "climax": "本卷高潮（包含高潮场景、结果和代价）",
-      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念"
+      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念",
+      "storyContract": {
+        "scope": { "ceiling": "本卷允许触达的叙事范围上限" },
+        "crisis": { "maxConcurrent": 2, "requiredBridge": false },
+        "threads": { "mustAdvance": ["本卷必须推进的线程"] },
+        "stateTransition": { "target": "本卷结束时应落到的状态" },
+        "notes": ["额外卷级约束"],
+        "chapterDefaults": {
+          "crisis": { "maxConcurrent": 1 }
+        }
+      }
     },
     ...
   ]
@@ -624,7 +796,7 @@ ${actualStorySummary
 - 起始章节号: 第${startChapterBase}章
 - 每章最低字数: ${minChapterWords} 字
 
-请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）：
+请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
   const raw = await generateTextWithRetry(aiConfig, {

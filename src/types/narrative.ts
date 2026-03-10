@@ -147,6 +147,32 @@ export type EmotionalTurningPoint = {
   description: string;
 };
 
+export type StoryContractScalar = string | number | boolean;
+export type StoryContractField = StoryContractScalar | StoryContractScalar[];
+export type StoryContractSection = Record<string, StoryContractField | undefined>;
+
+export type StoryContract = {
+  /** 叙事范围约束 */
+  scope?: StoryContractSection;
+
+  /** 危机并发与桥接约束 */
+  crisis?: StoryContractSection;
+
+  /** 主线线程与引入限制 */
+  threads?: StoryContractSection;
+
+  /** 状态迁移要求 */
+  stateTransition?: StoryContractSection;
+
+  /** 其他自由说明 */
+  notes?: string[];
+};
+
+export type VolumeStoryContract = StoryContract & {
+  /** 卷级默认章节合同 */
+  chapterDefaults?: StoryContract;
+};
+
 /**
  * 增强型章节大纲
  */
@@ -177,6 +203,9 @@ export type EnhancedChapterOutline = {
 
   /** 角色弧线推进 */
   characterArcProgress: CharacterArcProgress[];
+
+  /** 剧情合同 */
+  storyContract?: StoryContract;
 };
 
 /**

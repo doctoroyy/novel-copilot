@@ -1,4 +1,13 @@
 import type { ChapterOutline, NovelOutline, VolumeOutline } from '../generateOutline.js';
+import {
+  type ChapterHook,
+  type EnhancedChapterOutline,
+  type StoryContractField,
+  type StoryContract,
+  type StoryContractScalar,
+  type StoryContractSection,
+  type VolumeStoryContract,
+} from '../types/narrative.js';
 
 type NormalizeOutlineOptions = {
   fallbackMinChapterWords?: number;
@@ -33,6 +42,87 @@ function normalizeMilestones(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function normalizeTextArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => pickText(item))
+    .filter(Boolean);
+}
+
+function normalizeContractScalar(value: unknown): StoryContractScalar | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'boolean') return value;
+  return undefined;
+}
+
+function normalizeContractField(value: unknown): StoryContractField | undefined {
+  const scalar = normalizeContractScalar(value);
+  if (scalar !== undefined) return scalar;
+
+  if (!Array.isArray(value)) return undefined;
+  const normalized = value
+    .map((item) => normalizeContractScalar(item))
+    .filter((item): item is StoryContractScalar => item !== undefined);
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeContractSection(value: unknown): StoryContractSection | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const normalizedEntries = Object.entries(record)
+    .map(([key, rawValue]) => [key.trim(), normalizeContractField(rawValue)] as const)
+    .filter(([key, rawValue]) => key && rawValue !== undefined);
+
+  if (normalizedEntries.length === 0) return undefined;
+  return Object.fromEntries(normalizedEntries);
+}
+
+function normalizeStoryContract(raw: unknown): StoryContract | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+
+  const scope = normalizeContractSection(record.scope);
+  const crisis = normalizeContractSection(record.crisis);
+  const threads = normalizeContractSection(record.threads);
+  const stateTransition = normalizeContractSection(record.stateTransition);
+  const notes = normalizeTextArray(record.notes);
+
+  if (!scope && !crisis && !threads && !stateTransition && notes.length === 0) {
+    return undefined;
+  }
+
+  return {
+    scope,
+    crisis,
+    threads,
+    stateTransition,
+    notes: notes.length > 0 ? notes : undefined,
+  };
+}
+
+function normalizeVolumeStoryContract(raw: unknown): VolumeStoryContract | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+
+  const base = normalizeStoryContract(raw);
+  const chapterDefaults = normalizeStoryContract(record.chapterDefaults);
+
+  if (!base && !chapterDefaults) {
+    return undefined;
+  }
+
+  return {
+    ...(base || {}),
+    chapterDefaults,
+  };
+}
+
 function normalizeChapter(raw: unknown, fallbackIndex: number): ChapterOutline {
   const record = asRecord(raw);
   const index = toPositiveInteger(record?.index ?? record?.chapterIndex, fallbackIndex);
@@ -42,6 +132,7 @@ function normalizeChapter(raw: unknown, fallbackIndex: number): ChapterOutline {
     title: pickText(record?.title) || `第${index}章`,
     goal: pickText(record?.goal, record?.summary, record?.description, record?.objective),
     hook: pickText(record?.hook, record?.hooks, record?.cliffhanger, record?.summary),
+    storyContract: normalizeStoryContract(record?.storyContract ?? record?.contract),
   };
 }
 
@@ -70,6 +161,7 @@ function normalizeVolume(raw: unknown, fallbackIndex: number): VolumeOutline | n
     conflict: pickText(record.conflict),
     climax: pickText(record.climax, lastChapter.hook, lastChapter.title),
     volumeEndState: pickText(record.volumeEndState, record.volume_end_state),
+    storyContract: normalizeVolumeStoryContract(record.storyContract ?? record.contract),
     chapters: normalizedChapters,
   };
 }
@@ -170,6 +262,7 @@ export function normalizeNovelOutline(
         conflict: volume.conflict || '',
         climax: volume.climax || lastChapter.hook || lastChapter.title,
         volumeEndState: pickText((volume as any).volumeEndState, (volume as any).volume_end_state),
+        storyContract: normalizeVolumeStoryContract((volume as any).storyContract ?? (volume as any).contract),
         chapters,
       };
     })
@@ -209,5 +302,117 @@ export function normalizeNovelOutline(
     volumes: normalizedVolumes,
     mainGoal,
     milestones,
+  };
+}
+
+export type OutlineChapterContext = {
+  chapter: ChapterOutline;
+  volume: VolumeOutline;
+  volumeIndex: number;
+  previousVolume?: VolumeOutline;
+};
+
+export function getOutlineChapterContext(
+  outline: NovelOutline | null | undefined,
+  chapterIndex: number
+): OutlineChapterContext | null {
+  if (!outline?.volumes) return null;
+
+  for (let volumeIndex = 0; volumeIndex < outline.volumes.length; volumeIndex += 1) {
+    const volume = outline.volumes[volumeIndex];
+    const chapter = volume.chapters?.find((item) => Number(item.index) === chapterIndex);
+    if (chapter) {
+      return {
+        chapter,
+        volume,
+        volumeIndex,
+        previousVolume: volumeIndex > 0 ? outline.volumes[volumeIndex - 1] : undefined,
+      };
+    }
+  }
+
+  return null;
+}
+
+export function mergeStoryContract(
+  chapterContract?: StoryContract,
+  volumeContract?: VolumeStoryContract
+): StoryContract | undefined {
+  if (!chapterContract && !volumeContract) return undefined;
+
+  const mergeSection = (
+    base?: StoryContractSection,
+    next?: StoryContractSection,
+  ): StoryContractSection | undefined => {
+    const merged = {
+      ...(base || {}),
+      ...(next || {}),
+    };
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  };
+
+  const defaultContract = volumeContract?.chapterDefaults;
+  const merged: StoryContract = {
+    scope: mergeSection(volumeContract?.scope, mergeSection(defaultContract?.scope, chapterContract?.scope)),
+    crisis: mergeSection(volumeContract?.crisis, mergeSection(defaultContract?.crisis, chapterContract?.crisis)),
+    threads: mergeSection(volumeContract?.threads, mergeSection(defaultContract?.threads, chapterContract?.threads)),
+    stateTransition: mergeSection(
+      volumeContract?.stateTransition,
+      mergeSection(defaultContract?.stateTransition, chapterContract?.stateTransition),
+    ),
+    notes: Array.from(new Set([
+      ...(volumeContract?.notes || []),
+      ...(defaultContract?.notes || []),
+      ...(chapterContract?.notes || []),
+    ])),
+  };
+  const mergedNotes = merged.notes || [];
+
+  if (!merged.scope && !merged.crisis && !merged.threads && !merged.stateTransition && mergedNotes.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...merged,
+    notes: mergedNotes.length > 0 ? mergedNotes : undefined,
+  };
+}
+
+function inferHookType(hook: string): ChapterHook['type'] {
+  if (!hook) return 'mystery';
+  if (/[？?]$/.test(hook)) return 'question';
+  return 'mystery';
+}
+
+export function buildEnhancedOutlineFromChapterContext(
+  context: OutlineChapterContext
+): EnhancedChapterOutline {
+  const mergedContract = mergeStoryContract(
+    context.chapter.storyContract,
+    context.volume.storyContract,
+  );
+  const successCriteria = [
+    context.chapter.goal,
+    context.chapter.hook ? `章末形成钩子：${context.chapter.hook}` : '',
+  ].filter(Boolean);
+
+  return {
+    index: context.chapter.index,
+    title: context.chapter.title,
+    goal: {
+      primary: context.chapter.goal || `推进第 ${context.chapter.index} 章主线`,
+      successCriteria,
+    },
+    hook: {
+      type: inferHookType(context.chapter.hook),
+      content: context.chapter.hook || '章末抛出下一章必须回应的问题',
+      strength: 6,
+    },
+    scenes: [],
+    povCharacter: '主角',
+    pacingType: 'tension',
+    foreshadowingOps: [],
+    characterArcProgress: [],
+    storyContract: mergedContract,
   };
 }

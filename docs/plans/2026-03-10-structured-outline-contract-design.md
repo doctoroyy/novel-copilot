@@ -4,10 +4,10 @@
 
 The chapter generator currently relies on thin outline fields (`title`, `goal`, `hook`) plus free-form context. That works for straightforward books, but it breaks down when a project needs hard narrative ceilings such as:
 
-- how far a chapter may escalate the world scope
+- how far a chapter may escalate relative to its current story state
 - how many major crises may run in parallel
 - whether a chapter must act as a fallout/bridge chapter
-- which conflict domains are allowed to advance now
+- which threads or state transitions must be advanced now
 
 The recent emergency fix added keyword-based guardrails in generation and QC. That stopped one failing book, but it is not a general solution:
 
@@ -30,24 +30,20 @@ Introduce a structured, reusable chapter contract that travels with the outline 
 
 ### 1. Add a structured contract to enhanced chapter outlines
 
-Extend `EnhancedChapterOutline` with a `storyContract` object. This contract stores only structural constraints, not keyword lists.
+Extend `EnhancedChapterOutline` with a `storyContract` object. This contract stores only structural constraints, not keyword lists and not any hardcoded ontology.
 
 Proposed fields:
 
-- `scopeCeiling`: highest world/power layer this chapter may reach
-- `maxConcurrentCrises`: maximum number of major crises that may actively unfold in this chapter
-- `requiredBridge`: whether this chapter must first process fallout, consequences, or state transition
-- `allowedConflictDomains`: which conflict domains may be actively advanced
-- `mustProgressThreads`: thread ids or labels that must move forward in this chapter
-- `mustNotIntroduce`: forbidden structural introductions such as a new realm, final boss tier, or unrelated catastrophe
-- `stateTransition`: optional structured expectation for the end-of-chapter state
+- `scope`: free-form range/state constraints for this chapter
+- `crisis`: generic machine-readable constraints such as `maxConcurrent` and `requiredBridge`
+- `threads`: thread requirements and forbidden introductions as free-form labels
+- `stateTransition`: free-form expectations for end-of-chapter state
+- `notes`: extra contract notes
 
 Volume outlines get a lighter contract:
 
-- `scopeRange`
-- `coreThreads`
-- `forbiddenEscalations`
-- `defaultConflictDomains`
+- the same free-form sections
+- plus optional `chapterDefaults` inherited by chapters in the volume
 
 ### 2. Keep the lightweight outline schema backward compatible
 
@@ -71,12 +67,7 @@ QC path:
 
 1. read the same `storyContract`
 2. extend goal checking to validate contract adherence
-3. produce structured issue categories such as:
-   - `scope_overflow`
-   - `crisis_overload`
-   - `missing_bridge`
-   - `thread_drop`
-   - `forbidden_introduction`
+3. surface contract violations as structured QC findings without code-side ontology tables
 
 This keeps the chapter contract as the single source of truth.
 
@@ -118,7 +109,7 @@ Files:
 
 Work:
 
-- define contract enums/types
+- define a generic contract container type
 - extend chapter and volume outline types with optional contract fields
 - normalize contract data from raw `outline_json`
 - provide safe defaults when contracts are absent
@@ -163,7 +154,7 @@ Work:
    Mitigation: add a normalization helper that upgrades stored chapter outline entries into a minimal enhanced outline.
 
 2. AI QC can still be fuzzy if contract wording is vague.
-   Mitigation: keep contract fields categorical and bounded instead of descriptive prose.
+   Mitigation: keep the machine-sensitive part limited to generic scalars such as `maxConcurrent` and `requiredBridge`, and treat the rest as explicit outline text.
 
 3. Legacy books may not benefit immediately.
    Mitigation: keep compatibility first, then add contract generation in a later phase.

@@ -40,7 +40,8 @@ export async function repairChapter(
   qcResult: QCResult,
   chapterIndex: number,
   totalChapters: number,
-  maxAttempts: number = 2
+  maxAttempts: number = 2,
+  minChapterWords?: number,
 ): Promise<RepairResult> {
   let currentChapter = originalChapter;
   let attempts = 0;
@@ -99,7 +100,7 @@ ${currentChapter}
       repairLog.push('AI 修复完成，重新进行 QC 检测...');
 
       // 重新进行 QC
-      lastQC = runQuickQC(currentChapter, chapterIndex, totalChapters);
+      lastQC = runQuickQC(currentChapter, chapterIndex, totalChapters, minChapterWords);
       repairLog.push(`修复后评分: ${lastQC.score}`);
 
       if (lastQC.passed) {
@@ -116,7 +117,7 @@ ${currentChapter}
     }
   }
 
-  const success = lastQC.passed || lastQC.score >= 70;
+  const success = lastQC.passed;
   repairLog.push(`\n修复${success ? '成功' : '未完全成功'}，最终评分: ${lastQC.score}`);
 
   return {
@@ -188,6 +189,7 @@ export async function batchRepairChapters(
   aiConfig: AIConfig,
   chapters: { index: number; text: string; qcResult: QCResult }[],
   totalChapters: number,
+  minChapterWords?: number,
   onProgress?: (index: number, result: RepairResult) => void
 ): Promise<RepairResult[]> {
   const results: RepairResult[] = [];
@@ -210,7 +212,9 @@ export async function batchRepairChapters(
       chapter.text,
       chapter.qcResult,
       chapter.index,
-      totalChapters
+      totalChapters,
+      undefined,
+      minChapterWords,
     );
 
     results.push(result);
