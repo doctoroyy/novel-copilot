@@ -2,6 +2,10 @@ import { z } from 'zod';
 import type { AIConfig } from './aiClient.js';
 import { generateTextStreamCollect, generateTextWithRetry } from './aiClient.js';
 import { normalizeNovelOutline } from '../utils/outline.js';
+import {
+  rebaseProjectStateToContinuity,
+  trimProjectToContinuity,
+} from '../utils/projectContinuity.js';
 
 export type AgentSkillRecord = {
   id: string;
@@ -1204,18 +1208,7 @@ function requireInteger(value: unknown, fieldName: string): number {
 }
 
 async function recalculateNextChapterIndex(db: D1Database, projectId: string): Promise<void> {
-  const row = await db.prepare(`
-    SELECT MAX(chapter_index) AS max_index
-    FROM chapters
-    WHERE project_id = ? AND deleted_at IS NULL
-  `).bind(projectId).first();
-
-  const nextChapterIndex = parseNumber((row as any)?.max_index, 0) + 1;
-  await db.prepare(`
-    UPDATE states
-    SET next_chapter_index = ?
-    WHERE project_id = ?
-  `).bind(nextChapterIndex, projectId).run();
+  await rebaseProjectStateToContinuity(db, projectId);
 }
 
 async function executeUpdateProject(
@@ -1394,7 +1387,7 @@ async function executeDeleteChapter(
     WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
   `).bind(projectId, chapterIndex).run();
 
-  await recalculateNextChapterIndex(db, projectId);
+  await trimProjectToContinuity(db, projectId);
   return `已删除第 ${chapterIndex} 章`;
 }
 

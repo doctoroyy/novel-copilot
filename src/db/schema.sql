@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS states (
   min_chapter_words INTEGER DEFAULT 2500,
   next_chapter_index INTEGER DEFAULT 1,
   rolling_summary TEXT DEFAULT '',
+  summary_base_chapter_index INTEGER DEFAULT 0,
   open_loops TEXT DEFAULT '[]',
   need_human INTEGER DEFAULT 0,
   need_human_reason TEXT DEFAULT NULL
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS summary_memories (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   chapter_index INTEGER NOT NULL,
   rolling_summary TEXT NOT NULL,
+  summary_base_chapter_index INTEGER DEFAULT 0,
   open_loops TEXT DEFAULT '[]',
   summary_updated INTEGER DEFAULT 1,
   update_reason TEXT DEFAULT 'interval',
