@@ -1167,8 +1167,13 @@ const SUMMARY_UPDATE_INTERVAL_KEY = 'summary_update_interval';
 
 type SummaryUpdatePlan = {
   shouldUpdate: boolean;
-  reason: 'last_batch' | 'volume_end' | 'interval' | 'retry_pending' | 'deferred';
+  reason: 'last_batch' | 'volume_end' | 'interval' | 'retry_pending' | 'deferred' | 'rewrite';
   nextPlannedChapter: number;
+};
+
+type HistoricalGenerationContext = {
+  rollingSummary: string;
+  openLoops: string[];
 };
 
 async function hasPendingSummaryRetry(
@@ -1233,6 +1238,53 @@ async function getSummaryUpdateInterval(db: D1Database, env: Env): Promise<numbe
     return fromEnv;
   }
   return DEFAULT_SUMMARY_UPDATE_INTERVAL;
+}
+
+async function loadHistoricalGenerationContext(
+  db: D1Database,
+  projectId: string,
+  chapterIndex: number
+): Promise<HistoricalGenerationContext> {
+  try {
+    const row = await db.prepare(`
+      SELECT rolling_summary, open_loops
+      FROM summary_memories
+      WHERE project_id = ? AND chapter_index < ?
+      ORDER BY chapter_index DESC, id DESC
+      LIMIT 1
+    `).bind(projectId, chapterIndex).first() as {
+      rolling_summary?: string;
+      open_loops?: string;
+    } | null;
+
+    if (!row) {
+      return {
+        rollingSummary: '',
+        openLoops: [],
+      };
+    }
+
+    let openLoops: string[] = [];
+    try {
+      openLoops = row.open_loops ? JSON.parse(row.open_loops) : [];
+    } catch {
+      openLoops = [];
+    }
+
+    return {
+      rollingSummary: String(row.rolling_summary || ''),
+      openLoops,
+    };
+  } catch (error) {
+    console.warn(
+      `[HistoricalContext] Failed to load summary snapshot for project=${projectId}, chapter=${chapterIndex}:`,
+      (error as Error).message
+    );
+    return {
+      rollingSummary: '',
+      openLoops: [],
+    };
+  }
 }
 
 function planSummaryUpdate(params: {
@@ -1303,6 +1355,77 @@ function formatDurationMs(ms: number): string {
     return '0.0s';
   }
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+const FALLOUT_TRIGGER_PATTERN = /(异象|裂缝|天劫|使者|神圣|法则|封锁空间|围攻|大战|绝境|反杀|血祭|绑架|爆炸|坠楼|重伤|巨物|黑色液体|东海异变|空间异常)/;
+const FALLOUT_RESOLUTION_PATTERN = /(余波|善后|收尾|后果|代价|恢复|安抚|震动|调查|清点|反应|解释|复盘|疗伤|处置)/;
+
+function findOutlineChapter(outline: any, chapterIndex: number): any | null {
+  if (!outline?.volumes) return null;
+  for (const vol of outline.volumes) {
+    const chapter = vol?.chapters?.find((item: any) => Number(item?.index) === chapterIndex);
+    if (chapter) return chapter;
+  }
+  return null;
+}
+
+function shouldForceFalloutBridge(params: {
+  chapterIndex: number;
+  outline: any;
+  lastChapters: Array<{ content?: string }>;
+  currentChapter?: { title?: string; goal?: string; hook?: string } | null;
+}): boolean {
+  const { chapterIndex, outline, lastChapters, currentChapter } = params;
+  if (chapterIndex <= 1) return false;
+
+  const prevChapter = findOutlineChapter(outline, chapterIndex - 1);
+  const previousSignals = [
+    prevChapter?.title,
+    prevChapter?.goal,
+    prevChapter?.hook,
+    lastChapters[lastChapters.length - 1]?.content,
+  ].filter(Boolean).join('\n');
+
+  if (!FALLOUT_TRIGGER_PATTERN.test(previousSignals)) {
+    return false;
+  }
+
+  const currentSignals = [
+    currentChapter?.title,
+    currentChapter?.goal,
+    currentChapter?.hook,
+  ].filter(Boolean).join('\n');
+
+  if (FALLOUT_RESOLUTION_PATTERN.test(currentSignals)) {
+    return false;
+  }
+
+  const currentVolume = outline?.volumes?.find((vol: any) =>
+    chapterIndex >= Number(vol?.startChapter) && chapterIndex <= Number(vol?.endChapter)
+  );
+  const isVolumeBoundary = currentVolume && chapterIndex === Number(currentVolume.startChapter);
+  return Boolean(isVolumeBoundary || FALLOUT_TRIGGER_PATTERN.test(previousSignals));
+}
+
+function buildStoryGuardrails(params: {
+  chapterIndex: number;
+  outline: any;
+  lastChapters: Array<{ content?: string }>;
+  currentChapter?: { title?: string; goal?: string; hook?: string } | null;
+}): string[] {
+  const { chapterIndex, outline, lastChapters, currentChapter } = params;
+  const lines = [
+    '【剧情护栏】',
+    '- 本章只允许 1 个主危机，可附带 1 个副事件；其他冲突只埋钩子，不并发展开',
+    '- 除非大纲明确要求，不要突然引入比当前主线更高一级的世界观、战力层级或敌人规模',
+  ];
+
+  if (shouldForceFalloutBridge({ chapterIndex, outline, lastChapters, currentChapter })) {
+    lines.push('- 上一章属于高强度冲突或世界观升级，本章前半段必须先处理余波、代价、角色反应或势力后果，再切入新事件');
+    lines.push('- 若本章是新卷开篇，必须把上卷结果转化为当前现实处境，禁止直接跳到全新日常或无关支线');
+  }
+
+  return lines;
 }
 
 async function appendSummaryMemorySnapshot(params: {
@@ -1547,13 +1670,25 @@ export async function runChapterGenerationTaskInBackground(params: {
             ORDER BY chapter_index DESC LIMIT 2
           `).bind(project.id, Math.max(1, chapterIndex - 2)).all();
 
+      const existingChapterStats = await env.DB.prepare(`
+            SELECT MAX(chapter_index) as max_index
+            FROM chapters
+            WHERE project_id = ? AND deleted_at IS NULL
+          `).bind(project.id).first() as {
+            max_index?: number | null;
+          } | null;
+      const maxExistingChapter = Number(existingChapterStats?.max_index || 0);
+      const isHistoricalRewrite = chapterIndex <= maxExistingChapter;
+
       let chapterGoalHint: string | undefined;
       let outlineTitle: string | undefined;
+      let currentOutlineChapter: any | null = null;
       const outline = project.outline_json ? JSON.parse(project.outline_json) : null;
       if (outline) {
         for (const vol of outline.volumes) {
           const ch = vol.chapters?.find((chapter: any) => chapter.index === chapterIndex);
           if (ch) {
+            currentOutlineChapter = ch;
             outlineTitle = ch.title;
 
             const parts = [
@@ -1576,6 +1711,14 @@ export async function runChapterGenerationTaskInBackground(params: {
               }
             }
 
+            parts.push('');
+            parts.push(...buildStoryGuardrails({
+              chapterIndex,
+              outline,
+              lastChapters: lastChapters as Array<{ content?: string }>,
+              currentChapter: currentOutlineChapter,
+            }));
+
             chapterGoalHint = parts.join('\n');
             break;
           }
@@ -1584,14 +1727,20 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       const summaryUpdateInterval = await getSummaryUpdateInterval(env.DB, env);
       const forceSummaryRetry = await hasPendingSummaryRetry(env.DB, project.id, chapterIndex);
-      const summaryUpdatePlan = planSummaryUpdate({
-        chapterIndex,
-        currentStepIndex,
-        targetCount: task.targetCount,
-        summaryUpdateInterval,
-        forceRetry: forceSummaryRetry,
-        outline,
-      });
+      const summaryUpdatePlan = isHistoricalRewrite
+        ? {
+            shouldUpdate: true,
+            reason: 'rewrite' as const,
+            nextPlannedChapter: chapterIndex,
+          }
+        : planSummaryUpdate({
+            chapterIndex,
+            currentStepIndex,
+            targetCount: task.targetCount,
+            summaryUpdateInterval,
+            forceRetry: forceSummaryRetry,
+            outline,
+          });
       const summaryModelConfig = summaryUpdatePlan.shouldUpdate
         ? await getFeatureMappedAIConfig(env.DB, 'generate_summary_update')
         : null;
@@ -1603,13 +1752,24 @@ export async function runChapterGenerationTaskInBackground(params: {
         );
       }
 
+      const runtimeContext = isHistoricalRewrite
+        ? await loadHistoricalGenerationContext(env.DB, project.id, chapterIndex)
+        : {
+            rollingSummary: project.rolling_summary || '',
+            openLoops: JSON.parse(project.open_loops || '[]'),
+          };
+
       const characters = project.characters_json ? JSON.parse(project.characters_json) : undefined;
-      const characterStates = project.character_states_json
-        ? JSON.parse(project.character_states_json)
-        : (characters ? initializeRegistryFromGraph(characters) : undefined);
-      const plotGraph = project.plot_graph_json
-        ? JSON.parse(project.plot_graph_json)
-        : createEmptyPlotGraph();
+      const characterStates = isHistoricalRewrite
+        ? undefined
+        : (project.character_states_json
+            ? JSON.parse(project.character_states_json)
+            : (characters ? initializeRegistryFromGraph(characters) : undefined));
+      const plotGraph = isHistoricalRewrite
+        ? createEmptyPlotGraph()
+        : (project.plot_graph_json
+            ? JSON.parse(project.plot_graph_json)
+            : createEmptyPlotGraph());
       const narrativeArc = project.narrative_arc_json
         ? JSON.parse(project.narrative_arc_json)
         : (outline ? generateNarrativeArc(outline.volumes || [], project.total_chapters) : undefined);
@@ -1647,8 +1807,8 @@ export async function runChapterGenerationTaskInBackground(params: {
           fallbackConfigs,
           summaryAiConfig: effectiveSummaryAiConfig,
           bible: project.bible,
-          rollingSummary: project.rolling_summary || '',
-          openLoops: JSON.parse(project.open_loops || '[]'),
+          rollingSummary: runtimeContext.rollingSummary,
+          openLoops: runtimeContext.openLoops,
           lastChapters: lastChapters.map((chapter: any) => chapter.content).reverse(),
           chapterIndex,
           totalChapters: project.total_chapters,
@@ -1751,47 +1911,49 @@ export async function runChapterGenerationTaskInBackground(params: {
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
 
-      await env.DB.prepare(`
-            UPDATE states SET
-              next_chapter_index = ?,
-              rolling_summary = ?,
-              open_loops = ?
-            WHERE project_id = ?
+      if (!isHistoricalRewrite) {
+        await env.DB.prepare(`
+              UPDATE states SET
+                next_chapter_index = ?,
+                rolling_summary = ?,
+                open_loops = ?
+              WHERE project_id = ?
+            `).bind(
+          chapterIndex + 1,
+          result.updatedSummary,
+          JSON.stringify(result.updatedOpenLoops),
+          project.id
+        ).run();
+
+        if (result.updatedCharacterStates) {
+          await env.DB.prepare(`
+            INSERT INTO character_states (project_id, registry_json, last_updated_chapter)
+            VALUES (?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+              registry_json = excluded.registry_json,
+              last_updated_chapter = excluded.last_updated_chapter,
+              updated_at = (unixepoch() * 1000)
           `).bind(
-        chapterIndex + 1,
-        result.updatedSummary,
-        JSON.stringify(result.updatedOpenLoops),
-        project.id
-      ).run();
+            project.id,
+            JSON.stringify(result.updatedCharacterStates),
+            chapterIndex
+          ).run();
+        }
 
-      if (result.updatedCharacterStates) {
-        await env.DB.prepare(`
-          INSERT INTO character_states (project_id, registry_json, last_updated_chapter)
-          VALUES (?, ?, ?)
-          ON CONFLICT(project_id) DO UPDATE SET
-            registry_json = excluded.registry_json,
-            last_updated_chapter = excluded.last_updated_chapter,
-            updated_at = (unixepoch() * 1000)
-        `).bind(
-          project.id,
-          JSON.stringify(result.updatedCharacterStates),
-          chapterIndex
-        ).run();
-      }
-
-      if (result.updatedPlotGraph) {
-        await env.DB.prepare(`
-          INSERT INTO plot_graphs (project_id, graph_json, last_updated_chapter)
-          VALUES (?, ?, ?)
-          ON CONFLICT(project_id) DO UPDATE SET
-            graph_json = excluded.graph_json,
-            last_updated_chapter = excluded.last_updated_chapter,
-            updated_at = (unixepoch() * 1000)
-        `).bind(
-          project.id,
-          JSON.stringify(result.updatedPlotGraph),
-          chapterIndex
-        ).run();
+        if (result.updatedPlotGraph) {
+          await env.DB.prepare(`
+            INSERT INTO plot_graphs (project_id, graph_json, last_updated_chapter)
+            VALUES (?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+              graph_json = excluded.graph_json,
+              last_updated_chapter = excluded.last_updated_chapter,
+              updated_at = (unixepoch() * 1000)
+          `).bind(
+            project.id,
+            JSON.stringify(result.updatedPlotGraph),
+            chapterIndex
+          ).run();
+        }
       }
 
       if (result.qcResult) {
@@ -1819,7 +1981,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         rollingSummary: result.updatedSummary,
         openLoops: result.updatedOpenLoops,
         summaryUpdated: !result.skippedSummary,
-        updateReason: summaryUpdatePlan.reason,
+        updateReason: isHistoricalRewrite ? 'rewrite' : summaryUpdatePlan.reason,
         modelProvider: result.skippedSummary ? undefined : effectiveSummaryAiConfig.provider,
         modelName: result.skippedSummary ? undefined : effectiveSummaryAiConfig.model,
       });
