@@ -1754,7 +1754,6 @@ export async function runChapterGenerationTaskInBackground(params: {
           enableSelfReview: false,
           enableFullQC: shouldEnforceStoryContract,
           enableAutoRepair: shouldEnforceStoryContract,
-          failOnFullQCFailure: shouldEnforceStoryContract,
           enableAgentMode: Boolean(project.enable_agent_mode),
           skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
           onProgress: (message, status) => {
