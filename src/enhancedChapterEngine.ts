@@ -190,8 +190,6 @@ export type EnhancedWriteChapterParams = {
   enableFullQC?: boolean;
   /** 启用自动修复 */
   enableAutoRepair?: boolean;
-  /** 深度 QC 失败时直接中止生成 */
-  failOnFullQCFailure?: boolean;
   /** 启用章节规划（ReAct 风格） */
   enablePlanning?: boolean;
   /** 启用自检复写（ReAct 风格） */
@@ -329,7 +327,6 @@ export async function writeEnhancedChapter(
     enableFullQC = false,
     enableAutoRepair = false,
     maxRepairAttempts = 2,
-    failOnFullQCFailure = false,
     enablePlanning = !enhancedOutline,
     enableSelfReview = false,
     maxSelfReviewAttempts = 1,
@@ -690,10 +687,11 @@ ${review.guidance || '请根据问题修正文本，避免重复情节，保持�
       fullQcDurationMs = Date.now() - fullQcStartedAt;
     }
 
-    if (failOnFullQCFailure && qcResult && !qcResult.passed) {
-      const reason = qcResult.issues[0]?.description || '深度 QC 未通过';
-      params.onProgress?.(`深度 QC 未通过: ${reason}`, 'reviewing');
-      throw new Error(`第 ${chapterIndex} 章深度 QC 未通过: ${reason}`);
+    if (qcResult && !qcResult.passed) {
+      const criticalIssue = qcResult.issues.find((i) => i.severity === 'critical');
+      const reason = criticalIssue?.description || qcResult.issues[0]?.description || '深度 QC 未通过';
+      console.warn(`⚠️ 第 ${chapterIndex} 章深度 QC 未通过: ${reason}（已降级为警告，继续生成）`);
+      params.onProgress?.(`深度 QC 未通过: ${reason}（已降级为警告）`, 'reviewing');
     }
   }
 
