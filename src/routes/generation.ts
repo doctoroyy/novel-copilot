@@ -1167,7 +1167,7 @@ const SUMMARY_UPDATE_INTERVAL_KEY = 'summary_update_interval';
 
 type SummaryUpdatePlan = {
   shouldUpdate: boolean;
-  reason: 'last_batch' | 'volume_end' | 'interval' | 'retry_pending' | 'deferred' | 'rewrite';
+  reason: 'last_batch' | 'volume_end' | 'volume_start' | 'interval' | 'retry_pending' | 'deferred' | 'rewrite';
   nextPlannedChapter: number;
 };
 
@@ -1309,6 +1309,20 @@ function planSummaryUpdate(params: {
     return {
       shouldUpdate: true,
       reason: 'volume_end',
+      nextPlannedChapter: chapterIndex,
+    };
+  }
+
+  // Force summary update at volume START (skip volume 0 = first volume)
+  const isVolumeStart = Boolean(
+    outline?.volumes?.some(
+      (vol: any, idx: number) => idx > 0 && Number(vol?.startChapter) === chapterIndex
+    )
+  );
+  if (isVolumeStart) {
+    return {
+      shouldUpdate: true,
+      reason: 'volume_start',
       nextPlannedChapter: chapterIndex,
     };
   }
