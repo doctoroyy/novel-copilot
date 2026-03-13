@@ -1292,6 +1292,16 @@ export async function batchDeleteChapters(name: string, indices: number[]): Prom
   return { deletedIndices: data.deletedIndices, newNextChapterIndex: data.newNextChapterIndex };
 }
 
+export async function deleteVolume(name: string, volumeIndex: number): Promise<{ deletedFromChapter: number; newNextChapterIndex: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/volumes/${volumeIndex}`, {
+    method: 'DELETE',
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { deletedFromChapter: data.deletedFromChapter, newNextChapterIndex: data.newNextChapterIndex };
+}
+
 export async function fetchBibleTemplates(snapshotDate?: string): Promise<BibleTemplateSnapshotResponse> {
   const suffix = snapshotDate ? `?snapshotDate=${encodeURIComponent(snapshotDate)}` : '';
   const res = await fetch(`${API_BASE}/bible-templates${suffix}`, {

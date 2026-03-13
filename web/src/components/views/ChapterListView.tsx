@@ -62,6 +62,7 @@ interface ChapterListViewProps {
   onViewChapter: (index: number) => Promise<string>;
   onDeleteChapter?: (index: number) => Promise<void>;
   onBatchDeleteChapters?: (indices: number[]) => Promise<void>;
+  onDeleteVolume?: (volumeIndex: number) => Promise<void>;
   onProjectRefresh?: () => Promise<void> | void;
   onGenerateNextChapter?: () => Promise<void>;
   onRegenerateChapter?: (index: number) => Promise<void>;
@@ -73,6 +74,7 @@ export function ChapterListView({
   onViewChapter,
   onDeleteChapter,
   onBatchDeleteChapters,
+  onDeleteVolume,
   onProjectRefresh,
   onGenerateNextChapter,
   onRegenerateChapter,
@@ -95,6 +97,8 @@ export function ChapterListView({
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [volumeToDelete, setVolumeToDelete] = useState<{ index: number; title: string; fromChapter: number } | null>(null);
+  const [deletingVolume, setDeletingVolume] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const chapterIndices = useMemo(
@@ -288,6 +292,20 @@ export function ChapterListView({
     }
   };
 
+  const confirmDeleteVolume = async () => {
+    if (!volumeToDelete || !onDeleteVolume) return;
+    setActionError(null);
+    setDeletingVolume(true);
+    try {
+      await onDeleteVolume(volumeToDelete.index);
+    } catch (err) {
+      setActionError(`删除卷失败：${(err as Error).message}`);
+    } finally {
+      setDeletingVolume(false);
+      setVolumeToDelete(null);
+    }
+  };
+
   // Group chapters by volume
   const volumeGroups = project.outline?.volumes.map(vol => ({
     ...vol,
@@ -378,6 +396,23 @@ export function ChapterListView({
                         <Badge variant="outline" className="text-xs shrink-0">
                           {vol.chapters.length} 章
                         </Badge>
+                        {onDeleteVolume && vol.chapters.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 ml-auto text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVolumeToDelete({
+                                index: volIndex,
+                                title: vol.title,
+                                fromChapter: vol.startChapter,
+                              });
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                       <div className="grid gap-2">
                         {vol.chapters.map((chapterIndex) => {
@@ -769,6 +804,29 @@ export function ChapterListView({
             </Button>
             <Button variant="destructive" onClick={confirmBatchDelete} disabled={batchDeleting}>
               {batchDeleting ? '删除中...' : `删除 ${selectedChapters.size} 章`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Volume Delete Confirmation Dialog */}
+      <Dialog open={volumeToDelete !== null} onOpenChange={() => setVolumeToDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>确认删除整卷</DialogTitle>
+            <DialogDescription>
+              确定要删除「{volumeToDelete?.title}」及之后所有已生成章节吗？
+              <br /><br />
+              将删除第 {volumeToDelete?.fromChapter} 章起的所有内容（包括后续卷的章节）。
+              大纲不受影响，可重新生成。此操作不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setVolumeToDelete(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteVolume} disabled={deletingVolume}>
+              {deletingVolume ? '删除中...' : '确认删除'}
             </Button>
           </DialogFooter>
         </DialogContent>

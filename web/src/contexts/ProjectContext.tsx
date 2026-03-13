@@ -15,6 +15,7 @@ import {
   generateBible,
   deleteChapter,
   batchDeleteChapters,
+  deleteVolume,
   cancelAllActiveTasks,
   cancelTaskById,
   getActiveTask,
@@ -96,6 +97,7 @@ interface ProjectContextType {
   handleViewChapter: (index: number) => Promise<string>;
   handleDeleteChapter: (index: number) => Promise<void>;
   handleBatchDeleteChapters: (indices: number[]) => Promise<void>;
+  handleDeleteVolume: (volumeIndex: number) => Promise<void>;
   handleDownloadBook: () => Promise<void>;
   handleGenerateBible: () => Promise<void>;
 }
@@ -1160,6 +1162,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProject, loadProjectIfRouteActive]);
 
+  const handleDeleteVolume = useCallback(async (volumeIndex: number): Promise<void> => {
+    if (!selectedProject) return;
+    try {
+      await deleteVolume(selectedProject.id, volumeIndex);
+      await loadProjectIfRouteActive(selectedProject.id);
+    } catch (err) {
+      setError((err as Error).message);
+      throw err;
+    }
+  }, [selectedProject, loadProjectIfRouteActive]);
+
   const handleDownloadBook = useCallback(async () => {
     if (!selectedProject) return;
 
@@ -1259,6 +1272,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     handleViewChapter,
     handleDeleteChapter,
     handleBatchDeleteChapters,
+    handleDeleteVolume,
     handleDownloadBook,
     handleGenerateBible,
   };
