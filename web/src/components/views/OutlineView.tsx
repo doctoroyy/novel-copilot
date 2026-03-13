@@ -158,6 +158,31 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
     setEditedOutline({ ...editedOutline, milestones: newMilestones });
   };
 
+  // 删除指定卷，并重新计算后续卷的章节编号
+  const removeVolume = (volIndex: number) => {
+    if (!editedOutline) return;
+    if (editedOutline.volumes.length <= 1) return; // 至少保留一卷
+    const newVolumes = [...editedOutline.volumes];
+    newVolumes.splice(volIndex, 1);
+    // 重新计算每卷的 startChapter / endChapter 以及章节 index
+    let nextStart = 1;
+    for (const vol of newVolumes) {
+      const chapterCount = vol.chapters.length;
+      vol.startChapter = nextStart;
+      vol.endChapter = nextStart + chapterCount - 1;
+      vol.chapters = vol.chapters.map((ch: any, idx: number) => ({
+        ...ch,
+        index: nextStart + idx,
+      }));
+      nextStart = vol.endChapter + 1;
+    }
+    setEditedOutline({
+      ...editedOutline,
+      volumes: newVolumes,
+      totalChapters: nextStart - 1,
+    });
+  };
+
   // Helper to update volume
   const updateVolume = (volIndex: number, field: string, value: string) => {
     if (!editedOutline) return;
@@ -444,7 +469,22 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                         <span className="truncate">{vol.title}</span>
                       )}
                     </CardTitle>
-                    {!isEditing && (
+                    {isEditing ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                        title={outline.volumes.length <= 1 ? '至少保留一卷' : '删除本卷'}
+                        disabled={outline.volumes.length <= 1}
+                        onClick={() => {
+                          if (confirm(`确定要从大纲中删除「${vol.title}」吗？后续卷的章节编号将自动重新计算。`)) {
+                            removeVolume(volIndex);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : (
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs text-muted-foreground">
                           {vol.startChapter}-{vol.endChapter}
