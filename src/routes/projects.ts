@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { normalizeNovelOutline } from '../utils/outline.js';
 import {
+  pruneProjectArtifactsBeyondChapter,
   rebaseProjectStateToContinuity,
   trimProjectToContinuity,
 } from '../utils/projectContinuity.js';
@@ -367,6 +368,51 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
       success: true,
       message: `Deleted ${indices.length} chapters`,
       deletedIndices: indices,
+      newNextChapterIndex: rebasedState.nextChapterIndex,
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Delete a volume and all subsequent chapters (user-scoped)
+projectsRoutes.delete('/:name/volumes/:volumeIndex', async (c) => {
+  const projectRef = c.req.param('name');
+  const volumeIndex = parseInt(c.req.param('volumeIndex'), 10);
+  const userId = c.get('userId');
+
+  try {
+    const project = await getProjectIdentityByRef(c.env.DB, projectRef, userId);
+    if (!project) {
+      return c.json({ success: false, error: 'Project not found' }, 404);
+    }
+
+    const outline = await c.env.DB.prepare(
+      'SELECT outline_json FROM outlines WHERE project_id = ?'
+    ).bind(project.id).first<{ outline_json: string }>();
+    if (!outline?.outline_json) {
+      return c.json({ success: false, error: 'No outline found' }, 404);
+    }
+
+    const parsed = JSON.parse(outline.outline_json);
+    const volumes = parsed.volumes || [];
+    if (volumeIndex < 0 || volumeIndex >= volumes.length) {
+      return c.json({ success: false, error: 'Invalid volume index' }, 400);
+    }
+
+    const volume = volumes[volumeIndex];
+    const fromChapter = Number(volume.startChapter);
+    if (!fromChapter || fromChapter < 1) {
+      return c.json({ success: false, error: 'Invalid volume startChapter' }, 400);
+    }
+
+    await pruneProjectArtifactsBeyondChapter(c.env.DB, project.id, fromChapter - 1);
+    const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, project.id);
+
+    return c.json({
+      success: true,
+      message: `已删除第${fromChapter}章起所有内容`,
+      deletedFromChapter: fromChapter,
       newNextChapterIndex: rebasedState.nextChapterIndex,
     });
   } catch (error) {
