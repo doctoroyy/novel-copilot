@@ -130,7 +130,7 @@ function toPiAiModel(config: AIConfig): PiAiModel<any> {
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
-    maxTokens,
+    maxTokens: undefined, // 移除所有 token 上限限制
     compat: {
       supportsDeveloperRole: false
     }
@@ -167,7 +167,7 @@ export async function generateText(
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
-    maxTokens: args.maxTokens,
+    maxTokens: undefined, // 已全局解除限制
     headers: SANITIZED_HEADERS,
     signal: abortController.signal,
   };
@@ -475,7 +475,7 @@ export async function* generateTextStream(
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
-    maxTokens: args.maxTokens,
+    maxTokens: undefined, // 已全局解除限制
     headers: SANITIZED_HEADERS,
     signal: abortController.signal,
   };
