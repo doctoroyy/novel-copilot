@@ -608,6 +608,17 @@ export async function runOutlineGenerationTaskInBackground(params: {
         volume: vol,
         previousVolumeSummary: previousVolumeEndState || undefined,
         minChapterWords: effectiveMinChapterWords,
+        onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
+          const suffix = totalBatches > 1
+            ? ` (批次 ${batchIndex + 1}/${totalBatches}，第 ${startChapter}-${endChapter} 章)`
+            : '';
+          await updateTaskMessage(
+            env.DB,
+            taskId,
+            `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...${suffix}`,
+            computeOutlineProgress(i, totalVolumes)
+          );
+        },
       });
 
       const normalizedVolume = normalizeVolume(vol, i, chapters);
@@ -746,6 +757,17 @@ async function runAppendVolumesMode(params: {
       minChapterWords: effectiveMinChapterWords,
       // 第一个新卷使用实际剧情摘要，确保与已生成内容对齐
       actualStorySummary: i === 0 ? actualStorySummary : undefined,
+      onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
+        const suffix = totalBatches > 1
+          ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
+          : '';
+        await updateTaskMessage(
+          env.DB,
+          taskId,
+          `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (新增 ${i + 1}/${newVolumeSkeletons.length}${suffix})`,
+          computeOutlineProgress(i, newVolumeSkeletons.length)
+        );
+      },
     });
 
     const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);
@@ -851,6 +873,17 @@ async function runRefineOutlineMode(params: {
       volume,
       previousVolumeSummary: volumeIndex > 0 ? buildPreviousVolumeSummary(volumes[volumeIndex - 1]) : undefined,
       minChapterWords: effectiveMinChapterWords,
+      onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
+        const suffix = totalBatches > 1
+          ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
+          : '';
+        await updateTaskMessage(
+          env.DB,
+          taskId,
+          `正在生成第 ${volumeIndex + 1} 卷「${volume.title}」的章节大纲... (${i + 1}/${targetIndices.length}${suffix})`,
+          i
+        );
+      },
     });
 
     volumes[volumeIndex] = normalizeVolume({ ...volume, chapters }, volumeIndex, chapters);
@@ -3004,6 +3037,20 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
             previousVolumeSummary,
             minChapterWords: effectiveMinChapterWords,
             actualStorySummary: i === 0 ? actualStorySummary : undefined,
+            onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
+              const suffix = totalBatches > 1
+                ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
+                : '';
+              const batchMsg = `正在生成第 ${globalVolIndex + 1} 卷「${vol.title}」的章节... (${i + 1}/${newVolumeSkeletons.length}${suffix})`;
+              await updateTaskMessage(c.env.DB, taskId!, batchMsg, i + 1);
+              sendEvent('progress', {
+                current: i + 1,
+                total: newVolumeSkeletons.length,
+                volumeIndex: globalVolIndex,
+                volumeTitle: vol.title,
+                message: batchMsg,
+              });
+            },
           });
 
           const normalizedVolume = normalizeVolume(vol, globalVolIndex, chapters);

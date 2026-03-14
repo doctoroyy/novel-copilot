@@ -599,27 +599,103 @@ function padChaptersToCount(chapters: ChapterOutline[], startChapter: number, ex
   return padded.sort((a, b) => a.index - b.index).slice(0, expectedCount);
 }
 
-/**
- * 生成单卷的章节大纲
- */
-export async function generateVolumeChapters(
+const VOLUME_CHAPTER_BATCH_SIZE = 15;
+const MIN_BATCHED_VOLUME_CHAPTERS = 24;
+
+type VolumeChapterBatchProgress = {
+  batchIndex: number;
+  totalBatches: number;
+  startChapter: number;
+  endChapter: number;
+  generatedCount: number;
+};
+
+function getVolumeChapterBatchRanges(volume: Omit<VolumeOutline, 'chapters'>): Array<{ startChapter: number; endChapter: number }> {
+  const chapterCount = volume.endChapter - volume.startChapter + 1;
+  const batchSize = chapterCount > MIN_BATCHED_VOLUME_CHAPTERS
+    ? Math.min(VOLUME_CHAPTER_BATCH_SIZE, chapterCount)
+    : chapterCount;
+
+  const ranges: Array<{ startChapter: number; endChapter: number }> = [];
+  for (let startChapter = volume.startChapter; startChapter <= volume.endChapter; startChapter += batchSize) {
+    ranges.push({
+      startChapter,
+      endChapter: Math.min(startChapter + batchSize - 1, volume.endChapter),
+    });
+  }
+
+  return ranges;
+}
+
+function buildVolumeBatchSummary(args: {
+  volume: Omit<VolumeOutline, 'chapters'>;
+  generatedChapters: ChapterOutline[];
+  previousVolumeSummary?: string;
+  actualStorySummary?: string;
+}): string {
+  const { volume, generatedChapters, previousVolumeSummary, actualStorySummary } = args;
+
+  if (generatedChapters.length > 0) {
+    const lastGeneratedChapter = generatedChapters[generatedChapters.length - 1];
+    return `【本卷已生成章节进展】\n${buildVolumeContinuationSummary({
+      ...volume,
+      endChapter: lastGeneratedChapter.index,
+      chapters: generatedChapters,
+    })}`;
+  }
+
+  if (actualStorySummary) {
+    return `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`;
+  }
+
+  if (previousVolumeSummary) {
+    return `【上卷结尾摘要】\n${previousVolumeSummary}`;
+  }
+
+  return '【这是第一卷】';
+}
+
+async function generateVolumeChapterBatch(
   aiConfig: AIConfig,
   args: {
     bible: string;
     masterOutline: { mainGoal: string; milestones: string[] };
     volume: Omit<VolumeOutline, 'chapters'>;
+    batchStartChapter: number;
+    batchEndChapter: number;
+    batchIndex: number;
+    totalBatches: number;
     previousVolumeSummary?: string;
     minChapterWords?: number;
-    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
     actualStorySummary?: string;
+    generatedChapters?: ChapterOutline[];
   }
 ): Promise<ChapterOutline[]> {
-  const { bible, masterOutline, volume, previousVolumeSummary, minChapterWords = 2500, actualStorySummary } = args;
+  const {
+    bible,
+    masterOutline,
+    volume,
+    batchStartChapter,
+    batchEndChapter,
+    batchIndex,
+    totalBatches,
+    previousVolumeSummary,
+    minChapterWords = 2500,
+    actualStorySummary,
+    generatedChapters = [],
+  } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
+  const batchChapterCount = batchEndChapter - batchStartChapter + 1;
+  const continuationSummary = buildVolumeBatchSummary({
+    volume,
+    generatedChapters,
+    previousVolumeSummary,
+    actualStorySummary,
+  });
 
   const system = `
-你是一个起点白金级网文章节大纲策划专家。请为一卷生成所有章节的大纲。
+你是一个起点白金级网文章节大纲策划专家。请为一卷中的当前批次生成章节大纲。
 
 章节大纲设计原则：
 1. 每章必须有明确的“本章爽点”（主角展现能力/获得收获/化解危机/揭露真相）
@@ -666,7 +742,7 @@ ${bible.slice(0, 4000)}
 
 【本卷信息】
 - ${volume.title}
-- 章节范围: 第${volume.startChapter}章 ~ 第${volume.endChapter}章 (共${chapterCount}章)
+- 本卷总范围: 第${volume.startChapter}章 ~ 第${volume.endChapter}章 (共${chapterCount}章)
 - 本卷目标: ${volume.goal}
 - 本卷冲突: ${volume.conflict}
 - 本卷高潮: ${volume.climax}
@@ -674,82 +750,144 @@ ${bible.slice(0, 4000)}
 - 每章最低字数: ${minChapterWords} 字
 ${volume.storyContract ? `- 本卷合同:\n${JSON.stringify(volume.storyContract, null, 2)}` : ''}
 
-${actualStorySummary
-    ? `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`
-    : previousVolumeSummary ? `【上卷结尾摘要】\n${previousVolumeSummary}` : '【这是第一卷】'}
+【当前批次】
+- 当前仅生成第 ${batchStartChapter} 章 ~ 第 ${batchEndChapter} 章
+- 当前批次: ${batchIndex + 1}/${totalBatches}
+- 本次必须只输出这 ${batchChapterCount} 章，不能重复前文，也不能提前生成后续批次章节
+- index 必须从 ${batchStartChapter} 递增到 ${batchEndChapter}
+
+${continuationSummary}
 
 【续写硬约束】
+- 如果不是本卷第一批，必须严格承接“本卷已生成章节进展”，不能重新从卷头写起
 - 第一批章节必须直接承接上一卷最后一幕造成的局面变化，不能像没发生过一样切回旧冲突
 - 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
 - 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
 
-请生成本卷所有 ${chapterCount} 章的“章节标题 + 章节描述”，并尽量补全每章的 "storyContract"。
+请只生成当前批次这 ${batchChapterCount} 章的“章节标题 + 章节描述”，并尽量补全每章的 "storyContract"。
 如果本卷已经提供卷级合同，章级合同应在其基础上细化，不要与卷级合同冲突：
 `.trim();
 
-  // 解析级重试：AI 可能返回成功但格式不可解析，需要重新生成
-  const PARSE_RETRY_LIMIT = 3;
-  let lastParseError: string = '';
-  let lastRawText: string = '';
+  const parseRetryLimit = 3;
+  let lastParseError = '';
+  let lastRawText = '';
 
-  for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
-    // 80 章的大纲 JSON（含 storyContract）通常需要 10000-16000 tokens
-    const estimatedTokens = Math.max(8192, chapterCount * 150);
+  for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt++) {
+    const estimatedTokens = Math.max(4096, batchChapterCount * 180);
     const raw = await generateTextWithRetry(aiConfig, {
       system,
       prompt,
-      temperature: 0.7 + parseAttempt * 0.05, // 每次重试稍微提高温度
+      temperature: 0.7 + parseAttempt * 0.05,
       maxTokens: estimatedTokens,
     });
 
-    // 尝试 JSON 解析
     try {
       const normalized = normalizeVolumeChapterPayload(
         parseLooseJson(raw, 'array'),
-        volume.startChapter
+        batchStartChapter
       );
-      if (normalized.length === chapterCount) {
+      if (normalized.length === batchChapterCount) {
         return normalized;
       }
-      // JSON 解析成功但数量不符，尝试容错补全
-      if (normalized.length > 0 && normalized.length >= chapterCount * 0.5) {
+      if (normalized.length > 0 && normalized.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
         console.warn(
-          `[generateVolumeChapters] JSON 解析章节数不匹配：期望 ${chapterCount}，实际 ${normalized.length}，使用占位补全`
+          `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} JSON 解析章节数不匹配：期望 ${batchChapterCount}，实际 ${normalized.length}，使用占位补全`
         );
-        return padChaptersToCount(normalized, volume.startChapter, chapterCount);
+        return padChaptersToCount(normalized, batchStartChapter, batchChapterCount);
       }
     } catch {
-      // JSON 解析失败，继续尝试文本模式
+      // Fall through to text mode.
     }
 
-    // 尝试文本格式解析
-    const textChapters = parseStructuredVolumeChapterText(raw, volume.startChapter, chapterCount);
-    if (textChapters.length === chapterCount) {
+    const textChapters = parseStructuredVolumeChapterText(raw, batchStartChapter, batchChapterCount);
+    if (textChapters.length === batchChapterCount) {
       return textChapters;
     }
-    // 文本解析有部分结果，尝试容错补全
-    if (textChapters.length > 0 && textChapters.length >= chapterCount * 0.5) {
+    if (textChapters.length > 0 && textChapters.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
       console.warn(
-        `[generateVolumeChapters] 文本解析章节数不匹配：期望 ${chapterCount}，实际 ${textChapters.length}，使用占位补全`
+        `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 文本解析章节数不匹配：期望 ${batchChapterCount}，实际 ${textChapters.length}，使用占位补全`
       );
-      return padChaptersToCount(textChapters, volume.startChapter, chapterCount);
+      return padChaptersToCount(textChapters, batchStartChapter, batchChapterCount);
     }
 
-    // 完全无法解析或结果太少，记录日志并重试
-    lastParseError = `expected ${chapterCount}, got ${textChapters.length}`;
+    lastParseError = `expected ${batchChapterCount}, got ${textChapters.length}`;
     lastRawText = raw;
     console.warn(
-      `[generateVolumeChapters] 解析尝试 ${parseAttempt + 1}/${PARSE_RETRY_LIMIT} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
+      `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 解析尝试 ${parseAttempt + 1}/${parseRetryLimit} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
     );
 
-    // 非最后一次重试时等待一下
-    if (parseAttempt < PARSE_RETRY_LIMIT - 1) {
+    if (parseAttempt < parseRetryLimit - 1) {
       await sleep(2000);
     }
   }
 
-  const debugInfo = lastRawText ? `\\n\\n[DEBUG OUTPUT]:\\n${lastRawText.slice(0, 1500)}` : '';
-  throw new Error(`Failed to parse volume chapters response after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}${debugInfo}`);
+  const debugInfo = lastRawText ? `\n\n[DEBUG OUTPUT]:\n${lastRawText.slice(0, 1500)}` : '';
+  throw new Error(`Failed to parse volume chapter batch ${batchIndex + 1}/${totalBatches} after ${parseRetryLimit} attempts: ${lastParseError}${debugInfo}`);
+}
+
+/**
+ * 生成单卷的章节大纲
+ */
+export async function generateVolumeChapters(
+  aiConfig: AIConfig,
+  args: {
+    bible: string;
+    masterOutline: { mainGoal: string; milestones: string[] };
+    volume: Omit<VolumeOutline, 'chapters'>;
+    previousVolumeSummary?: string;
+    minChapterWords?: number;
+    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
+    actualStorySummary?: string;
+    onBatchStart?: (progress: VolumeChapterBatchProgress) => Promise<void> | void;
+  }
+): Promise<ChapterOutline[]> {
+  const {
+    bible,
+    masterOutline,
+    volume,
+    previousVolumeSummary,
+    minChapterWords = 2500,
+    actualStorySummary,
+    onBatchStart,
+  } = args;
+
+  const chapterCount = volume.endChapter - volume.startChapter + 1;
+  const batchRanges = getVolumeChapterBatchRanges(volume);
+  const generatedChapters: ChapterOutline[] = [];
+
+  for (let batchIndex = 0; batchIndex < batchRanges.length; batchIndex += 1) {
+    const batchRange = batchRanges[batchIndex];
+
+    await onBatchStart?.({
+      batchIndex,
+      totalBatches: batchRanges.length,
+      startChapter: batchRange.startChapter,
+      endChapter: batchRange.endChapter,
+      generatedCount: generatedChapters.length,
+    });
+
+    const batchChapters = await generateVolumeChapterBatch(aiConfig, {
+      bible,
+      masterOutline,
+      volume,
+      batchStartChapter: batchRange.startChapter,
+      batchEndChapter: batchRange.endChapter,
+      batchIndex,
+      totalBatches: batchRanges.length,
+      previousVolumeSummary,
+      minChapterWords,
+      actualStorySummary: generatedChapters.length === 0 ? actualStorySummary : undefined,
+      generatedChapters,
+    });
+
+    generatedChapters.push(...batchChapters);
+
+    if (batchIndex < batchRanges.length - 1) {
+      await sleep(1000);
+    }
+  }
+
+  return padChaptersToCount(generatedChapters, volume.startChapter, chapterCount);
 }
 
 /**
