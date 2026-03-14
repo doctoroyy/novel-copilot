@@ -690,6 +690,7 @@ ${actualStorySummary
   // 解析级重试：AI 可能返回成功但格式不可解析，需要重新生成
   const PARSE_RETRY_LIMIT = 3;
   let lastParseError: string = '';
+  let lastRawText: string = '';
 
   for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
     // 80 章的大纲 JSON（含 storyContract）通常需要 10000-16000 tokens
@@ -736,6 +737,7 @@ ${actualStorySummary
 
     // 完全无法解析或结果太少，记录日志并重试
     lastParseError = `expected ${chapterCount}, got ${textChapters.length}`;
+    lastRawText = raw;
     console.warn(
       `[generateVolumeChapters] 解析尝试 ${parseAttempt + 1}/${PARSE_RETRY_LIMIT} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
     );
@@ -746,7 +748,8 @@ ${actualStorySummary
     }
   }
 
-  throw new Error(`Failed to parse volume chapters response after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}`);
+  const debugInfo = lastRawText ? `\\n\\n[DEBUG OUTPUT]:\\n${lastRawText.slice(0, 1500)}` : '';
+  throw new Error(`Failed to parse volume chapters response after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}${debugInfo}`);
 }
 
 /**
