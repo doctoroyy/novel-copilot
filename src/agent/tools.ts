@@ -21,13 +21,14 @@ export type ToolContext = {
   chapterIndex: number;
   totalChapters: number;
   enhancedOutline?: EnhancedChapterOutline;
+  /** 每章最少字数（正文，不含标题），默认 2500 */
+  minChapterWords?: number;
 };
 
 /** AI 增强工具名称列表（消耗 AI 调用预算） */
 export const AI_TOOLS = new Set([
   'query_reader_expectations',
   'design_scene_sequence',
-  'evaluate_draft',
   'write_chapter',
   'rewrite_section',
 ]);
@@ -104,23 +105,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
-    name: 'evaluate_draft',
-    description: '评估已生成的草稿。从冲突强度、角色行为一致性、节奏、读者体验等维度打分。',
-    parameters: {
-      focus: {
-        type: 'string',
-        description: '重点评估维度',
-        enum: ['conflict', 'character_consistency', 'pacing', 'reader_engagement', 'all'],
-      },
-    },
+    name: 'soft_validate',
+    description: '对当前草稿运行格式校验（标题、正文长度等），返回 advisory 建议而非 pass/fail。用于写作后快速检查。',
+    parameters: {},
   },
   {
     name: 'rewrite_section',
-    description: '定向重写草稿中的某个片段，而不是整章重写。',
+    description: '定向重写草稿中的某个片段；当草稿严重偏短时，也可以传 "全文" 做整章扩写补全。',
     parameters: {
       section: {
         type: 'string',
-        description: '要重写的片段标识（如 "opening", "climax", "ending", 或具体的场景编号）',
+        description: '要重写的片段标识（如 "opening", "climax", "ending", "全文"，或具体的场景编号）',
         required: true,
       },
       guidance: {

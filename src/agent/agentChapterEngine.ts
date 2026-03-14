@@ -108,6 +108,7 @@ export async function writeChapterWithAgent(
     chapterIndex,
     totalChapters,
     enhancedOutline,
+    minChapterWords: params.minChapterWords,
   };
 
   // 3. 创建 ToolExecutor 和 Orchestrator
@@ -167,6 +168,11 @@ export async function writeChapterWithAgent(
   const agentStartedAt = Date.now();
   const { chapterText, trace } = await orchestrator.run(initialContext);
   const agentDurationMs = Date.now() - agentStartedAt;
+  const rewriteCount = trace.turns.reduce(
+    (count, turn) => count + turn.toolCalls.filter((call) => call.tool === 'rewrite_section').length,
+    0,
+  );
+  const wasRewritten = rewriteCount > 0;
 
   console.log(
     `[Agent] 第${chapterIndex}章完成: ${trace.totalTurns}轮推理, ${trace.totalToolCalls}次工具调用, 耗时${(agentDurationMs / 1000).toFixed(1)}s`,
@@ -327,8 +333,8 @@ export async function writeChapterWithAgent(
     updatedPlotGraph,
     updatedTimeline,
     narrativeGuide,
-    wasRewritten: false,
-    rewriteCount: 0,
+    wasRewritten,
+    rewriteCount,
     contextStats,
     eventDuplicationWarnings,
     skippedSummary,
