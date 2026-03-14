@@ -565,7 +565,9 @@ ${charactersSummary}
 请生成总大纲。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7 });
+  // 总大纲 JSON 体量较大，确保 maxTokens 足够
+  const estimatedTokens = Math.max(8192, volumeCount * 600);
+  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7, maxTokens: estimatedTokens });
 
   try {
     return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
@@ -690,10 +692,13 @@ ${actualStorySummary
   let lastParseError: string = '';
 
   for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
+    // 80 章的大纲 JSON（含 storyContract）通常需要 10000-16000 tokens
+    const estimatedTokens = Math.max(8192, chapterCount * 150);
     const raw = await generateTextWithRetry(aiConfig, {
       system,
       prompt,
       temperature: 0.7 + parseAttempt * 0.05, // 每次重试稍微提高温度
+      maxTokens: estimatedTokens,
     });
 
     // 尝试 JSON 解析
@@ -855,10 +860,13 @@ ${actualStorySummary
 请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
+  // 追加卷骨架 JSON 需要足够的输出空间
+  const estimatedTokens = Math.max(8192, newVolumeCount * 600);
   const raw = await generateTextWithRetry(aiConfig, {
     system,
     prompt,
     temperature: 0.7,
+    maxTokens: estimatedTokens,
   });
 
   try {
