@@ -89,6 +89,16 @@ function extractPlainTextTitleAndBody(raw: string, chapterIndex: number): { titl
   return { title, content: body };
 }
 
+/** 清除 AI 输出末尾常见的元信息（修改说明、本章完、作者注等） */
+function stripTrailingMeta(text: string): string {
+  return text
+    .replace(/\(本章完\)\s*/g, '')
+    .replace(/（本章完）\s*/g, '')
+    .replace(/\n+【(?:修改说明|写作说明|注|备注|作者注|说明)】[\s\S]*$/m, '')
+    .replace(/\n+\[(?:修改说明|写作说明|NOTE|注|备注)[\]】][\s\S]*$/m, '')
+    .trim();
+}
+
 export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex: number): string {
   const parsed = extractJsonObject(rawResponse);
   if (parsed && typeof parsed.content === 'string') {
@@ -96,14 +106,14 @@ export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex:
       typeof parsed.title === 'string' ? parsed.title : '',
       chapterIndex
     );
-    return `${finalTitle}\n\n${parsed.content.trim()}`;
+    return stripTrailingMeta(`${finalTitle}\n\n${parsed.content.trim()}`);
   }
 
   const cleaned = stripCodeFence(rawResponse);
   const plain = extractPlainTextTitleAndBody(cleaned, chapterIndex);
   if (plain) {
-    return `${plain.title}\n\n${plain.content}`.trim();
+    return stripTrailingMeta(`${plain.title}\n\n${plain.content}`);
   }
 
-  return cleaned;
+  return stripTrailingMeta(cleaned);
 }
