@@ -8,7 +8,7 @@ import {
   saveChapter,
   writeState,
 } from './memory.js';
-import { writeOneChapter } from './generateChapter.js';
+import { writeEnhancedChapter } from './enhancedChapterEngine.js';
 import { readOutline, getChapterOutline } from './generateOutline.js';
 import type { AIConfig } from './services/aiClient.js';
 
@@ -98,7 +98,7 @@ export async function runOneBook(options: RunOptions): Promise<void> {
 
     try {
       // 生成章节
-      const result = await writeOneChapter({
+      const result = await writeEnhancedChapter({
         aiConfig,
         bible,
         rollingSummary: state.rollingSummary,
