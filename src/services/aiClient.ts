@@ -142,6 +142,14 @@ function estimateTokenCount(text: string | undefined): number {
   return Math.ceil(text.length / 2);
 }
 
+function normalizeRequestedMaxTokens(value: unknown): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.floor(parsed);
+}
+
 /**
  * Generate text using the configured AI provider
  */
@@ -164,10 +172,11 @@ export async function generateText(
   const abortController = new AbortController();
   const timeoutMs = callOptions?.timeoutMs ?? AI_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+  const requestedMaxTokens = normalizeRequestedMaxTokens(args.maxTokens);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
-    maxTokens: undefined, // 已全局解除限制
+    maxTokens: requestedMaxTokens,
     headers: SANITIZED_HEADERS,
     signal: abortController.signal,
   };
@@ -206,7 +215,7 @@ export async function generateText(
         estimatedOutputTokens: estimateTokenCount(resultText),
         stopReason,
         retryAttempt: 0,
-        maxTokensUsed: args.maxTokens,
+        maxTokensUsed: requestedMaxTokens,
       });
     }
 
@@ -228,7 +237,7 @@ export async function generateText(
         stopReason,
         error: actualError.message,
         retryAttempt: 0,
-        maxTokensUsed: args.maxTokens,
+        maxTokensUsed: requestedMaxTokens,
       });
     }
     throw actualError;
@@ -472,10 +481,11 @@ export async function* generateTextStream(
   const model = toPiAiModel(config);
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), AI_REQUEST_TIMEOUT_MS);
+  const requestedMaxTokens = normalizeRequestedMaxTokens(args.maxTokens);
   const options: SimpleStreamOptions = {
     apiKey: config.apiKey,
     temperature: args.temperature || 0.8,
-    maxTokens: undefined, // 已全局解除限制
+    maxTokens: requestedMaxTokens,
     headers: SANITIZED_HEADERS,
     signal: abortController.signal,
   };
