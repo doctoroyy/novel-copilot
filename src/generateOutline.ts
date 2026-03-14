@@ -268,7 +268,7 @@ function describeChapterForContinuation(chapter: Partial<ChapterOutline> | null 
   return parts.join(' | ');
 }
 
-function buildVolumeContinuationSummary(
+export function buildVolumeContinuationSummary(
   volume: (Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }) | null | undefined
 ): string {
   if (!volume) return '';
@@ -565,15 +565,38 @@ ${charactersSummary}
 请生成总大纲。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
-  // 总大纲 JSON 体量较大，确保 maxTokens 足够
+  // 解析级重试：AI 可能返回成功但格式不可解析，需要重新生成
+  const PARSE_RETRY_LIMIT = 3;
   const estimatedTokens = Math.max(8192, volumeCount * 600);
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7, maxTokens: estimatedTokens });
+  let lastParseError: string = '';
+  let lastRawText: string = '';
 
-  try {
-    return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
-  } catch {
-    throw new Error('Failed to parse master outline JSON');
+  for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
+    const raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.7 + parseAttempt * 0.05,
+      maxTokens: estimatedTokens,
+    });
+
+    lastRawText = raw;
+
+    try {
+      return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
+    } catch (err) {
+      lastParseError = (err as Error).message;
+      console.warn(
+        `[generateMasterOutline] 解析尝试 ${parseAttempt + 1}/${PARSE_RETRY_LIMIT} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
+      );
+
+      if (parseAttempt < PARSE_RETRY_LIMIT - 1) {
+        await sleep(2000);
+      }
+    }
   }
+
+  const debugInfo = lastRawText ? `\n\n[DEBUG OUTPUT]:\n${lastRawText.slice(0, 1500)}` : '';
+  throw new Error(`Failed to parse master outline JSON after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}${debugInfo}`);
 }
 
 /**
@@ -863,26 +886,57 @@ ${actualStorySummary
 请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
 `.trim();
 
-  // 追加卷骨架 JSON 需要足够的输出空间
+  // 解析级重试：AI 可能返回成功但格式不可解析，需要重新生成
+  const PARSE_RETRY_LIMIT = 3;
   const estimatedTokens = Math.max(8192, newVolumeCount * 600);
-  const raw = await generateTextWithRetry(aiConfig, {
-    system,
-    prompt,
-    temperature: 0.7,
-    maxTokens: estimatedTokens,
-  });
+  let lastParseError: string = '';
+  let lastRawText: string = '';
 
-  try {
-    return {
-      volumes: normalizeAdditionalVolumePayload(
+  for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
+    const raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.7 + parseAttempt * 0.05,
+      maxTokens: estimatedTokens,
+    });
+
+    lastRawText = raw;
+
+    try {
+      const volumes = normalizeAdditionalVolumePayload(
         parseLooseJson(raw, 'object'),
         startChapterBase,
         chaptersPerVolume
-      ),
-    };
-  } catch {
-    throw new Error('Failed to parse additional volumes JSON');
+      );
+
+      if (volumes.length === newVolumeCount) {
+        return { volumes };
+      }
+
+      // 部分结果可用：请求 N 个卷但只解析出部分
+      if (volumes.length > 0) {
+        console.warn(
+          `[generateAdditionalVolumes] 卷数不匹配：期望 ${newVolumeCount}，实际 ${volumes.length}，返回 partial results`
+        );
+        return { volumes };
+      }
+
+      lastParseError = `expected ${newVolumeCount} volumes, got ${volumes.length}`;
+    } catch (err) {
+      lastParseError = (err as Error).message;
+    }
+
+    console.warn(
+      `[generateAdditionalVolumes] 解析尝试 ${parseAttempt + 1}/${PARSE_RETRY_LIMIT} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
+    );
+
+    if (parseAttempt < PARSE_RETRY_LIMIT - 1) {
+      await sleep(2000);
+    }
   }
+
+  const debugInfo = lastRawText ? `\n\n[DEBUG OUTPUT]:\n${lastRawText.slice(0, 1500)}` : '';
+  throw new Error(`Failed to parse additional volumes JSON after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}${debugInfo}`);
 }
 
 /**
