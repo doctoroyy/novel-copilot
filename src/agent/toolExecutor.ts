@@ -14,6 +14,7 @@ import { optimizePlotContext } from '../contextOptimizer.js';
 import { getActiveCharacterSnapshots, formatSnapshotForPrompt } from '../types/characterState.js';
 import { getRecentlyCompletedEvents, getActiveEvents, getCompletedEvents } from '../types/timeline.js';
 import { formatTimelineContext } from '../types/timeline.js';
+import { quickChapterFormatHeuristic } from '../qc.js';
 
 export class ToolExecutor {
   private currentDraft: string | null = null;
@@ -48,8 +49,8 @@ export class ToolExecutor {
         return this.checkForeshadowingOpportunities();
       case 'design_scene_sequence':
         return this.designSceneSequence(call.args.goal, call.args.constraints);
-      case 'evaluate_draft':
-        return this.evaluateDraft(call.args.focus ?? 'all');
+      case 'soft_validate':
+        return this.softValidate();
       case 'rewrite_section':
         return this.rewriteSection(call.args.section, call.args.guidance);
       case 'write_chapter':
@@ -291,38 +292,38 @@ ${rollingSummary.slice(0, 1500)}
     }, 2, this.callOptions);
   }
 
-  private async evaluateDraft(focus: string): Promise<string> {
-    if (!this.currentDraft) return '当前没有草稿可评估。请先调用 write_chapter 生成草稿。';
+  private softValidate(): string {
+    if (!this.currentDraft) return '当前没有草稿可校验。请先调用 write_chapter 生成草稿。';
 
-    const prompt = `请评估以下章节草稿的质量。
-
-【章节草稿】
-${this.currentDraft.slice(0, 6000)}
-
-${focus !== 'all' ? `【重点评估】${focus}` : ''}
-
-请输出 JSON：
-{
-  "scores": {
-    "conflict_intensity": { "score": 7, "reason": "..." },
-    "character_consistency": { "score": 7, "reason": "..." },
-    "pacing": { "score": 7, "reason": "..." },
-    "reader_engagement": { "score": 7, "reason": "..." },
-    "hook_quality": { "score": 7, "reason": "..." }
-  },
-  "overall": 7,
-  "critical_issues": ["必须修复的问题"],
-  "improvement_suggestions": ["可以更好的建议"],
-  "strongest_part": "最成功的部分",
-  "weakest_part": "最需要改进的部分"
-}`;
-
-    return generateTextWithRetry(this.aiConfig, {
-      system: '你是资深小说编辑。请客观评估章节质量。只输出 JSON。',
-      prompt,
-      temperature: 0.3,
-      maxTokens: 800,
-    }, 2, this.callOptions);
+    const minChars = this.ctx.minChapterWords || 2500;
+    const result = quickChapterFormatHeuristic(this.currentDraft, { minBodyChars: minChars });
+    if (!result.hit) {
+      return JSON.stringify({
+        status: 'pass',
+        message: '格式校验通过，无异常。',
+        wordCount: this.currentDraft.length,
+        recommendedAction: 'finish',
+      });
+    }
+    const hasBlockingIssue = result.blockingReasons.length > 0;
+    const shortDraftIssue = [...result.blockingReasons, ...result.reviewReasons].some((reason) =>
+      reason.includes('过短') || reason.includes('目标至少')
+    );
+    return JSON.stringify({
+      status: hasBlockingIssue ? 'blocking' : 'advisory',
+      blockingReasons: result.blockingReasons,
+      reviewReasons: result.reviewReasons,
+      wordCount: this.currentDraft.length,
+      targetMinWords: this.ctx.minChapterWords || 2500,
+      recommendedAction: shortDraftIssue ? 'rewrite_section:全文' : 'rewrite_section:local',
+      suggestion: hasBlockingIssue
+        ? (shortDraftIssue
+          ? '正文严重不足时不要直接 finish，优先用 rewrite_section 重写 "全文" 做整章扩写补全。'
+          : '存在严重格式问题，建议重写。')
+        : (shortDraftIssue
+          ? '正文略短，可优先扩写全文而不是只修局部。'
+          : '存在轻微问题，可酌情修正。'),
+    }, null, 2);
   }
 
   /**
@@ -330,10 +331,18 @@ ${focus !== 'all' ? `【重点评估】${focus}` : ''}
    * 由 Orchestrator 拦截后触发实际写作。
    */
   private writeChapter(scenePlan: string, writingNotes: string): string {
-    return '[WRITE_CHAPTER_SIGNAL]' + JSON.stringify({ scenePlan, writingNotes });
+    try {
+      return '[WRITE_CHAPTER_SIGNAL]' + JSON.stringify({ scenePlan, writingNotes });
+    } catch (err) {
+      return `[ERROR] write_chapter 参数序列化失败: ${(err as Error).message}`;
+    }
   }
 
   private rewriteSection(section: string, guidance: string): string {
-    return '[REWRITE_SECTION_SIGNAL]' + JSON.stringify({ section, guidance });
+    try {
+      return '[REWRITE_SECTION_SIGNAL]' + JSON.stringify({ section, guidance });
+    } catch (err) {
+      return `[ERROR] rewrite_section 参数序列化失败: ${(err as Error).message}`;
+    }
   }
 }
