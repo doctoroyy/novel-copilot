@@ -19,6 +19,7 @@ async function runTest() {
 
   const aiConfig = {
     provider: 'custom-1772719742120',
+    model: 'DeepSeek-V3',
     apiKey: 'sk-ln8DQygJDI3EgNCB202045A900Ef41Cf99D829653fA25911',
     baseUrl: 'https://api.edgefn.net/v1'
   } as any;
