@@ -790,15 +790,16 @@ export async function createBackgroundTask(
   initialMessage: string | null = null
 ): Promise<{ taskId: number; created: boolean }> {
   const existing = await db.prepare(`
-    SELECT id
+    SELECT *
     FROM generation_tasks
     WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused') AND cancel_requested = 0 AND task_type = ?
     ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectId, userId, taskType).first() as { id: number } | null;
+  `).bind(projectId, userId, taskType).first() as any;
 
-  if (existing?.id) {
-    return { taskId: existing.id, created: false };
+  const activeTask = existing ? await expireStaleTaskRow(db, existing) : null;
+  if (activeTask?.id) {
+    return { taskId: activeTask.id, created: false };
   }
 
   const result = await db.prepare(`
@@ -892,20 +893,22 @@ export async function checkRunningTask(
         LIMIT 1
       `).bind(projectId).first()) as any;
 
-  if (task) {
+  const activeTask = task ? await expireStaleTaskRow(db, task) : null;
+
+  if (activeTask) {
     return {
       isRunning: true,
-      taskId: task.id,
+      taskId: activeTask.id,
       task: {
-        ...task,
-        completedChapters: JSON.parse(task.completed_chapters || '[]'),
-        failedChapters: JSON.parse(task.failed_chapters || '[]'),
-        targetCount: task.target_count,
-        taskType: (task.task_type || 'chapters') as TaskType,
-        currentProgress: task.current_progress,
-        currentMessage: task.current_message,
-        cancelRequested: Boolean(task.cancel_requested),
-        startChapter: task.start_chapter
+        ...activeTask,
+        completedChapters: JSON.parse(activeTask.completed_chapters || '[]'),
+        failedChapters: JSON.parse(activeTask.failed_chapters || '[]'),
+        targetCount: activeTask.target_count,
+        taskType: (activeTask.task_type || 'chapters') as TaskType,
+        currentProgress: activeTask.current_progress,
+        currentMessage: activeTask.current_message,
+        cancelRequested: Boolean(activeTask.cancel_requested),
+        startChapter: activeTask.start_chapter
       }
     };
   }
