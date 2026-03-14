@@ -575,6 +575,29 @@ ${charactersSummary}
 }
 
 /**
+ * 将解析出的章节数组补全到期望数量，缺失章节用占位信息填充
+ */
+function padChaptersToCount(chapters: ChapterOutline[], startChapter: number, expectedCount: number): ChapterOutline[] {
+  if (chapters.length >= expectedCount) return chapters.slice(0, expectedCount);
+
+  const padded = [...chapters];
+  const existingIndices = new Set(chapters.map((c) => c.index));
+
+  for (let offset = 0; padded.length < expectedCount; offset++) {
+    const index = startChapter + offset;
+    if (existingIndices.has(index)) continue;
+    padded.push({
+      index,
+      title: `第${index}章`,
+      goal: '（占位章节，待后续细化大纲时补全）',
+      hook: '',
+    });
+  }
+
+  return padded.sort((a, b) => a.index - b.index).slice(0, expectedCount);
+}
+
+/**
  * 生成单卷的章节大纲
  */
 export async function generateVolumeChapters(
@@ -662,30 +685,63 @@ ${actualStorySummary
 如果本卷已经提供卷级合同，章级合同应在其基础上细化，不要与卷级合同冲突：
 `.trim();
 
-  const raw = await generateTextWithRetry(aiConfig, {
-    system,
-    prompt,
-    temperature: 0.7,
-  });
+  // 解析级重试：AI 可能返回成功但格式不可解析，需要重新生成
+  const PARSE_RETRY_LIMIT = 3;
+  let lastParseError: string = '';
 
-  try {
-    const normalized = normalizeVolumeChapterPayload(
-      parseLooseJson(raw, 'array'),
-      volume.startChapter
-    );
-    if (normalized.length === chapterCount) {
-      return normalized;
+  for (let parseAttempt = 0; parseAttempt < PARSE_RETRY_LIMIT; parseAttempt++) {
+    const raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.7 + parseAttempt * 0.05, // 每次重试稍微提高温度
+    });
+
+    // 尝试 JSON 解析
+    try {
+      const normalized = normalizeVolumeChapterPayload(
+        parseLooseJson(raw, 'array'),
+        volume.startChapter
+      );
+      if (normalized.length === chapterCount) {
+        return normalized;
+      }
+      // JSON 解析成功但数量不符，尝试容错补全
+      if (normalized.length > 0 && normalized.length >= chapterCount * 0.5) {
+        console.warn(
+          `[generateVolumeChapters] JSON 解析章节数不匹配：期望 ${chapterCount}，实际 ${normalized.length}，使用占位补全`
+        );
+        return padChaptersToCount(normalized, volume.startChapter, chapterCount);
+      }
+    } catch {
+      // JSON 解析失败，继续尝试文本模式
     }
-  } catch {
-    // fall through to text-mode parsing
+
+    // 尝试文本格式解析
+    const textChapters = parseStructuredVolumeChapterText(raw, volume.startChapter, chapterCount);
+    if (textChapters.length === chapterCount) {
+      return textChapters;
+    }
+    // 文本解析有部分结果，尝试容错补全
+    if (textChapters.length > 0 && textChapters.length >= chapterCount * 0.5) {
+      console.warn(
+        `[generateVolumeChapters] 文本解析章节数不匹配：期望 ${chapterCount}，实际 ${textChapters.length}，使用占位补全`
+      );
+      return padChaptersToCount(textChapters, volume.startChapter, chapterCount);
+    }
+
+    // 完全无法解析或结果太少，记录日志并重试
+    lastParseError = `expected ${chapterCount}, got ${textChapters.length}`;
+    console.warn(
+      `[generateVolumeChapters] 解析尝试 ${parseAttempt + 1}/${PARSE_RETRY_LIMIT} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
+    );
+
+    // 非最后一次重试时等待一下
+    if (parseAttempt < PARSE_RETRY_LIMIT - 1) {
+      await sleep(2000);
+    }
   }
 
-  const textChapters = parseStructuredVolumeChapterText(raw, volume.startChapter, chapterCount);
-  if (textChapters.length === chapterCount) {
-    return textChapters;
-  }
-
-  throw new Error(`Failed to parse volume chapters response: expected ${chapterCount}, got ${textChapters.length}`);
+  throw new Error(`Failed to parse volume chapters response after ${PARSE_RETRY_LIMIT} attempts: ${lastParseError}`);
 }
 
 /**
