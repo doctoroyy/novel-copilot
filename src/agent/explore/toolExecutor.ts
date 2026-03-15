@@ -292,6 +292,7 @@ ${keywords ? `- 关键词/元素: ${keywords}` : ''}
       );
     }
 
-    return bible;
+    // 直接返回 FINISH_SIGNAL，省掉 finish 步骤
+    return `${FINISH_SIGNAL}${bible}`;
   }
 }

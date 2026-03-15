@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
+import { generateText, generateTextWithRetry, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
 import { logGenerationMetrics } from '../services/logger.js';
 import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
@@ -2808,7 +2808,7 @@ ${templateHint ? `${templateHint}\n` : ''}
     let fallbackModelUsed: { provider: string; model: string } | null = null;
 
     try {
-      bible = await generateText(aiConfig, { system, prompt, temperature: 0.9 });
+      bible = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.9 }, 3);
     } catch (primaryError) {
       if (isGeminiLikeConfig(aiConfig) && isLocationUnsupportedError(primaryError)) {
         const fallbackConfig = await getNonGeminiFallbackAIConfig(c.env.DB, aiConfig);
@@ -2821,7 +2821,7 @@ ${templateHint ? `${templateHint}\n` : ''}
         console.warn(
           `[generate-bible] primary model blocked by location, fallback to ${fallbackConfig.provider}/${fallbackConfig.model}`
         );
-        bible = await generateText(fallbackConfig, { system, prompt, temperature: 0.9 });
+        bible = await generateTextWithRetry(fallbackConfig, { system, prompt, temperature: 0.9 }, 3);
         fallbackModelUsed = {
           provider: String(fallbackConfig.provider || ''),
           model: String(fallbackConfig.model || ''),
@@ -2847,6 +2847,62 @@ ${templateHint ? `${templateHint}\n` : ''}
 });
 
 // Generate bible with ExploreAgent — SSE streaming
+
+/**
+ * 降级：直接用 AI 生成 Bible（无 Agent 循环，带重试）
+ */
+async function directGenerateBible(
+  aiConfig: AIConfig,
+  concept: string,
+  genre: string,
+  theme: string,
+  keywords: string,
+  fallbackConfigs?: AIConfig[],
+): Promise<string | null> {
+  const system = `你是番茄/起点爆款网文策划专家。根据用户创意设计一部具有差异化竞争力的网文 Story Bible。
+
+【输出格式 - Markdown】
+
+# 《书名》
+
+## 一句话卖点
+（30字内核心吸引力）
+
+## 核心爽点设计
+1-3个爽点及预计出现时机
+
+## 主角设定
+姓名、身份、背景、性格、核心动机、金手指/系统
+
+## 配角矩阵
+助力型配角和反派/竞争者
+
+## 力量体系/社会阶层
+
+## 世界观设定
+
+## 主线剧情节点
+开篇危机、金手指觉醒、第一次打脸、中期高潮、低谷转折、终极对决
+
+## 开篇钩子设计`;
+
+  const parts = [`请根据以下创意生成 Story Bible：\n\n创意：${concept}`];
+  if (genre) parts.push(`类型：${genre}`);
+  if (theme) parts.push(`主题：${theme}`);
+  if (keywords) parts.push(`关键词：${keywords}`);
+  const prompt = parts.join('\n');
+
+  try {
+    const bible = await generateTextWithRetry(aiConfig, {
+      system, prompt, temperature: 0.9,
+    }, 3);
+    return bible || null;
+  } catch (err) {
+    console.error('[directGenerateBible] failed:', err);
+    return null;
+  }
+}
+
 generationRoutes.post('/generate-bible-explore', async (c) => {
   const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
   if (!aiConfig) {
@@ -2935,14 +2991,32 @@ generationRoutes.post('/generate-bible-explore', async (c) => {
 
         const { bible, trace } = await orchestrator.run();
 
-        if (!bible) {
-          sendEvent('error', { error: 'Agent 未能生成有效的 Bible' });
-        } else {
+        if (bible) {
           sendEvent('done', { bible, trace });
+        } else {
+          // Agent 未能生成 — 自动降级到简单直接生成
+          sendEvent('progress', { phase: 'fallback', detail: 'Agent 未能生成结果，正在降级为直接生成...' });
+          const fallbackBible = await directGenerateBible(aiConfig, concept, genre, theme, keywords, fallbackConfigs);
+          if (fallbackBible) {
+            sendEvent('done', { bible: fallbackBible, trace });
+          } else {
+            sendEvent('error', { error: 'Agent 和降级生成均未能生成有效的 Bible' });
+          }
         }
       } catch (error) {
         console.error('[generate-bible-explore] error:', error);
-        sendEvent('error', { error: (error as Error).message });
+        // Agent 异常 — 自动降级到简单直接生成
+        try {
+          sendEvent('progress', { phase: 'fallback', detail: '出现异常，正在降级为直接生成...' });
+          const fallbackBible = await directGenerateBible(aiConfig, concept, genre, theme, keywords, fallbackConfigs);
+          if (fallbackBible) {
+            sendEvent('done', { bible: fallbackBible, trace: [] });
+          } else {
+            sendEvent('error', { error: (error as Error).message });
+          }
+        } catch (fallbackErr) {
+          sendEvent('error', { error: (error as Error).message });
+        }
       } finally {
         close();
       }

@@ -30,7 +30,7 @@ const EXPLORE_CONFIG: AgentConfig = {
   maxTurns: 4,
   maxToolCallsPerTurn: 3,
   enableReaderSimulation: false,
-  maxAICalls: 4,
+  maxAICalls: 8,
 };
 
 export type ExploreProgressEvent = {
@@ -247,9 +247,7 @@ export class ExploreAgentOrchestrator {
    - search_web: Bing 搜索行业趋势（需要浏览器可用）
    注意：一次调用中最多 ${EXPLORE_CONFIG.maxToolCallsPerTurn} 个工具
 
-2. **生成阶段（Turn 2）**: 调用 analyze_and_generate，传入所有搜索数据和用户创意
-
-3. **提交阶段（Turn 3）**: 调用 finish 提交最终 Bible
+2. **生成阶段（Turn 2）**: 调用 analyze_and_generate，传入所有搜索数据和用户创意。该工具会直接输出最终 Bible，无需额外 finish 步骤。
 
 ## 可用工具
 
@@ -265,9 +263,10 @@ ${toolDescriptions}
 
 注意：
 - tool_calls 和 final_output 不能同时存在
-- 尽量在 3 轮内完成任务
+- 尽量在 2 轮内完成任务（搜索 + 生成）
 - 第一轮应并行调用所有数据搜索工具
-- 如果浏览器不可用，跳过 search_fanqie_rank 和 search_web`;
+- 如果浏览器不可用，跳过 search_fanqie_rank 和 search_web
+- 不需要调用 finish，analyze_and_generate 会自动完成`;
   }
 
   private countToolCalls(trace: AgentTrace): number {
