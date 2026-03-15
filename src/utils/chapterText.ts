@@ -89,6 +89,29 @@ function extractPlainTextTitleAndBody(raw: string, chapterIndex: number): { titl
   return { title, content: body };
 }
 
+/**
+ * 清理 AI 生成的元说明文本，如【本章结尾悬念】、【章节目标完成提示】等。
+ * 这些文字不是小说正文，而是 AI 的自我注释。
+ */
+function stripTrailingMeta(text: string): string {
+  // 从末尾向前查找元说明块（以【...】开头的行）
+  const lines = text.split('\n');
+  let cutIndex = lines.length;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue; // 跳过空行
+    if (/^【.{2,}】/.test(trimmed)) {
+      cutIndex = i;
+    } else {
+      break; // 遇到正常正文行就停止
+    }
+  }
+  if (cutIndex < lines.length) {
+    return lines.slice(0, cutIndex).join('\n').trimEnd();
+  }
+  return text;
+}
+
 export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex: number): string {
   const parsed = extractJsonObject(rawResponse);
   if (parsed && typeof parsed.content === 'string') {
@@ -96,14 +119,14 @@ export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex:
       typeof parsed.title === 'string' ? parsed.title : '',
       chapterIndex
     );
-    return `${finalTitle}\n\n${parsed.content.trim()}`;
+    return stripTrailingMeta(`${finalTitle}\n\n${parsed.content.trim()}`);
   }
 
   const cleaned = stripCodeFence(rawResponse);
   const plain = extractPlainTextTitleAndBody(cleaned, chapterIndex);
   if (plain) {
-    return `${plain.title}\n\n${plain.content}`.trim();
+    return stripTrailingMeta(`${plain.title}\n\n${plain.content}`.trim());
   }
 
-  return cleaned;
+  return stripTrailingMeta(cleaned);
 }

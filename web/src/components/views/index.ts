@@ -7,3 +7,4 @@ export { SummaryView } from './SummaryView';
 export { CharacterGraphView } from './CharacterGraphView';
 export { AnimeView } from './AnimeView';
 export { AnimeEpisodeDetail } from './AnimeEpisodeDetail';
+export { QualityView } from './QualityView';

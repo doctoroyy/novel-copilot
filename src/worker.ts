@@ -12,6 +12,7 @@ import { tasksRoutes } from './routes/tasks.js';
 import { editingRoutes } from './routes/editing.js';
 import { creditRoutes } from './routes/credit.js';
 import { agentRoutes } from './routes/agent.js';
+import { qcRoutes } from './routes/qc.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
 export interface Env {
@@ -68,6 +69,7 @@ app.route('/api/anime', animeRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/credit', creditRoutes);
 app.route('/api/agent', agentRoutes);
+app.route('/api/projects', qcRoutes);
 
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');
@@ -230,6 +232,8 @@ export default {
       runOutlineGenerationTaskInBackground,
     } = await import('./routes/generation.js');
     const { runImagineTemplateRefreshJob } = await import('./services/imagineTemplateJobService.js');
+    const { runQCScanInBackground } = await import('./qc/qcAgent.js');
+    const { runQCFixInBackground } = await import('./qc/qcFixAgent.js');
 
     for (const message of batch.messages) {
       try {
@@ -259,6 +263,25 @@ export default {
             chaptersPerVolume: payload.chaptersPerVolume,
             refineMode: payload.refineMode,
             refineVolumeIndices: payload.refineVolumeIndices,
+          });
+        } else if (taskType === 'qc') {
+          await runQCScanInBackground({
+            env,
+            taskId: payload.taskId,
+            projectId: payload.projectId,
+            userId: payload.userId,
+            scanMode: payload.scanMode,
+            reportId: payload.reportId,
+          });
+        } else if (taskType === 'qc_fix') {
+          await runQCFixInBackground({
+            env,
+            taskId: payload.taskId,
+            projectId: payload.projectId,
+            userId: payload.userId,
+            reportId: payload.reportId,
+            chapterIndex: payload.chapterIndex,
+            maxSeverity: payload.maxSeverity,
           });
         } else {
           await runChapterGenerationTaskInBackground({
