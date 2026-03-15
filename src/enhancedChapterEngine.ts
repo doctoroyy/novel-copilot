@@ -1006,8 +1006,9 @@ function buildChapterGoalSection(
   params: EnhancedWriteChapterParams,
   enhancedOutline?: EnhancedChapterOutline
 ): string {
+  const parts: string[] = [];
+
   if (enhancedOutline) {
-    const parts: string[] = [];
     parts.push(`标题: ${enhancedOutline.title}`);
     parts.push(`主要目标: ${enhancedOutline.goal.primary}`);
 
@@ -1026,11 +1027,36 @@ function buildChapterGoalSection(
     }
 
     parts.push(...formatStoryContractForPrompt(enhancedOutline.storyContract));
-
-    return parts.join('\n');
   }
 
-  return params.chapterGoalHint || '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。';
+  // 如果 chapterGoalHint 包含卷桥接上下文，追加到目标中
+  if (params.chapterGoalHint) {
+    const bridgeMarkers = ['【本卷目标】', '【本卷核心冲突】', '【卷切换桥接上下文】', '【衔接要求】', '【上卷结局】'];
+    const hasBridgeContent = bridgeMarkers.some(marker => params.chapterGoalHint!.includes(marker));
+    if (hasBridgeContent) {
+      const bridgeSections = params.chapterGoalHint
+        .split('\n')
+        .filter(line => {
+          const trimmed = line.trim();
+          if (enhancedOutline && (trimmed.startsWith('- 标题:') || trimmed.startsWith('- 目标:') || trimmed.startsWith('- 章末钩子:') || trimmed === '【章节大纲】')) {
+            return false;
+          }
+          return true;
+        })
+        .join('\n')
+        .trim();
+      if (bridgeSections) {
+        parts.push(bridgeSections);
+      }
+    } else if (!enhancedOutline) {
+      return params.chapterGoalHint;
+    }
+  }
+
+  if (parts.length === 0) {
+    return '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。';
+  }
+  return parts.join('\n');
 }
 
 /**
