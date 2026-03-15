@@ -9,6 +9,7 @@ import { checkGoalAchievement } from './goalCheck.js';
 import { checkStoryContractCompliance } from './storyContractCheck.js';
 import { hasStoryContract } from '../utils/storyContract.js';
 import { runGlobalAnalysis, type GlobalAnalysis } from './globalAnalysis.js';
+import { checkCrosschapterContinuity } from './continuityCheck.js';
 
 export type ScanMode = 'quick' | 'standard' | 'full';
 
@@ -154,6 +155,24 @@ export async function runQCScan(
     }
   }
 
+  // === 识别卷边界 ===
+  const volumeBoundaries = new Set<number>(); // 存放"新卷第一章"的 chapterIndex
+  if (outlineJson?.volumes) {
+    for (const vol of outlineJson.volumes) {
+      if (typeof vol.startChapter === 'number' && vol.startChapter > 1) {
+        volumeBoundaries.add(vol.startChapter);
+        // 确保卷边界两侧都进入 Tier 2
+        if (!tier2Candidates.includes(vol.startChapter)) {
+          tier2Candidates.push(vol.startChapter);
+        }
+        const prevChIdx = vol.startChapter - 1;
+        if (!tier2Candidates.includes(prevChIdx) && chapterRows.some(r => r.chapter_index === prevChIdx)) {
+          tier2Candidates.push(prevChIdx);
+        }
+      }
+    }
+  }
+
   // === Tier 2: AI checks for problem chapters (standard/full mode only) ===
   let chaptersWithAICheck = 0;
   if (scanMode !== 'quick' && tier2Candidates.length > 0) {
@@ -209,6 +228,48 @@ export async function runQCScan(
         existingEntry.tier = 2;
         existingEntry.passed = !existingEntry.issues.some(i => i.severity === 'critical');
         chaptersWithAICheck++;
+      }
+    }
+  }
+
+  // === Tier 2.5: 卷边界连续性检测 ===
+  if (scanMode !== 'quick' && volumeBoundaries.size > 0) {
+    const aiConfig = await getAIConfigFromRegistry(db, 'qc');
+    if (aiConfig) {
+      const sortedBoundaries = [...volumeBoundaries].sort((a, b) => a - b);
+      await updateTaskMessage(db, taskId, `连续性检测: ${sortedBoundaries.length} 个卷边界...`);
+
+      for (let i = 0; i < sortedBoundaries.length; i++) {
+        const nextChIdx = sortedBoundaries[i];
+        const prevChIdx = nextChIdx - 1;
+
+        const prevRow = chapterRows.find(r => r.chapter_index === prevChIdx);
+        const nextRow = chapterRows.find(r => r.chapter_index === nextChIdx);
+        if (!prevRow || !nextRow) continue;
+
+        await updateTaskMessage(db, taskId, `连续性检测: 第${prevChIdx}→${nextChIdx}章 (${i + 1}/${sortedBoundaries.length})...`);
+
+        try {
+          // 取前章结尾 ~1000 字和后章开头 ~1000 字
+          const prevEnding = prevRow.content.slice(-1000);
+          const nextOpening = nextRow.content.slice(0, 1000);
+
+          const contResult = await checkCrosschapterContinuity(
+            aiConfig, prevChIdx, prevEnding, nextChIdx, nextOpening, true,
+          );
+
+          // 将问题分配给后章（新卷第一章）
+          if (contResult.issues.length > 0) {
+            const entry = chapters[nextChIdx];
+            if (entry) {
+              entry.issues.push(...contResult.issues);
+              entry.score = Math.min(entry.score, contResult.score);
+              entry.passed = !entry.issues.some(iss => iss.severity === 'critical');
+            }
+          }
+        } catch (err) {
+          console.warn(`Continuity check failed for ${prevChIdx}→${nextChIdx}:`, err);
+        }
       }
     }
   }
