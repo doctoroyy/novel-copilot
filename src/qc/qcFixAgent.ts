@@ -294,9 +294,17 @@ export async function runQCFixInBackground(params: {
     } else {
       await fixAllChapters(db, projectId, reportId, taskId, maxSeverity);
     }
+    // Mark report status back to completed
+    await db.prepare(`
+      UPDATE qc_reports SET status = 'completed', updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(reportId).run();
     await completeTask(db, taskId, true);
   } catch (error) {
     const msg = (error as Error).message || '修复失败';
+    // Still mark report back to completed on error
+    await db.prepare(`
+      UPDATE qc_reports SET status = 'completed', updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(reportId).run().catch(() => {});
     await completeTask(db, taskId, false, msg);
   }
 }

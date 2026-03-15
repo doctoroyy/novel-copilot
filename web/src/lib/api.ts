@@ -2261,7 +2261,7 @@ export type QCReportResponse = {
   criticalCount: number;
   majorCount: number;
   minorCount: number;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'repairing' | 'failed';
   createdAt: number;
   data: any;
 };
