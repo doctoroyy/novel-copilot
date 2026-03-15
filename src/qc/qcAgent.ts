@@ -106,17 +106,19 @@ export async function runQCScan(
 
   // Load project settings
   const project = await db.prepare(`
-    SELECT p.state_json, p.outline_json,
+    SELECT s.total_chapters, s.min_chapter_words,
+           o.outline_json,
            cs.registry_json as character_states_json
     FROM projects p
+    LEFT JOIN states s ON p.id = s.project_id
+    LEFT JOIN outlines o ON p.id = o.project_id
     LEFT JOIN character_states cs ON p.id = cs.project_id
     WHERE p.id = ?
   `).bind(projectId).first() as any;
 
-  const stateJson = project?.state_json ? JSON.parse(project.state_json) : {};
   const outlineJson = project?.outline_json ? JSON.parse(project.outline_json) : null;
-  const totalChapters = stateJson.totalChapters || chapterRows.length;
-  const minChapterWords = stateJson.minChapterWords || 1500;
+  const totalChapters = project?.total_chapters || chapterRows.length;
+  const minChapterWords = project?.min_chapter_words || 1500;
 
   let characterStates: any = null;
   try {
