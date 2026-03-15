@@ -2,6 +2,14 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { generateTextWithRetry, type AIConfig } from './services/aiClient.js';
 import { readBible, readState, writeState, type BookState } from './memory.js';
+import {
+  buildVolumeBridgeContext,
+  buildVolumeBridgeNotes,
+  buildVolumeContinuationSummary,
+  isVolumeBridgeChapter,
+  TIMELINE_RESET_PATTERN,
+  VOLUME_BRIDGE_CHAPTER_COUNT,
+} from './utils/volumeBridge.js';
 import type {
   StoryContract,
   StoryContractField,
@@ -250,60 +258,6 @@ function deriveHookFromGoal(goal: string): string {
   return tail.length > 20 ? tail.slice(0, 20) : tail;
 }
 
-const TIMELINE_RESET_PATTERN = /(重置(?:了)?时间线|时间线(?:被)?重置|新的轮回|重新轮回|轮回重启|回到(?:故事)?开始|回到.*(?:过去|最初|起点|开端)|时光倒流|逆转时间|世界线改写|改写世界线|回档|读档重来|重来一次|从头再来)/;
-
-function describeChapterForContinuation(chapter: Partial<ChapterOutline> | null | undefined): string | null {
-  if (!chapter) return null;
-
-  const index = Number(chapter.index);
-  const title = typeof chapter.title === 'string' ? chapter.title.trim() : '';
-  const goal = typeof chapter.goal === 'string' ? chapter.goal.trim() : '';
-  const hook = typeof chapter.hook === 'string' ? chapter.hook.trim() : '';
-  const chapterNo = Number.isFinite(index) && index > 0 ? `第${index}章` : '章节';
-  const parts = [title ? `${chapterNo}「${title}」` : chapterNo];
-
-  if (goal) parts.push(goal);
-  if (hook) parts.push(`钩子: ${hook}`);
-
-  return parts.join(' | ');
-}
-
-function buildVolumeContinuationSummary(
-  volume: (Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }) | null | undefined
-): string {
-  if (!volume) return '';
-
-  const parts: string[] = [
-    `卷名: ${volume.title}`,
-    `章节范围: 第${volume.startChapter}-${volume.endChapter}章`,
-  ];
-
-  if (volume.goal) parts.push(`本卷目标: ${volume.goal}`);
-  if (volume.conflict) parts.push(`核心冲突: ${volume.conflict}`);
-  if (volume.climax) parts.push(`卷末高潮: ${volume.climax}`);
-  if (volume.volumeEndState) parts.push(`卷末状态: ${volume.volumeEndState}`);
-
-  const tailChapters = Array.isArray(volume.chapters)
-    ? volume.chapters
-        .slice()
-        .sort((left, right) => left.index - right.index)
-        .slice(-3)
-        .map(describeChapterForContinuation)
-        .filter((item): item is string => Boolean(item))
-    : [];
-
-  if (tailChapters.length > 0) {
-    parts.push(`最后关键章节:\n- ${tailChapters.join('\n- ')}`);
-  }
-
-  const combined = parts.join('\n');
-  if (TIMELINE_RESET_PATTERN.test(combined)) {
-    parts.push('时间线规则: 上一卷已出现时间线重置/轮回重启信号，续写必须以重置后的世界状态为新的基线，不得直接沿用重置前已被覆盖的主冲突。');
-  }
-
-  return parts.join('\n');
-}
-
 function parseStructuredVolumeChapterText(
   raw: string,
   startChapter: number,
@@ -463,6 +417,101 @@ function normalizeAdditionalVolumePayload(
     };
     currentStart = normalizedVolume.endChapter + 1;
     return normalizedVolume;
+  });
+}
+
+function normalizeContractListField(value: StoryContractField | undefined): string[] {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [String(value)];
+}
+
+export function applyVolumeOpeningBridgeContracts(
+  chapters: ChapterOutline[],
+  args: {
+    volume: Omit<VolumeOutline, 'chapters'>;
+    previousVolumeSummary?: string;
+    actualStorySummary?: string;
+    bridgeChapterCount?: number;
+  }
+): ChapterOutline[] {
+  const {
+    volume,
+    previousVolumeSummary,
+    actualStorySummary,
+    bridgeChapterCount = VOLUME_BRIDGE_CHAPTER_COUNT,
+  } = args;
+
+  const bridgeContext = buildVolumeBridgeContext({
+    previousVolumeSummary,
+    actualStorySummary,
+    currentVolume: volume,
+    bridgeChapterCount,
+  });
+  if (!bridgeContext || volume.startChapter <= 1) {
+    return chapters;
+  }
+
+  const combinedSource = [previousVolumeSummary, actualStorySummary].filter(Boolean).join('\n');
+  const isTimelineReset = TIMELINE_RESET_PATTERN.test(combinedSource);
+
+  return chapters.map((chapter) => {
+    if (!isVolumeBridgeChapter(chapter.index, volume.startChapter, bridgeChapterCount)) {
+      return chapter;
+    }
+
+    const chapterOffset = chapter.index - volume.startChapter;
+    const existingContract = chapter.storyContract;
+    const mustAdvance = normalizeContractListField(existingContract?.threads?.mustAdvance);
+    const forbiddenIntroductions = normalizeContractListField(existingContract?.threads?.forbiddenIntroductions);
+    const stateTargets = normalizeContractListField(existingContract?.stateTransition?.target);
+    const notes = Array.from(new Set([
+      ...(existingContract?.notes || []),
+      ...buildVolumeBridgeNotes({
+        chapterOffset,
+        bridgeChapterCount,
+        isTimelineReset,
+      }),
+    ]));
+
+    const bridgeTarget = chapterOffset === 0
+      ? '把上一卷卷末状态落到当前场景，明确主角的新处境'
+      : '让上一卷余波继续发酵，并完成卷切换过渡后再展开本卷主线';
+
+    return {
+      ...chapter,
+      storyContract: {
+        ...existingContract,
+        crisis: {
+          ...(existingContract?.crisis || {}),
+          requiredBridge: true,
+        },
+        threads: {
+          ...(existingContract?.threads || {}),
+          mustAdvance: Array.from(new Set([
+            ...mustAdvance,
+            chapterOffset === 0
+              ? '承接上一卷结局带来的直接后果'
+              : '延续上一卷余波并完成卷切换过渡',
+          ])),
+          forbiddenIntroductions: Array.from(new Set([
+            ...forbiddenIntroductions,
+            '在卷切换桥接完成前，直接切入与上一卷无关的新主线',
+          ])),
+        },
+        stateTransition: {
+          ...(existingContract?.stateTransition || {}),
+          target: Array.from(new Set([...stateTargets, bridgeTarget])),
+        },
+        notes,
+      },
+    };
   });
 }
 
@@ -868,21 +917,64 @@ type VolumeChapterBatchProgress = {
   generatedCount: number;
 };
 
-function getVolumeChapterBatchRanges(volume: Omit<VolumeOutline, 'chapters'>): Array<{ startChapter: number; endChapter: number }> {
-  const chapterCount = volume.endChapter - volume.startChapter + 1;
+function buildChapterBatchRanges(
+  startChapter: number,
+  endChapter: number,
+): Array<{ startChapter: number; endChapter: number }> {
+  const chapterCount = endChapter - startChapter + 1;
+  if (chapterCount <= 0) return [];
+
   const batchSize = chapterCount > MIN_BATCHED_VOLUME_CHAPTERS
     ? Math.min(VOLUME_CHAPTER_BATCH_SIZE, chapterCount)
     : chapterCount;
-
   const ranges: Array<{ startChapter: number; endChapter: number }> = [];
-  for (let startChapter = volume.startChapter; startChapter <= volume.endChapter; startChapter += batchSize) {
+  for (let batchStartChapter = startChapter; batchStartChapter <= endChapter; batchStartChapter += batchSize) {
     ranges.push({
-      startChapter,
-      endChapter: Math.min(startChapter + batchSize - 1, volume.endChapter),
+      startChapter: batchStartChapter,
+      endChapter: Math.min(batchStartChapter + batchSize - 1, endChapter),
     });
   }
 
   return ranges;
+}
+
+export function getVolumeChapterBatchRanges(
+  volume: Omit<VolumeOutline, 'chapters'>,
+  args: {
+    hasOpeningBridgeContext?: boolean;
+    bridgeChapterCount?: number;
+  } = {},
+): Array<{ startChapter: number; endChapter: number }> {
+  const {
+    hasOpeningBridgeContext = false,
+    bridgeChapterCount = VOLUME_BRIDGE_CHAPTER_COUNT,
+  } = args;
+
+  const chapterCount = volume.endChapter - volume.startChapter + 1;
+  if (chapterCount <= 0) return [];
+
+  const normalizedBridgeChapterCount = Math.max(0, Math.min(bridgeChapterCount, chapterCount));
+  if (!hasOpeningBridgeContext || volume.startChapter <= 1 || normalizedBridgeChapterCount === 0) {
+    return buildChapterBatchRanges(volume.startChapter, volume.endChapter);
+  }
+
+  if (chapterCount <= normalizedBridgeChapterCount) {
+    return [{
+      startChapter: volume.startChapter,
+      endChapter: volume.endChapter,
+    }];
+  }
+
+  return [
+    {
+      startChapter: volume.startChapter,
+      endChapter: volume.startChapter + normalizedBridgeChapterCount - 1,
+    },
+    ...buildChapterBatchRanges(
+      volume.startChapter + normalizedBridgeChapterCount,
+      volume.endChapter,
+    ),
+  ];
 }
 
 function buildVolumeBatchSummary(args: {
@@ -902,12 +994,14 @@ function buildVolumeBatchSummary(args: {
     })}`;
   }
 
-  if (actualStorySummary) {
-    return `【上卷实际剧情进展（以此为准，大纲计划可能已偏离）】\n${actualStorySummary}`;
-  }
-
-  if (previousVolumeSummary) {
-    return `【上卷结尾摘要】\n${previousVolumeSummary}`;
+  const bridgeContext = buildVolumeBridgeContext({
+    previousVolumeSummary,
+    actualStorySummary,
+    currentVolume: volume,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
+  if (bridgeContext) {
+    return `【卷切换桥接上下文】\n${bridgeContext}`;
   }
 
   return '【这是第一卷】';
@@ -951,6 +1045,29 @@ async function generateVolumeChapterBatch(
     previousVolumeSummary,
     actualStorySummary,
   });
+  const hasOpeningBridgeContext = volume.startChapter > 1
+    && Boolean(previousVolumeSummary?.trim() || actualStorySummary?.trim());
+  const bridgeEndChapter = Math.min(
+    volume.startChapter + VOLUME_BRIDGE_CHAPTER_COUNT - 1,
+    volume.endChapter,
+  );
+  const isOpeningBridgeBatch = hasOpeningBridgeContext
+    && batchStartChapter === volume.startChapter
+    && batchEndChapter <= bridgeEndChapter;
+  const isPostBridgeBatch = hasOpeningBridgeContext
+    && batchStartChapter === bridgeEndChapter + 1
+    && batchStartChapter <= volume.endChapter;
+  const batchSpecificConstraints = [
+    isOpeningBridgeBatch
+      ? `- 当前批次是卷切换桥接专用批次，只允许完成前 ${VOLUME_BRIDGE_CHAPTER_COUNT} 章的连续承接，不能把上一卷残局扩写成整批旧主线
+- 第 ${bridgeEndChapter} 章章末必须把人物、地点、目标或情报推进到“${volume.title}”的主线入口，保证下一批次能直接进入新卷主线`
+      : '',
+    isPostBridgeBatch
+      ? `- 当前批次紧接桥接段之后，默认卷切换已经完成；从第 ${batchStartChapter} 章开始，必须由本卷目标“${volume.goal}”和冲突“${volume.conflict}”主导
+- 上一卷余波只能作为代价、追兵、旧伤、旧债或情报压力存在，不能继续占据主要舞台、主要谜团或主要行动目标
+- 除非本卷合同明确要求，否则不得继续围绕上一卷遗迹、残境、旧据点或残局反复打转`
+      : '',
+  ].filter(Boolean).join('\n');
 
   const system = `
 你是一个起点白金级网文章节大纲策划专家。请为一卷中的当前批次生成章节大纲。
@@ -995,9 +1112,12 @@ ${continuationSummary}
 
 【续写硬约束】
 - 如果不是本卷第一批，必须严格承接“本卷已生成章节进展”，不能重新从卷头写起
-- 第一批章节必须直接承接上一卷最后一幕造成的局面变化，不能像没发生过一样切回旧冲突
+- 如果是本卷第一批，则新卷前 ${VOLUME_BRIDGE_CHAPTER_COUNT} 章必须连续处理上一卷最后一幕造成的局面变化，不能像没发生过一样切回旧冲突
+- 第 1 章必须先落地上一卷卷末状态，至少兑现一个直接后果
+- 第 2 章必须继续消化这个后果，完成卷切换过渡后，再打开本卷主线
 - 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
 - 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
+${batchSpecificConstraints}
 
 输出要求：
 - 只输出 ${batchChapterCount} 行正文，不要加标题、编号说明、前后缀解释
@@ -1075,7 +1195,7 @@ export async function generateVolumeChapters(
     volume: Omit<VolumeOutline, 'chapters'>;
     previousVolumeSummary?: string;
     minChapterWords?: number;
-    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
+    /** 实际已生成章节的滚动摘要（用于校准，不覆盖上一卷精确结尾） */
     actualStorySummary?: string;
     onBatchStart?: (progress: VolumeChapterBatchProgress) => Promise<void> | void;
   }
@@ -1091,7 +1211,12 @@ export async function generateVolumeChapters(
   } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
-  const batchRanges = getVolumeChapterBatchRanges(volume);
+  const hasOpeningBridgeContext = volume.startChapter > 1
+    && Boolean(previousVolumeSummary?.trim() || actualStorySummary?.trim());
+  const batchRanges = getVolumeChapterBatchRanges(volume, {
+    hasOpeningBridgeContext,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
   const generatedChapters: ChapterOutline[] = [];
 
   for (let batchIndex = 0; batchIndex < batchRanges.length; batchIndex += 1) {
@@ -1126,7 +1251,15 @@ export async function generateVolumeChapters(
     }
   }
 
-  return padChaptersToCount(generatedChapters, volume.startChapter, chapterCount);
+  return applyVolumeOpeningBridgeContracts(
+    padChaptersToCount(generatedChapters, volume.startChapter, chapterCount),
+    {
+      volume,
+      previousVolumeSummary,
+      actualStorySummary,
+      bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+    },
+  );
 }
 
 /**
@@ -1147,7 +1280,7 @@ export async function generateAdditionalVolumes(
     newVolumeCount: number;
     chaptersPerVolume: number;
     minChapterWords?: number;
-    /** 实际已生成章节的滚动摘要（优先于大纲计划数据） */
+    /** 实际已生成章节的滚动摘要（用于校准，不覆盖上一卷精确结尾） */
     actualStorySummary?: string;
   }
 ): Promise<{ volumes: Omit<VolumeOutline, 'chapters'>[] }> {
@@ -1156,6 +1289,11 @@ export async function generateAdditionalVolumes(
   // 计算新卷的起始章节号
   const lastVolume = existingOutline.volumes[existingOutline.volumes.length - 1];
   const startChapterBase = lastVolume ? lastVolume.endChapter + 1 : 1;
+  const openingBridgeContext = buildVolumeBridgeContext({
+    previousVolume: lastVolume,
+    actualStorySummary,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
 
   // 构建已有卷的摘要
   const existingVolumesSummary = existingOutline.volumes.map((vol, i) =>
@@ -1197,13 +1335,13 @@ ${bible}
 【已有卷目（${existingOutline.volumes.length}卷，共${existingOutline.totalChapters}章）】
 ${existingVolumesSummary}
 
-【上一卷结尾状态】
-${actualStorySummary
-    ? `【实际剧情进展（以此为准）】\n${actualStorySummary}`
-    : lastVolume ? buildVolumeContinuationSummary(lastVolume) : '这是第一卷'}
+${openingBridgeContext
+    ? `【卷切换桥接上下文】\n${openingBridgeContext}`
+    : '【这是第一卷】'}
 
 【续写硬约束】
 - 新卷必须从“上一卷结尾状态/最后关键章节”自然接续，先处理卷末遗留的直接后果，再展开新矛盾
+- 第一个新卷的前 ${VOLUME_BRIDGE_CHAPTER_COUNT} 章必须明确属于“卷切换桥接段”，先消化上一卷余波，再允许放大新矛盾
 - 如果上一卷已经发生时间线重置、回到开端、轮回重启，新卷第一阶段必须围绕“重置后的新处境”展开
 - 已经被重置覆盖、已经解决、或明显属于旧时间线的冲突，不得直接拿来当新卷主线；除非你先写明它如何在新时间线中重新成立
 
