@@ -32,9 +32,9 @@ export function QualityView({ project }: QualityViewProps) {
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
 
-  const loadReport = useCallback(async () => {
+  const loadReport = useCallback(async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       setError(null);
       const r = await getQCReport(project.name);
       setReport(r);
@@ -54,10 +54,10 @@ export function QualityView({ project }: QualityViewProps) {
     loadReport();
   }, [loadReport]);
 
-  // Poll while scanning
+  // Poll while scanning (silent refresh, no loading flash)
   useEffect(() => {
     if (!scanning) return;
-    const interval = setInterval(loadReport, 3000);
+    const interval = setInterval(() => loadReport(false), 3000);
     return () => clearInterval(interval);
   }, [scanning, loadReport]);
 
