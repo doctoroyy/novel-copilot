@@ -346,8 +346,9 @@ export async function writeChapterWithAgent(
 
 function buildGoalSection(params: EnhancedWriteChapterParams): string {
   const { enhancedOutline, chapterGoalHint } = params;
+  const parts: string[] = [];
+
   if (enhancedOutline) {
-    const parts: string[] = [];
     parts.push(`标题: ${enhancedOutline.title}`);
     parts.push(`主要目标: ${enhancedOutline.goal.primary}`);
     if (enhancedOutline.goal.secondary) {
@@ -361,9 +362,39 @@ function buildGoalSection(params: EnhancedWriteChapterParams): string {
       parts.push(`伏笔操作: ${enhancedOutline.foreshadowingOps.map(f => `${f.action}:${f.description}`).join('; ')}`);
     }
     parts.push(...formatStoryContractForPrompt(enhancedOutline.storyContract));
-    return parts.join('\n');
   }
-  return chapterGoalHint || '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。';
+
+  // 如果 chapterGoalHint 包含卷桥接上下文，追加到目标中（不与 enhancedOutline 冲突）
+  if (chapterGoalHint) {
+    const bridgeMarkers = ['【本卷目标】', '【本卷核心冲突】', '【卷切换桥接上下文】', '【衔接要求】', '【上卷结局】'];
+    const hasBridgeContent = bridgeMarkers.some(marker => chapterGoalHint.includes(marker));
+    if (hasBridgeContent) {
+      // 提取桥接相关部分（跳过与 enhancedOutline 重复的章节大纲部分）
+      const bridgeSections = chapterGoalHint
+        .split('\n')
+        .filter(line => {
+          const trimmed = line.trim();
+          // 跳过已在 enhancedOutline 中包含的章节级信息
+          if (enhancedOutline && (trimmed.startsWith('- 标题:') || trimmed.startsWith('- 目标:') || trimmed.startsWith('- 章末钩子:') || trimmed === '【章节大纲】')) {
+            return false;
+          }
+          return true;
+        })
+        .join('\n')
+        .trim();
+      if (bridgeSections) {
+        parts.push(bridgeSections);
+      }
+    } else if (!enhancedOutline) {
+      // 没有 enhancedOutline 且没有桥接内容，直接用 chapterGoalHint
+      return chapterGoalHint;
+    }
+  }
+
+  if (parts.length === 0) {
+    return '围绕本章目标推进主线冲突，制造新的障碍，结尾留下下一章必须处理的问题。';
+  }
+  return parts.join('\n');
 }
 
 const SUMMARY_UPDATE_MAX_TOKENS = 1200;
