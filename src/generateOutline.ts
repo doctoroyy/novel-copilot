@@ -917,21 +917,64 @@ type VolumeChapterBatchProgress = {
   generatedCount: number;
 };
 
-function getVolumeChapterBatchRanges(volume: Omit<VolumeOutline, 'chapters'>): Array<{ startChapter: number; endChapter: number }> {
-  const chapterCount = volume.endChapter - volume.startChapter + 1;
+function buildChapterBatchRanges(
+  startChapter: number,
+  endChapter: number,
+): Array<{ startChapter: number; endChapter: number }> {
+  const chapterCount = endChapter - startChapter + 1;
+  if (chapterCount <= 0) return [];
+
   const batchSize = chapterCount > MIN_BATCHED_VOLUME_CHAPTERS
     ? Math.min(VOLUME_CHAPTER_BATCH_SIZE, chapterCount)
     : chapterCount;
-
   const ranges: Array<{ startChapter: number; endChapter: number }> = [];
-  for (let startChapter = volume.startChapter; startChapter <= volume.endChapter; startChapter += batchSize) {
+  for (let batchStartChapter = startChapter; batchStartChapter <= endChapter; batchStartChapter += batchSize) {
     ranges.push({
-      startChapter,
-      endChapter: Math.min(startChapter + batchSize - 1, volume.endChapter),
+      startChapter: batchStartChapter,
+      endChapter: Math.min(batchStartChapter + batchSize - 1, endChapter),
     });
   }
 
   return ranges;
+}
+
+export function getVolumeChapterBatchRanges(
+  volume: Omit<VolumeOutline, 'chapters'>,
+  args: {
+    hasOpeningBridgeContext?: boolean;
+    bridgeChapterCount?: number;
+  } = {},
+): Array<{ startChapter: number; endChapter: number }> {
+  const {
+    hasOpeningBridgeContext = false,
+    bridgeChapterCount = VOLUME_BRIDGE_CHAPTER_COUNT,
+  } = args;
+
+  const chapterCount = volume.endChapter - volume.startChapter + 1;
+  if (chapterCount <= 0) return [];
+
+  const normalizedBridgeChapterCount = Math.max(0, Math.min(bridgeChapterCount, chapterCount));
+  if (!hasOpeningBridgeContext || volume.startChapter <= 1 || normalizedBridgeChapterCount === 0) {
+    return buildChapterBatchRanges(volume.startChapter, volume.endChapter);
+  }
+
+  if (chapterCount <= normalizedBridgeChapterCount) {
+    return [{
+      startChapter: volume.startChapter,
+      endChapter: volume.endChapter,
+    }];
+  }
+
+  return [
+    {
+      startChapter: volume.startChapter,
+      endChapter: volume.startChapter + normalizedBridgeChapterCount - 1,
+    },
+    ...buildChapterBatchRanges(
+      volume.startChapter + normalizedBridgeChapterCount,
+      volume.endChapter,
+    ),
+  ];
 }
 
 function buildVolumeBatchSummary(args: {
@@ -1002,6 +1045,29 @@ async function generateVolumeChapterBatch(
     previousVolumeSummary,
     actualStorySummary,
   });
+  const hasOpeningBridgeContext = volume.startChapter > 1
+    && Boolean(previousVolumeSummary?.trim() || actualStorySummary?.trim());
+  const bridgeEndChapter = Math.min(
+    volume.startChapter + VOLUME_BRIDGE_CHAPTER_COUNT - 1,
+    volume.endChapter,
+  );
+  const isOpeningBridgeBatch = hasOpeningBridgeContext
+    && batchStartChapter === volume.startChapter
+    && batchEndChapter <= bridgeEndChapter;
+  const isPostBridgeBatch = hasOpeningBridgeContext
+    && batchStartChapter === bridgeEndChapter + 1
+    && batchStartChapter <= volume.endChapter;
+  const batchSpecificConstraints = [
+    isOpeningBridgeBatch
+      ? `- 当前批次是卷切换桥接专用批次，只允许完成前 ${VOLUME_BRIDGE_CHAPTER_COUNT} 章的连续承接，不能把上一卷残局扩写成整批旧主线
+- 第 ${bridgeEndChapter} 章章末必须把人物、地点、目标或情报推进到“${volume.title}”的主线入口，保证下一批次能直接进入新卷主线`
+      : '',
+    isPostBridgeBatch
+      ? `- 当前批次紧接桥接段之后，默认卷切换已经完成；从第 ${batchStartChapter} 章开始，必须由本卷目标“${volume.goal}”和冲突“${volume.conflict}”主导
+- 上一卷余波只能作为代价、追兵、旧伤、旧债或情报压力存在，不能继续占据主要舞台、主要谜团或主要行动目标
+- 除非本卷合同明确要求，否则不得继续围绕上一卷遗迹、残境、旧据点或残局反复打转`
+      : '',
+  ].filter(Boolean).join('\n');
 
   const system = `
 你是一个起点白金级网文章节大纲策划专家。请为一卷中的当前批次生成章节大纲。
@@ -1051,6 +1117,7 @@ ${continuationSummary}
 - 第 2 章必须继续消化这个后果，完成卷切换过渡后，再打开本卷主线
 - 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
 - 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
+${batchSpecificConstraints}
 
 输出要求：
 - 只输出 ${batchChapterCount} 行正文，不要加标题、编号说明、前后缀解释
@@ -1144,7 +1211,12 @@ export async function generateVolumeChapters(
   } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
-  const batchRanges = getVolumeChapterBatchRanges(volume);
+  const hasOpeningBridgeContext = volume.startChapter > 1
+    && Boolean(previousVolumeSummary?.trim() || actualStorySummary?.trim());
+  const batchRanges = getVolumeChapterBatchRanges(volume, {
+    hasOpeningBridgeContext,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
   const generatedChapters: ChapterOutline[] = [];
 
   for (let batchIndex = 0; batchIndex < batchRanges.length; batchIndex += 1) {

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ChapterOutline, VolumeOutline } from './src/generateOutline.js';
-import { applyVolumeOpeningBridgeContracts } from './src/generateOutline.js';
+import {
+  applyVolumeOpeningBridgeContracts,
+  getVolumeChapterBatchRanges,
+} from './src/generateOutline.js';
 import {
   buildVolumeBridgeContext,
   isVolumeBridgeChapter,
@@ -37,6 +40,40 @@ test('isVolumeBridgeChapter only marks the opening two chapters', () => {
   assert.equal(isVolumeBridgeChapter(81, 81, VOLUME_BRIDGE_CHAPTER_COUNT), true);
   assert.equal(isVolumeBridgeChapter(82, 81, VOLUME_BRIDGE_CHAPTER_COUNT), true);
   assert.equal(isVolumeBridgeChapter(83, 81, VOLUME_BRIDGE_CHAPTER_COUNT), false);
+});
+
+test('getVolumeChapterBatchRanges isolates the opening bridge chapters before normal batches', () => {
+  const ranges = getVolumeChapterBatchRanges(nextVolume, {
+    hasOpeningBridgeContext: true,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
+
+  assert.deepEqual(ranges.slice(0, 4), [
+    { startChapter: 81, endChapter: 82 },
+    { startChapter: 83, endChapter: 97 },
+    { startChapter: 98, endChapter: 112 },
+    { startChapter: 113, endChapter: 127 },
+  ]);
+  assert.deepEqual(ranges.at(-1), { startChapter: 158, endChapter: 160 });
+});
+
+test('getVolumeChapterBatchRanges keeps first volume unsplit when there is no bridge context', () => {
+  const firstVolume: Omit<VolumeOutline, 'chapters'> = {
+    title: '第一卷：赘婿的逆袭',
+    startChapter: 1,
+    endChapter: 20,
+    goal: '主角在林家站稳脚跟',
+    conflict: '林家内外同时施压',
+    climax: '主角在家族大比中翻盘',
+    volumeEndState: '主角获得阶段性地位',
+  };
+
+  const ranges = getVolumeChapterBatchRanges(firstVolume, {
+    hasOpeningBridgeContext: false,
+    bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+  });
+
+  assert.deepEqual(ranges, [{ startChapter: 1, endChapter: 20 }]);
 });
 
 test('applyVolumeOpeningBridgeContracts injects bridge contract into the first two chapters', () => {
