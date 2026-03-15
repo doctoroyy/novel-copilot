@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Shield, ShieldCheck, ShieldAlert, Play, RefreshCw, Wrench,
   ChevronDown, ChevronRight, AlertTriangle, AlertCircle, Info,
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import type { ProjectDetail, QCReportResponse } from '@/lib/api';
 import { startQCScan, getQCReport, fixChapterIssues, fixAllIssues } from '@/lib/api';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 interface QualityViewProps {
   project: ProjectDetail;
@@ -31,6 +32,8 @@ export function QualityView({ project }: QualityViewProps) {
   const [expandedChapters, setExpandedChapters] = useState<Set<number>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
+  const { startTask, completeTask: completeCtxTask } = useGeneration();
+  const fixTaskIdRef = useRef<string | null>(null);
 
   const loadReport = useCallback(async (showLoading = true) => {
     try {
@@ -58,8 +61,15 @@ export function QualityView({ project }: QualityViewProps) {
   useEffect(() => {
     if (report?.status === 'repairing' && fixing === null) {
       setFixing('all'); // restore fixing indicator on page load
+      // Also register in GenerationContext so floating ball shows it
+      const tid = startTask('qc_fix', '质量修复中...', project.name);
+      fixTaskIdRef.current = tid;
     } else if (report?.status !== 'repairing' && fixing !== null) {
       setFixing(null); // repair done
+      if (fixTaskIdRef.current) {
+        completeCtxTask(fixTaskIdRef.current, true);
+        fixTaskIdRef.current = null;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report?.status]);
@@ -95,11 +105,17 @@ export function QualityView({ project }: QualityViewProps) {
     try {
       setFixing(chapterIndex);
       setError(null);
+      const tid = startTask('qc_fix', `修复第 ${chapterIndex} 章...`, project.name);
+      fixTaskIdRef.current = tid;
       await fixChapterIssues(project.name, chapterIndex, report.reportId);
       // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
       setFixing(null);
+      if (fixTaskIdRef.current) {
+        completeCtxTask(fixTaskIdRef.current, false);
+        fixTaskIdRef.current = null;
+      }
     }
   };
 
@@ -108,11 +124,17 @@ export function QualityView({ project }: QualityViewProps) {
     try {
       setFixing('all');
       setError(null);
+      const tid = startTask('qc_fix', '批量质量修复中...', project.name);
+      fixTaskIdRef.current = tid;
       await fixAllIssues(project.name, report.reportId);
       // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
       setFixing(null);
+      if (fixTaskIdRef.current) {
+        completeCtxTask(fixTaskIdRef.current, false);
+        fixTaskIdRef.current = null;
+      }
     }
   };
 
