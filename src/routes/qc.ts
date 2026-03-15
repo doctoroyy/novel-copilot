@@ -189,6 +189,11 @@ qcRoutes.post('/:name/qc/fix', async (c) => {
       return c.json({ success: false, error: 'Missing chapterIndex or reportId' }, 400);
     }
 
+    // Mark report as repairing so frontend can poll
+    await c.env.DB.prepare(`
+      UPDATE qc_reports SET status = 'repairing', updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(reportId).run();
+
     const { taskId } = await createBackgroundTask(
       c.env.DB,
       projectId,
@@ -231,6 +236,11 @@ qcRoutes.post('/:name/qc/fix-all', async (c) => {
     if (!reportId) {
       return c.json({ success: false, error: 'Missing reportId' }, 400);
     }
+
+    // Mark report as repairing so frontend can poll
+    await c.env.DB.prepare(`
+      UPDATE qc_reports SET status = 'repairing', updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(reportId).run();
 
     const { taskId } = await createBackgroundTask(
       c.env.DB,

@@ -54,12 +54,29 @@ export function QualityView({ project }: QualityViewProps) {
     loadReport();
   }, [loadReport]);
 
+  // Sync fixing state from report status (handles page refresh & completion)
+  useEffect(() => {
+    if (report?.status === 'repairing' && fixing === null) {
+      setFixing('all'); // restore fixing indicator on page load
+    } else if (report?.status !== 'repairing' && fixing !== null) {
+      setFixing(null); // repair done
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.status]);
+
   // Poll while scanning (silent refresh, no loading flash)
   useEffect(() => {
     if (!scanning) return;
     const interval = setInterval(() => loadReport(false), 3000);
     return () => clearInterval(interval);
   }, [scanning, loadReport]);
+
+  // Poll while fixing (same pattern as scanning)
+  useEffect(() => {
+    if (fixing === null) return;
+    const interval = setInterval(() => loadReport(false), 3000);
+    return () => clearInterval(interval);
+  }, [fixing, loadReport]);
 
   const handleStartScan = async () => {
     try {
@@ -77,11 +94,11 @@ export function QualityView({ project }: QualityViewProps) {
     if (!report?.reportId) return;
     try {
       setFixing(chapterIndex);
+      setError(null);
       await fixChapterIssues(project.name, chapterIndex, report.reportId);
-      setTimeout(loadReport, 2000);
+      // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
-    } finally {
       setFixing(null);
     }
   };
@@ -90,11 +107,11 @@ export function QualityView({ project }: QualityViewProps) {
     if (!report?.reportId) return;
     try {
       setFixing('all');
+      setError(null);
       await fixAllIssues(project.name, report.reportId);
-      setTimeout(loadReport, 2000);
+      // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
-    } finally {
       setFixing(null);
     }
   };
