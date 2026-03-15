@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 
 // Task types for tracking different generation operations
-export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
+export type TaskType = 'chapters' | 'outline' | 'bible' | 'qc' | 'qc_fix' | 'other';
 
 export interface ActiveTask {
   id: string;

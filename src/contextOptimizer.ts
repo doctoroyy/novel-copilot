@@ -510,11 +510,15 @@ ${narrativeGuide.prohibitions.length > 0 ? `- 禁止: ${narrativeGuide.prohibiti
     parts.push(`【剧情摘要】\n${optSummary}`);
   }
 
-  // 近章原文 (优化)
-  const optLastChapters = optimizeLastChapters(
-    lastChapters,
-    Math.floor(budget.totalTokens * budget.allocation.lastChapters)
-  );
+  // 近章原文：完整保留，不做压缩（现代模型上下文窗口足够大）
+  const lastChapterParts: string[] = [];
+  if (lastChapters.length >= 2) {
+    lastChapterParts.push(`【前一章原文】\n${lastChapters[lastChapters.length - 2]}`);
+  }
+  if (lastChapters.length >= 1) {
+    lastChapterParts.push(`【上一章原文】\n${lastChapters[lastChapters.length - 1]}`);
+  }
+  const optLastChapters = lastChapterParts.join('\n\n');
   if (optLastChapters) {
     parts.push(optLastChapters);
   }

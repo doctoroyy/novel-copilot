@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square } from 'lucide-react';
+import { Activity, X, ChevronDown, ChevronUp, Check, Loader2, AlertCircle, Sparkles, BookOpen, FileText, Square, ShieldCheck, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGeneration, type ActiveTask, type TaskType } from '@/contexts/GenerationContext';
 import { cancelAllActiveTasks, cancelTaskById, getTaskHistory, type GenerationTask } from '@/lib/api';
@@ -15,6 +15,8 @@ const TASK_CONFIG: Record<TaskType, { icon: React.ReactNode; label: string }> = 
   chapters: { icon: <BookOpen className="w-4 h-4" />, label: '章节生成' },
   outline: { icon: <FileText className="w-4 h-4" />, label: '大纲生成' },
   bible: { icon: <Sparkles className="w-4 h-4" />, label: 'Story Bible' },
+  qc: { icon: <ShieldCheck className="w-4 h-4" />, label: '质量扫描' },
+  qc_fix: { icon: <Wrench className="w-4 h-4" />, label: '质量修复' },
   other: { icon: <Activity className="w-4 h-4" />, label: '任务' },
 };
 
