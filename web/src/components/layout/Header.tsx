@@ -3,8 +3,8 @@ import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
 import { CreditDisplay } from '@/components/CreditDisplay';
 import type { ProjectDetail } from '@/lib/api';
-import { 
-  PanelLeftOpen, 
+import {
+  PanelLeftOpen,
   LogOut,
   LayoutDashboard,
   ScrollText,
@@ -15,6 +15,7 @@ import {
   Newspaper,
   Network,
   Clapperboard,
+  ShieldCheck,
   Settings,
   RefreshCw,
   Download,
@@ -48,6 +49,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'chapters', label: '章节', icon: BookOpen },
   { id: 'summary', label: '剧情摘要', icon: Newspaper },
   { id: 'characters', label: '人物关系', icon: Network },
+  { id: 'quality', label: '质量检测', icon: ShieldCheck },
   { id: 'anime', label: 'AI动漫', icon: Clapperboard },
 ];
 

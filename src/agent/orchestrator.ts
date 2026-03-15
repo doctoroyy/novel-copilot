@@ -19,6 +19,7 @@ import {
   type AICallOptions,
 } from '../services/aiClient.js';
 import { normalizeGeneratedChapterText } from '../utils/chapterText.js';
+import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
 
 /** Agent 单轮输出 Schema */
 const AgentTurnSchema = z.object({
@@ -44,6 +45,8 @@ function buildFallbackConfig(primary: AIConfig, fallbackConfigs?: AIConfig[]): F
 export class ChapterAgentOrchestrator {
   private state: AgentState;
   private aiCallCount = 0;
+  /** 保存干净的初始上下文（optimizedContext），不含 Agent 思考历史 */
+  private initialWriteContext = '';
 
   constructor(
     private aiConfig: AIConfig,
@@ -73,6 +76,7 @@ export class ChapterAgentOrchestrator {
     };
 
     this.state.scratchpad = initialContext;
+    this.initialWriteContext = initialContext;
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
       // 预算检查
@@ -98,12 +102,21 @@ export class ChapterAgentOrchestrator {
 
       // 2. 检查是否有最终输出
       if (agentTurn.finalOutput) {
+        // 优先使用 currentDraft（比 Agent inline final_output 更完整）
+        let output = agentTurn.finalOutput;
+        if (this.state.currentDraft) {
+          const draftLen = this.state.currentDraft.replace(/\s/g, '').length;
+          const outputLen = output.replace(/\s/g, '').length;
+          if (draftLen > outputLen) {
+            output = this.state.currentDraft;
+          }
+        }
         turnRecord.durationMs = Date.now() - turnStartedAt;
         trace.turns.push(turnRecord);
         trace.totalTurns = turn + 1;
         trace.totalDurationMs = Date.now() - startedAt;
         trace.totalToolCalls = this.countTotalToolCalls(trace);
-        return { chapterText: agentTurn.finalOutput, trace };
+        return { chapterText: output, trace };
       }
 
       // 3. 执行工具调用
@@ -119,7 +132,12 @@ export class ChapterAgentOrchestrator {
               this.aiCallCount++;
             }
 
-            const result = await this.toolExecutor.execute(call);
+            let result: string;
+            try {
+              result = await this.toolExecutor.execute(call);
+            } catch (err) {
+              result = `[ERROR] ${call.tool} 执行失败: ${(err as Error).message}`;
+            }
             return { tool: call.tool, args: call.args, result };
           }),
         );
@@ -134,16 +152,33 @@ export class ChapterAgentOrchestrator {
             const draft = await this.executeWriteChapter(payload.scenePlan, payload.writingNotes);
             this.state.currentDraft = draft;
             this.toolExecutor.setCurrentDraft(draft);
-            r.result = `章节草稿已生成，共 ${draft.length} 字。`;
+            const draftWordCount = draft.replace(/\s/g, '').length;
+            r.result = `章节草稿已生成，共 ${draftWordCount} 字（目标 >= ${this.toolExecutor['ctx'].minChapterWords || 2500}）。`;
+            console.log(`[Agent] write_chapter: ${draftWordCount} 字`);
           } else if (r.result.startsWith('[REWRITE_SECTION_SIGNAL]')) {
             const payload = JSON.parse(r.result.slice('[REWRITE_SECTION_SIGNAL]'.length));
             this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}...`);
             const rewritten = await this.executeRewriteSection(payload.section, payload.guidance);
-            this.state.currentDraft = rewritten;
-            this.toolExecutor.setCurrentDraft(rewritten);
-            r.result = `片段 "${payload.section}" 已重写。`;
+            // 安全检查：如果重写结果比原稿短超过 20%，拒绝替换
+            const oldLen = this.state.currentDraft?.replace(/\s/g, '').length || 0;
+            const newLen = rewritten.replace(/\s/g, '').length;
+            if (rewritten && newLen >= oldLen * 0.8) {
+              this.state.currentDraft = rewritten;
+              this.toolExecutor.setCurrentDraft(rewritten);
+              r.result = `片段 "${payload.section}" 已重写，字数 ${oldLen} → ${newLen}。`;
+            } else {
+              r.result = `片段 "${payload.section}" 重写后太短（${newLen} < 原稿 ${oldLen} 的 80%），已保留原稿。`;
+            }
           } else if (r.result.startsWith('[FINISH_SIGNAL]')) {
-            const finalText = r.result.slice('[FINISH_SIGNAL]'.length);
+            let finalText = r.result.slice('[FINISH_SIGNAL]'.length);
+            // 优先使用存储的 currentDraft（比 Agent inline 输出更完整）
+            if (this.state.currentDraft) {
+              const draftLen = this.state.currentDraft.replace(/\s/g, '').length;
+              const finishLen = finalText.replace(/\s/g, '').length;
+              if (draftLen > finishLen) {
+                finalText = this.state.currentDraft;
+              }
+            }
             if (finalText) {
               turnRecord.durationMs = Date.now() - turnStartedAt;
               trace.turns.push(turnRecord);
@@ -252,6 +287,8 @@ export class ChapterAgentOrchestrator {
   }
 
   private buildAgentSystemPrompt(): string {
+    const ctx = this.toolExecutor['ctx'];
+    const minChapterWords = ctx.minChapterWords || 2500;
     const toolDescriptions = TOOL_DEFINITIONS
       .map(t => {
         const params = Object.entries(t.parameters)
@@ -269,9 +306,10 @@ export class ChapterAgentOrchestrator {
 2. **分析阶段**: 分析读者预期、冲突密度，找到让故事精彩的切入点
 3. **设计阶段**: 设计场景序列，确保有足够的冲突和意外
 4. **写作阶段**: 调用 write_chapter 生成正文
-5. **评估阶段**: 调用 evaluate_draft 评估质量
-6. **优化阶段**: 如有必要，调用 rewrite_section 定向修改
-7. **提交阶段**: 满意后用 finish 提交，或在 final_output 中直接输出最终文本
+5. **校验阶段**: 调用 soft_validate 检查字数和格式（不消耗 AI 预算）
+6. **评估阶段**: 可选：调用 evaluate_draft 深度评估质量
+7. **优化阶段**: 如字数不足或有质量问题，调用 rewrite_section 定向修改
+8. **提交阶段**: 满意后用 finish 提交，或在 final_output 中直接输出最终文本
 
 ## 核心创作原则
 
@@ -280,6 +318,10 @@ export class ChapterAgentOrchestrator {
 - **伏笔管理**: 使用 check_foreshadowing_opportunities 及时回收伏笔，合理植入新伏笔
 - **每次胜利都有代价**: 主角获得的每样东西都要付出相应代价
 - **效率意识**: 数据查询工具不消耗 AI 预算，优先使用；AI 工具消耗预算，合理使用
+
+## 字数要求
+本章正文（不含标题行）最少 ${minChapterWords} 字。这是硬性要求，字数不足的章节不合格。
+write_chapter 生成后请检查字数，不足时用 rewrite_section 扩充。
 
 ## 可用工具
 
@@ -309,45 +351,95 @@ ${toolDescriptions}
 - 当你对章节质量满意（confidence >= 0.8）时，用 finish 工具提交最终文本`;
   }
 
-  /** 执行实际写作（复用现有的 generateChapterDraft 模式） */
+  /** 执行实际写作 — 系统 prompt 与老 pipeline buildEnhancedSystemPrompt 完全对齐 */
   private async executeWriteChapter(scenePlan: string, writingNotes: string): Promise<string> {
-    const { chapterIndex, totalChapters, bible, narrativeGuide, enhancedOutline } = this.toolExecutor['ctx'];
+    const ctx = this.toolExecutor['ctx'];
+    const { chapterIndex, totalChapters, narrativeGuide, enhancedOutline } = ctx;
     const isFinal = chapterIndex === totalChapters;
+
+    const minChapterWords = ctx.minChapterWords || 2500;
+    const recommendedMaxWords = Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
+
+    const chapterTitle = enhancedOutline?.title;
+    const titleText = chapterTitle
+      ? `第${chapterIndex}章 ${chapterTitle}`
+      : `第${chapterIndex}章 [你需要起一个创意标题]`;
+
+    // 节奏指令（与老 pipeline 一致）
+    let pacingInstructions = '';
+    if (narrativeGuide) {
+      const pacingDescriptions: Record<string, string> = {
+        action: '这是动作/战斗章节，使用短句、快节奏、动作描写为主，对话简短有力',
+        climax: '这是高潮章节，情感和冲突达到峰值，使用强烈对比和出人意料的转折',
+        tension: '这是紧张铺垫章节，营造压迫感和危机感，使用暗示和伏笔',
+        revelation: '这是揭示/发现章节，有节奏地释放关键信息，角色反应要真实',
+        emotional: '这是情感章节，注重内心描写和关系发展，对话可以更细腻',
+        transition: '这是过渡章节，调整节奏、补充设定，但要埋下后续剧情的种子',
+      };
+      pacingInstructions = `
+节奏要求（重要）：
+- 本章节奏类型: ${narrativeGuide.pacingType}
+- 紧张度目标: ${narrativeGuide.pacingTarget}/10
+- ${pacingDescriptions[narrativeGuide.pacingType] || ''}`;
+    }
+
+    // 风格模板
+    const styleSection = buildChapterPromptStyleSection(
+      ctx.chapterPromptProfile,
+      ctx.chapterPromptCustom,
+    );
 
     const system = `你是商业网文连载写作助手，核心目标是"好读、顺畅、让人想继续看"。
 
 【阅读体验优先】
-- 以剧情推进为第一优先，文采服务于阅读速度
-- 句子以短句和中句为主，避免连续堆砌形容词
-- 对话要像真实人物说话，信息有效
+- 以剧情推进为第一优先，文采服务于阅读速度，不要为了辞藻牺牲清晰度
+- 句子以短句和中句为主，避免连续堆砌形容词、比喻和排比
+- 对话要像真实人物说话，信息有效，减少空话和口号
 - 每个段落都应承担功能：推进事件、制造冲突或揭示信息
 
 【章节推进规则】
 - 本章必须完成"目标 -> 阻碍 -> 行动 -> 新结果/新问题"的推进链
-- 开头直接进入当前场景，不写回顾式开场
+- 章节衔接必须自然，不要机械复述上一章最后一句或最后一幕
+- 开头直接进入当前场景，不写"上一章回顾式"开场
 - 非最终章结尾必须留下悬念、压力或抉择其一
+- 先在心里做一个简短计划，再动笔；计划与自检不要输出
+- 主动核对上下文与时间线，避免重复已发生的情节或改写复述
+- 如发现自相矛盾或节奏失衡，自行修正后再输出正文
+- 单章只保留 1 个主危机，可附带 1 个副事件；其他冲突只埋钩子，不并发展开
+- 若上一章刚经历大战、异象、绑架或世界观升级，本章必须先处理余波、代价与角色反应，再切入新线
+- 除非大纲明确要求，禁止突然引入比当前主线更高一级的敌人、世界观或能力展示
+${pacingInstructions}
+
+【当前风格模板】
+- 模板: ${styleSection.profileLabel}
+- 说明: ${styleSection.profileDescription}
+${styleSection.styleBlock}
 
 ═══════ 硬性规则 ═══════
 - 只有当 is_final_chapter=true 才允许收束主线
-- 若 is_final_chapter=false：严禁出现任何"完结/终章/尾声"等收尾表达
+- 若 is_final_chapter=false：严禁出现任何"完结/终章/尾声/后记/感谢读者"等收尾表达
+- 每章正文字数不少于 ${minChapterWords} 字，建议控制在 ${minChapterWords}~${recommendedMaxWords} 字
 - 禁止说教式总结、口号式感悟、作者视角旁白
+- 结尾不要"总结陈词"，用事件/冲突/抉择直接收尾
 
 输出格式：
-- 第一行必须是章节标题：第${chapterIndex}章 [创意标题]
+- 第一行必须是章节标题：${titleText}
+- 章节号必须是 ${chapterIndex}，严禁使用其他数字
 - 其后是正文
-- 严禁写任何解释、元说明
+- 严禁写任何解释、元说明、目标完成提示
 
 当前是否为最终章：${isFinal ? 'true - 可以写结局' : 'false - 禁止收尾'}`;
 
-    const prompt = `${this.state.scratchpad.slice(0, 8000)}
+    // 使用干净的 initialWriteContext 而非被 Agent 思考历史污染的 scratchpad
+    const prompt = `${this.initialWriteContext}
 
-【场景计划】
+【Agent 场景计划】
 ${scenePlan}
 
-【写作注意事项】
+【Agent 写作注意事项】
 ${writingNotes}
 
-请写出本章完整内容：`;
+本章正文字数至少 ${minChapterWords} 字，请写出本章完整内容：`;
 
     const callOptions: AICallOptions = {
       tracer: this.tracer,
@@ -369,15 +461,60 @@ ${writingNotes}
       }, 3, callOptions);
     }
 
-    return normalizeGeneratedChapterText(raw, chapterIndex);
+    let result = normalizeGeneratedChapterText(raw, chapterIndex);
+
+    // 自动扩写：如果输出不达标，用续写模式扩展
+    const bodyText = result.replace(/^[^\n]*\n+/, ''); // 去标题行
+    const wordCount = bodyText.replace(/\s/g, '').length;
+    if (wordCount < minChapterWords) {
+      console.log(`[Agent] 首次输出 ${wordCount} 字 < ${minChapterWords} 目标，触发续写扩展`);
+      const expandPrompt = `你之前写的章节太短了（只有 ${wordCount} 字，目标至少 ${minChapterWords} 字）。
+
+请在已有内容的基础上，大幅扩展和丰富以下章节。保留已有的情节走向和对话，但需要：
+1. 在已有场景之间插入更多细节描写、心理活动和环境刻画
+2. 扩展对话段落，增加更多有信息量的对白交锋
+3. 加入更多动作描写和感官细节
+4. 确保每个场景转换都有足够的过渡
+
+已有章节：
+${result}
+
+请输出扩展后的完整章节（必须超过 ${minChapterWords} 字）：`;
+
+      let expandedRaw: string;
+      if (this.fallbackConfigs?.length) {
+        expandedRaw = await generateTextWithFallback(
+          buildFallbackConfig(this.aiConfig, this.fallbackConfigs),
+          { system, prompt: expandPrompt, temperature: 0.7 },
+          2,
+          callOptions,
+        );
+      } else {
+        expandedRaw = await generateTextWithRetry(this.aiConfig, {
+          system, prompt: expandPrompt, temperature: 0.7,
+        }, 2, callOptions);
+      }
+
+      const expanded = normalizeGeneratedChapterText(expandedRaw, chapterIndex);
+      const expandedWordCount = expanded.replace(/^[^\n]*\n+/, '').replace(/\s/g, '').length;
+      if (expandedWordCount > wordCount) {
+        console.log(`[Agent] 续写扩展 ${wordCount} → ${expandedWordCount} 字`);
+        result = expanded;
+      }
+    }
+
+    return result;
   }
 
   /** 定向重写草稿片段 */
   private async executeRewriteSection(section: string, guidance: string): Promise<string> {
     if (!this.state.currentDraft) return '';
-    const { chapterIndex } = this.toolExecutor['ctx'];
+    const ctx = this.toolExecutor['ctx'];
+    const { chapterIndex } = ctx;
+    const minChapterWords = ctx.minChapterWords || 2500;
 
-    const system = '你是小说编辑。根据指导重写指定片段，保持与其他部分的衔接。只输出修改后的完整章节文本。';
+    const system = `你是小说编辑。根据指导重写指定片段，保持与其他部分的衔接。只输出修改后的完整章节文本。
+注意：完整章节正文不少于 ${minChapterWords} 字，不要缩减内容。`;
 
     const prompt = `【当前草稿】
 ${this.state.currentDraft}
