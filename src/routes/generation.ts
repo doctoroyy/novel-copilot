@@ -19,6 +19,12 @@ import {
 } from '../utils/projectContinuity.js';
 import { hasStoryContract } from '../utils/storyContract.js';
 import {
+  buildVolumeBridgeContext,
+  buildVolumeContinuationSummary,
+  isVolumeBridgeChapter,
+  VOLUME_BRIDGE_CHAPTER_COUNT,
+} from '../utils/volumeBridge.js';
+import {
   createGenerationTask,
   createBackgroundTask,
   updateTaskProgress,
@@ -255,45 +261,9 @@ function normalizeVolume(vol: any, volIndex: number, chapters: any[]): any {
   };
 }
 
-const TIMELINE_RESET_PATTERN = /(重置(?:了)?时间线|时间线(?:被)?重置|新的轮回|重新轮回|轮回重启|回到(?:故事)?开始|回到.*(?:过去|最初|起点|开端)|时光倒流|逆转时间|世界线改写|改写世界线|回档|读档重来|重来一次|从头再来)/;
-
 function buildPreviousVolumeSummary(volume: any): string | undefined {
-  if (!volume) return undefined;
-
-  const parts: string[] = [];
-  if (volume.title) parts.push(`卷名: ${volume.title}`);
-  if (volume.startChapter && volume.endChapter) {
-    parts.push(`章节范围: 第${volume.startChapter}-${volume.endChapter}章`);
-  }
-  if (volume.goal) parts.push(`本卷目标: ${volume.goal}`);
-  if (volume.conflict) parts.push(`核心冲突: ${volume.conflict}`);
-  if (volume.climax) parts.push(`卷末高潮: ${volume.climax}`);
-  if (volume.volumeEndState) parts.push(`卷末状态: ${volume.volumeEndState}`);
-
-  const tailChapters = Array.isArray(volume.chapters)
-    ? volume.chapters
-        .slice()
-        .sort((left: any, right: any) => Number(left?.index || 0) - Number(right?.index || 0))
-        .slice(-3)
-        .map((chapter: any) => {
-          const chapterNo = chapter?.index ? `第${chapter.index}章` : '章节';
-          const chapterParts = [chapter?.title ? `${chapterNo}「${chapter.title}」` : chapterNo];
-          if (chapter?.goal) chapterParts.push(String(chapter.goal));
-          if (chapter?.hook) chapterParts.push(`钩子: ${chapter.hook}`);
-          return chapterParts.join(' | ');
-        })
-        .filter(Boolean)
-    : [];
-
-  if (tailChapters.length > 0) {
-    parts.push(`最后关键章节:\n- ${tailChapters.join('\n- ')}`);
-  }
-
-  if (TIMELINE_RESET_PATTERN.test(parts.join('\n'))) {
-    parts.push('时间线规则: 上一卷已出现时间线重置/轮回重启信号，续写必须以重置后的世界状态为新的基线，不得直接沿用重置前已被覆盖的主冲突。');
-  }
-
-  return parts.join('\n') || undefined;
+  const summary = buildVolumeContinuationSummary(volume);
+  return summary || undefined;
 }
 
 // Normalize milestones - ensure it's an array of strings
@@ -1675,6 +1645,9 @@ export async function runChapterGenerationTaskInBackground(params: {
         const { chapter, volume, previousVolume } = outlineContext;
         outlineTitle = chapter.title;
         enhancedOutline = buildEnhancedOutlineFromChapterContext(outlineContext);
+        const isVolumeStartChapter = chapterIndex === Number(volume.startChapter);
+        const isVolumeOpeningBridge = Boolean(previousVolume)
+          && isVolumeBridgeChapter(chapterIndex, Number(volume.startChapter), VOLUME_BRIDGE_CHAPTER_COUNT);
 
         const parts = [
           `【章节大纲】`,
@@ -1683,11 +1656,26 @@ export async function runChapterGenerationTaskInBackground(params: {
           `- 章末钩子: ${chapter.hook}`,
         ];
 
-        if (chapterIndex === Number(volume.startChapter)) {
+        if (isVolumeStartChapter || isVolumeOpeningBridge) {
           parts.push(`\n【本卷目标】${volume.goal}`);
           parts.push(`【本卷核心冲突】${volume.conflict}`);
 
-          if (previousVolume) {
+          if (isVolumeOpeningBridge && previousVolume) {
+            const bridgeContext = buildVolumeBridgeContext({
+              previousVolume,
+              actualStorySummary: project.rolling_summary || '',
+              currentVolume: volume,
+              bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
+            });
+            if (bridgeContext) {
+              parts.push(`\n【卷切换桥接上下文】\n${bridgeContext}`);
+            }
+            parts.push(`【衔接要求】${
+              isVolumeStartChapter
+                ? '本章是新卷开场第 1 章，必须直接承接上卷最后一幕的直接后果，不得跳过余波直接开新主线。'
+                : '本章仍是新卷开场第 2 章，必须延续上卷余波和上一章已落地的新处境，完成过渡后再放大本卷主线。'
+            }`);
+          } else if (isVolumeStartChapter && previousVolume) {
             parts.push(`\n【上卷结局】${buildPreviousVolumeSummary(previousVolume) || previousVolume.volumeEndState || previousVolume.climax}`);
             parts.push(`【衔接要求】本章开头需自然承接上卷结局，不要重复叙述已发生的事件`);
           }
