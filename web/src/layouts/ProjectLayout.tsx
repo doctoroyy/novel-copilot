@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Search, BarChart3, FileText } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ import {
   fetchBibleTemplates,
   refreshBibleTemplates,
   generateBible as apiBible,
+  generateBibleExplore,
   type BibleImagineTemplate,
 } from '@/lib/api';
 
@@ -73,6 +74,9 @@ function ProjectLayoutInner() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [templateRefreshing, setTemplateRefreshing] = useState(false);
   const [templateHint, setTemplateHint] = useState<string | null>(null);
+  const [aiConcept, setAiConcept] = useState('');
+  const [exploreProgress, setExploreProgress] = useState<string | null>(null);
+  const [explorePhase, setExplorePhase] = useState<'idle' | 'searching' | 'analyzing' | 'generating' | 'done'>('idle');
 
   const loadTemplates = async (snapshotDate?: string) => {
     setTemplateLoading(true);
@@ -148,9 +152,83 @@ function ProjectLayoutInner() {
     }
   };
 
-  // AI Bible generation for new project
+  // AI Bible generation for new project — ExploreAgent SSE or fallback
   const handleGenerateBibleForNew = async () => {
     setGeneratingBible(true);
+    setExploreProgress(null);
+    setExplorePhase('idle');
+
+    // If concept is provided, use ExploreAgent SSE
+    if (aiConcept.trim()) {
+      try {
+        setExplorePhase('searching');
+        setExploreProgress('正在搜索市场数据...');
+
+        const result = await generateBibleExplore(
+          {
+            concept: aiConcept.trim(),
+            genre: aiGenre || undefined,
+            theme: aiTheme || undefined,
+            keywords: aiKeywords || undefined,
+          },
+          {
+            onStart: () => {
+              setExplorePhase('searching');
+              setExploreProgress('正在搜索市场数据...');
+            },
+            onProgress: (data) => {
+              const phase = data.phase || '';
+              if (phase === 'tool_call') {
+                const detail = data.detail || '';
+                if (detail.includes('search_cached_templates') || detail.includes('search_fanqie_rank') || detail.includes('search_web')) {
+                  setExplorePhase('searching');
+                  setExploreProgress(detail);
+                } else if (detail.includes('analyze_and_generate')) {
+                  setExplorePhase('analyzing');
+                  setExploreProgress('正在分析趋势 + 生成设定...');
+                } else if (detail.includes('finish')) {
+                  setExplorePhase('generating');
+                  setExploreProgress('正在生成最终设定...');
+                } else {
+                  setExploreProgress(detail);
+                }
+              } else if (phase === 'reasoning') {
+                setExploreProgress(data.detail || '正在推理...');
+              }
+            },
+            onSearchResult: () => {
+              // search result received — keep searching phase
+            },
+            onDone: (bible) => {
+              setExplorePhase('done');
+              setExploreProgress('生成完成');
+              setNewProjectBible(bible);
+            },
+            onError: (error) => {
+              setExplorePhase('idle');
+              setExploreProgress(null);
+              setError(`ExploreAgent 失败：${error}`);
+            },
+          },
+        );
+
+        if (result) {
+          setNewProjectBible(result);
+        }
+      } catch (err) {
+        console.error('Failed to generate bible with ExploreAgent:', err);
+        setError(`生成设定失败：${(err as Error).message}`);
+      } finally {
+        setGeneratingBible(false);
+        setTimeout(() => {
+          setExplorePhase('idle');
+          setExploreProgress(null);
+        }, 2000);
+      }
+      return;
+    }
+
+    // Fallback: use existing generate-bible API
     try {
       const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId);
       const result = await apiBible({
@@ -207,6 +285,7 @@ function ProjectLayoutInner() {
       setAiGenre('');
       setAiTheme('');
       setAiKeywords('');
+      setAiConcept('');
       setSelectedTemplateId('');
       setTemplateSnapshotDate('latest');
     } catch {
@@ -449,6 +528,37 @@ function ProjectLayoutInner() {
                 onChange={(e) => setAiKeywords(e.target.value)}
                 placeholder="关键词 (逗号分隔)"
               />
+              <Textarea
+                value={aiConcept}
+                onChange={(e) => setAiConcept(e.target.value)}
+                placeholder="一句话描述你的创意（如：重生回到大学，靠投资逆袭成为商业帝国掌门人）"
+                rows={2}
+                className="text-sm"
+              />
+              {/* ExploreAgent progress indicator */}
+              {generatingBible && explorePhase !== 'idle' && (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    {(['searching', 'analyzing', 'generating'] as const).map((phase, i) => {
+                      const icons = [Search, BarChart3, FileText];
+                      const labels = ['搜索市场', '分析趋势', '生成设定'];
+                      const Icon = icons[i];
+                      const isActive = explorePhase === phase;
+                      const isDone = (['searching', 'analyzing', 'generating', 'done'] as const).indexOf(explorePhase) > i || explorePhase === 'done';
+                      return (
+                        <div key={phase} className={`flex items-center gap-1 text-xs ${isActive ? 'text-primary font-medium' : isDone ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>
+                          <Icon className={`h-3.5 w-3.5 ${isActive ? 'animate-pulse' : ''}`} />
+                          <span>{labels[i]}</span>
+                          {isDone && <span className="text-green-600">&#10003;</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {exploreProgress && (
+                    <p className="text-xs text-muted-foreground truncate">{exploreProgress}</p>
+                  )}
+                </div>
+              )}
               <Button 
                 variant="outline" 
                 size="sm"
@@ -457,7 +567,7 @@ function ProjectLayoutInner() {
                 className="flex items-center gap-2"
               >
                 <Sparkles className="h-4 w-4" />
-                {generatingBible ? '生成中...' : 'AI 生成设定'}
+                {generatingBible ? '生成中...' : aiConcept.trim() ? 'AI 搜索 + 生成设定' : 'AI 生成设定'}
               </Button>
             </div>
 
