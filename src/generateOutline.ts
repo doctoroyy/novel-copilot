@@ -460,10 +460,50 @@ export function applyVolumeOpeningBridgeContracts(
 
   const combinedSource = [previousVolumeSummary, actualStorySummary].filter(Boolean).join('\n');
   const isTimelineReset = TIMELINE_RESET_PATTERN.test(combinedSource);
+  const postBridgeEntryChapterIndex = volume.startChapter + bridgeChapterCount;
 
   return chapters.map((chapter) => {
-    if (!isVolumeBridgeChapter(chapter.index, volume.startChapter, bridgeChapterCount)) {
+    if (!isVolumeBridgeChapter(chapter.index, volume.startChapter, bridgeChapterCount)
+      && chapter.index !== postBridgeEntryChapterIndex) {
       return chapter;
+    }
+
+    if (chapter.index === postBridgeEntryChapterIndex) {
+      const existingContract = chapter.storyContract;
+      const mustAdvance = normalizeContractListField(existingContract?.threads?.mustAdvance);
+      const forbiddenIntroductions = normalizeContractListField(existingContract?.threads?.forbiddenIntroductions);
+      const stateTargets = normalizeContractListField(existingContract?.stateTransition?.target);
+      const notes = Array.from(new Set([
+        ...(existingContract?.notes || []),
+        `本章是卷切换桥接后的首个主线落点章，必须把主要行动切到「${volume.title}」对应的新舞台，不能只停留在赶路、余波收尾或继续围绕旧残局打转。`,
+        `本章的主要爽点和核心冲突必须直接服务于本卷目标「${volume.goal}」。`,
+      ]));
+
+      return {
+        ...chapter,
+        storyContract: {
+          ...existingContract,
+          threads: {
+            ...(existingContract?.threads || {}),
+            mustAdvance: Array.from(new Set([
+              ...mustAdvance,
+              '正式进入本卷主线舞台并让本卷目标成为主驱动',
+            ])),
+            forbiddenIntroductions: Array.from(new Set([
+              ...forbiddenIntroductions,
+              '桥接结束后仍由上一卷余波主导主要矛盾',
+            ])),
+          },
+          stateTransition: {
+            ...(existingContract?.stateTransition || {}),
+            target: Array.from(new Set([
+              ...stateTargets,
+              '把剧情重心切换到本卷目标对应的新舞台、地点或势力',
+            ])),
+          },
+          notes,
+        },
+      };
     }
 
     const chapterOffset = chapter.index - volume.startChapter;
@@ -1064,6 +1104,8 @@ async function generateVolumeChapterBatch(
       : '',
     isPostBridgeBatch
       ? `- 当前批次紧接桥接段之后，默认卷切换已经完成；从第 ${batchStartChapter} 章开始，必须由本卷目标“${volume.goal}”和冲突“${volume.conflict}”主导
+- 第 ${batchStartChapter} 章必须让主角正式踏入本卷主舞台，或至少已经开始在本卷核心地点、核心势力或核心规则内行动，不能只写“准备前往”“决定加速”“路上再遇旧事”
+- 第 ${batchStartChapter} 章的主要爽点必须来自本卷主线推进，不能仍由上一卷遗留支线抢占主驱动
 - 上一卷余波只能作为代价、追兵、旧伤、旧债或情报压力存在，不能继续占据主要舞台、主要谜团或主要行动目标
 - 除非本卷合同明确要求，否则不得继续围绕上一卷遗迹、残境、旧据点或残局反复打转`
       : '',

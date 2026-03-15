@@ -76,7 +76,7 @@ test('getVolumeChapterBatchRanges keeps first volume unsplit when there is no br
   assert.deepEqual(ranges, [{ startChapter: 1, endChapter: 20 }]);
 });
 
-test('applyVolumeOpeningBridgeContracts injects bridge contract into the first two chapters', () => {
+test('applyVolumeOpeningBridgeContracts injects bridge contracts and post-bridge entry contract', () => {
   const chapters: ChapterOutline[] = [
     {
       index: 81,
@@ -116,5 +116,9 @@ test('applyVolumeOpeningBridgeContracts injects bridge contract into the first t
     '延续上一卷余波并完成卷切换过渡',
   ]);
 
-  assert.equal(patched[2].storyContract, undefined);
+  assert.equal(patched[2].storyContract?.crisis, undefined);
+  assert.deepEqual(patched[2].storyContract?.threads?.mustAdvance, [
+    '正式进入本卷主线舞台并让本卷目标成为主驱动',
+  ]);
+  assert.match((patched[2].storyContract?.notes || []).join('\n'), /主线落点章/);
 });
