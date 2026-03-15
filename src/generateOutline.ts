@@ -334,17 +334,21 @@ function parseStructuredVolumeChapterText(
 
     let titlePart = '';
     let goalPart = '';
+    let hookPart = '';
 
-    if (parts.length >= 3 && isChapterOrdinalToken(parts[0])) {
-      titlePart = parts[1];
-      goalPart = parts.slice(2).join('｜');
+    if (isChapterOrdinalToken(parts[0])) {
+      titlePart = parts[1] || '';
+      goalPart = parts[2] || '';
+      hookPart = parts.slice(3).join('｜');
     } else {
-      titlePart = parts[0];
-      goalPart = parts.slice(1).join('｜');
+      titlePart = parts[0] || '';
+      goalPart = parts[1] || '';
+      hookPart = parts.slice(2).join('｜');
     }
 
     titlePart = titlePart.replace(/^标题[:：]\s*/i, '').trim();
     goalPart = goalPart.replace(/^(?:描述|剧情|梗概|概要|内容)[:：]\s*/i, '').trim();
+    hookPart = hookPart.replace(/^(?:钩子|悬念|章末钩子)[:：]\s*/i, '').trim();
 
     if (!titlePart || !goalPart) {
       continue;
@@ -355,7 +359,7 @@ function parseStructuredVolumeChapterText(
       index,
       title: titlePart,
       goal: goalPart,
-      hook: deriveHookFromGoal(goalPart),
+      hook: hookPart || deriveHookFromGoal(goalPart),
     });
 
     if (chapters.length >= expectedCount) {
@@ -706,32 +710,9 @@ async function generateVolumeChapterBatch(
 6. 禁止水章：每章都要推动剧情，不能有纯日常的章节
 7. 篇幅意识：章节设计要支撑单章不少于 ${minChapterWords} 字，避免目标过散导致注水或空章
 
-优先输出严格的 JSON 格式，不要有其他文字。
-
-JSON 结构：
-{
-  "chapters": [
-    {
-      "index": 1,
-      "title": "章节标题",
-      "goal": "本章目标/剧情描述",
-      "hook": "章末钩子",
-      "storyContract": {
-        "scope": { "ceiling": "本章允许触达的叙事范围上限" },
-        "crisis": { "maxConcurrent": 1, "requiredBridge": false },
-        "threads": {
-          "mustAdvance": ["本章必须推进的线程"],
-          "forbiddenIntroductions": ["本章禁止新开的内容"]
-        },
-        "stateTransition": { "target": "章末应落到的状态" },
-        "notes": ["额外说明"]
-      }
-    }
-  ]
-}
-
-如果你无法稳定输出 JSON，再退化成“每章一行”的纯文本格式：
-章节序号|章节标题|章节描述
+只输出纯文本，不要输出 JSON，不要输出 Markdown 代码块，不要写解释。
+每行一章，严格使用这个格式：
+章节序号|章节标题|章节描述|章末钩子
 `.trim();
 
   const prompt = `
@@ -764,8 +745,12 @@ ${continuationSummary}
 - 如果上一卷信息中出现“时间线重置/轮回重启/回到开端/世界线改写”，则本卷前段必须按重置后的身份、关系、情报、敌我格局重新展开
 - 除非上一卷明确保留，否则不要把旧时间线已经终结或被覆盖的势力冲突继续当成本卷主线
 
-请只生成当前批次这 ${batchChapterCount} 章的“章节标题 + 章节描述”，并尽量补全每章的 "storyContract"。
-如果本卷已经提供卷级合同，章级合同应在其基础上细化，不要与卷级合同冲突：
+输出要求：
+- 只输出 ${batchChapterCount} 行正文，不要加标题、编号说明、前后缀解释
+- 每行必须是：章节序号|章节标题|章节描述|章末钩子
+- 章节序号必须从 ${batchStartChapter} 递增到 ${batchEndChapter}
+- 章节描述写清楚本章推进、爽点和冲突变化
+- 章末钩子必须具体，不能只写“敬请期待”
 `.trim();
 
   const parseRetryLimit = 3;
@@ -773,13 +758,24 @@ ${continuationSummary}
   let lastRawText = '';
 
   for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt++) {
-    const estimatedTokens = Math.max(4096, batchChapterCount * 180);
+    const estimatedTokens = Math.max(2048, batchChapterCount * 120);
     const raw = await generateTextWithRetry(aiConfig, {
       system,
       prompt,
-      temperature: 0.7 + parseAttempt * 0.05,
+      temperature: 0.6 + parseAttempt * 0.05,
       maxTokens: estimatedTokens,
     });
+
+    const textChapters = parseStructuredVolumeChapterText(raw, batchStartChapter, batchChapterCount);
+    if (textChapters.length === batchChapterCount) {
+      return textChapters;
+    }
+    if (textChapters.length > 0 && textChapters.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
+      console.warn(
+        `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 文本解析章节数不匹配：期望 ${batchChapterCount}，实际 ${textChapters.length}，使用占位补全`
+      );
+      return padChaptersToCount(textChapters, batchStartChapter, batchChapterCount);
+    }
 
     try {
       const normalized = normalizeVolumeChapterPayload(
@@ -796,21 +792,10 @@ ${continuationSummary}
         return padChaptersToCount(normalized, batchStartChapter, batchChapterCount);
       }
     } catch {
-      // Fall through to text mode.
+      // JSON is only a compatibility fallback now.
     }
 
-    const textChapters = parseStructuredVolumeChapterText(raw, batchStartChapter, batchChapterCount);
-    if (textChapters.length === batchChapterCount) {
-      return textChapters;
-    }
-    if (textChapters.length > 0 && textChapters.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
-      console.warn(
-        `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 文本解析章节数不匹配：期望 ${batchChapterCount}，实际 ${textChapters.length}，使用占位补全`
-      );
-      return padChaptersToCount(textChapters, batchStartChapter, batchChapterCount);
-    }
-
-    lastParseError = `expected ${batchChapterCount}, got ${textChapters.length}`;
+    lastParseError = `expected ${batchChapterCount}, got 0`;
     lastRawText = raw;
     console.warn(
       `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 解析尝试 ${parseAttempt + 1}/${parseRetryLimit} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
