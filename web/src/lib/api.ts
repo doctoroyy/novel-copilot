@@ -1383,6 +1383,96 @@ export async function generateBible(
   return data.bible;
 }
 
+/**
+ * Generate Bible with ExploreAgent — SSE streaming
+ */
+export async function generateBibleExplore(
+  options: {
+    concept: string;
+    genre?: string;
+    theme?: string;
+    keywords?: string;
+  },
+  callbacks?: {
+    onStart?: (data: { message: string }) => void;
+    onProgress?: (data: { phase?: string; detail?: string }) => void;
+    onSearchResult?: (data: { phase?: string; detail?: string; data?: any }) => void;
+    onDone?: (bible: string) => void;
+    onError?: (error: string) => void;
+  },
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/generate-bible-explore`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      concept: options.concept,
+      genre: options.genre,
+      theme: options.theme,
+      keywords: options.keywords,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(errorData.error || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error('No response body');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let bible = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+
+        try {
+          const event = JSON.parse(jsonStr);
+
+          if (event.type === 'heartbeat') continue;
+
+          if (event.type === 'start') {
+            callbacks?.onStart?.(event);
+          } else if (event.type === 'progress') {
+            callbacks?.onProgress?.(event);
+          } else if (event.type === 'search_result') {
+            callbacks?.onSearchResult?.(event);
+          } else if (event.type === 'done') {
+            bible = event.bible || '';
+            callbacks?.onDone?.(bible);
+          } else if (event.type === 'error') {
+            callbacks?.onError?.(event.error);
+            throw new Error(event.error);
+          }
+        } catch (parseErr) {
+          if (parseErr instanceof Error && parseErr.message && !parseErr.message.includes('JSON')) {
+            throw parseErr;
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!bible) throw new Error('ExploreAgent 未返回有效的 Bible');
+  return bible;
+}
+
 export async function testAIConnection(config: {
   provider: string;
   model: string;
@@ -2157,4 +2247,83 @@ export async function fetchPublicRemoteModels(
   const data = await res.json();
   if (!data.success) throw new Error(data.error);
   return data.models;
+}
+
+// ==========================================
+// QC (Quality Control) API
+// ==========================================
+
+export type QCReportResponse = {
+  reportId: string;
+  scanMode: string;
+  overallScore: number;
+  totalIssues: number;
+  criticalCount: number;
+  majorCount: number;
+  minorCount: number;
+  status: 'running' | 'completed' | 'failed';
+  createdAt: number;
+  data: any;
+};
+
+export async function startQCScan(
+  name: string,
+  scanMode: 'quick' | 'standard' | 'full' = 'standard'
+): Promise<{ taskId: number; reportId: string }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/qc/scan`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ scanMode }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { taskId: data.taskId, reportId: data.reportId };
+}
+
+export async function getQCReport(name: string): Promise<QCReportResponse | null> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/qc/report`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.report || null;
+}
+
+export async function getQCReportById(name: string, reportId: string): Promise<QCReportResponse | null> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/qc/report/${encodeURIComponent(reportId)}`, {
+    headers: defaultHeaders(),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return data.report || null;
+}
+
+export async function fixChapterIssues(
+  name: string,
+  chapterIndex: number,
+  reportId: string
+): Promise<{ taskId: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/qc/fix`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ chapterIndex, reportId }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { taskId: data.taskId };
+}
+
+export async function fixAllIssues(
+  name: string,
+  reportId: string,
+  maxSeverity?: string
+): Promise<{ taskId: number }> {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(name)}/qc/fix-all`, {
+    method: 'POST',
+    headers: mergeHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ reportId, maxSeverity }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error);
+  return { taskId: data.taskId };
 }

@@ -20,6 +20,7 @@ const SummaryPage = lazyWithRecovery('SummaryPage', () => import('./pages/projec
 const SettingsPage = lazyWithRecovery('SettingsPage', () => import('./pages/project/SettingsPage'));
 const CharactersPage = lazyWithRecovery('CharactersPage', () => import('./pages/project/CharactersPage'));
 const AnimePage = lazyWithRecovery('AnimePage', () => import('./pages/project/AnimePage'));
+const QualityPage = lazyWithRecovery('QualityPage', () => import('./pages/project/QualityPage'));
 const LoginPage = lazyWithRecovery('LoginPage', async () => ({ default: (await import('./pages/LoginPage')).LoginPage }));
 const AdminPage = lazyWithRecovery('AdminPage', async () => ({ default: (await import('./pages/AdminPage')).AdminPage }));
 const LandingPage = lazyWithRecovery('LandingPage', async () => ({ default: (await import('./pages/LandingPage')).LandingPage }));
@@ -135,6 +136,7 @@ export default function App() {
                         <Route path="project/:projectId/generate" element={<GeneratePage />} />
                         <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
                         <Route path="project/:projectId/characters" element={<CharactersPage />} />
+                        <Route path="project/:projectId/quality" element={<QualityPage />} />
                         <Route path="project/:projectId/anime" element={<AnimePage />} />
                         <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
                       </Route>
