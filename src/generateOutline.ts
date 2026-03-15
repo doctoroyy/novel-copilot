@@ -466,6 +466,260 @@ function normalizeAdditionalVolumePayload(
   });
 }
 
+function buildDefaultVolumeRanges(totalChapters: number, volumeCount: number, startChapterBase = 1): Array<{ startChapter: number; endChapter: number }> {
+  if (volumeCount <= 0) return [];
+
+  const safeTotalChapters = Math.max(volumeCount, totalChapters);
+  const baseSize = Math.floor(safeTotalChapters / volumeCount);
+  const remainder = safeTotalChapters % volumeCount;
+  const ranges: Array<{ startChapter: number; endChapter: number }> = [];
+
+  let cursor = startChapterBase;
+  for (let index = 0; index < volumeCount; index += 1) {
+    const chapterSpan = baseSize + (index < remainder ? 1 : 0);
+    const startChapter = cursor;
+    const endChapter = startChapter + Math.max(1, chapterSpan) - 1;
+    ranges.push({ startChapter, endChapter });
+    cursor = endChapter + 1;
+  }
+
+  return ranges;
+}
+
+function parseChapterRangeToken(value: string): { startChapter: number; endChapter: number } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const directMatch = trimmed.match(/^(\d+)\D+(\d+)$/);
+  if (directMatch) {
+    const startChapter = Number(directMatch[1]);
+    const endChapter = Number(directMatch[2]);
+    if (Number.isFinite(startChapter) && Number.isFinite(endChapter) && endChapter >= startChapter) {
+      return { startChapter, endChapter };
+    }
+  }
+
+  return null;
+}
+
+function isOutlineGoalToken(value: string): boolean {
+  const normalized = value.replace(/[：:\s]/g, '').toLowerCase();
+  return ['主线', '主线目标', '总目标', 'maingoal', 'goal'].includes(normalized);
+}
+
+function isMilestoneToken(value: string): boolean {
+  const normalized = value.replace(/[：:\s]/g, '').toLowerCase();
+  return ['里程碑', 'milestone', 'milestones'].includes(normalized);
+}
+
+function isVolumeToken(value: string): boolean {
+  const normalized = value.replace(/[：:\s]/g, '').toLowerCase();
+  return normalized === '卷'
+    || normalized === '分卷'
+    || /^第?\d+卷$/.test(normalized)
+    || /^volume\d*$/.test(normalized);
+}
+
+function parseStructuredMasterOutlineText(
+  raw: string,
+  targetChapters: number
+): {
+  mainGoal: string;
+  milestones: string[];
+  volumes: Omit<VolumeOutline, 'chapters'>[];
+} {
+  const lines = stripCodeFenceText(raw)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let mainGoal = '';
+  const milestones: string[] = [];
+  const volumeDrafts: Array<{
+    title: string;
+    goal: string;
+    conflict: string;
+    climax: string;
+    volumeEndState?: string;
+    range?: { startChapter: number; endChapter: number };
+  }> = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine
+      .replace(/^[-*•]\s*/, '')
+      .replace(/^\d+\.\s*/, '')
+      .trim();
+    if (!line) continue;
+
+    const colonGoal = line.match(/^(主线目标|主线|总目标|main\s*goal)[:：]\s*(.+)$/i);
+    if (colonGoal) {
+      mainGoal = colonGoal[2].trim();
+      continue;
+    }
+
+    const colonMilestone = line.match(/^(里程碑|milestone)[:：]\s*(.+)$/i);
+    if (colonMilestone) {
+      milestones.push(colonMilestone[2].trim());
+      continue;
+    }
+
+    const parts = line
+      .split(/[|｜]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length < 2) continue;
+
+    if (isOutlineGoalToken(parts[0])) {
+      mainGoal = parts.slice(1).join('｜').trim();
+      continue;
+    }
+
+    if (isMilestoneToken(parts[0])) {
+      const milestone = parts.slice(1).join('｜').trim();
+      if (milestone) milestones.push(milestone);
+      continue;
+    }
+
+    if (!isVolumeToken(parts[0])) {
+      continue;
+    }
+
+    let cursor = 1;
+    const title = toShortText(parts[cursor], `第${volumeDrafts.length + 1}卷`);
+    cursor += 1;
+
+    let range: { startChapter: number; endChapter: number } | undefined;
+    if (cursor + 1 < parts.length && /^\d+$/.test(parts[cursor]) && /^\d+$/.test(parts[cursor + 1])) {
+      const startChapter = Number(parts[cursor]);
+      const endChapter = Number(parts[cursor + 1]);
+      if (endChapter >= startChapter) {
+        range = { startChapter, endChapter };
+        cursor += 2;
+      }
+    } else if (cursor < parts.length) {
+      const parsedRange = parseChapterRangeToken(parts[cursor]);
+      if (parsedRange) {
+        range = parsedRange;
+        cursor += 1;
+      }
+    }
+
+    const goal = toShortText(parts[cursor], '');
+    const conflict = toShortText(parts[cursor + 1], '');
+    const climax = toShortText(parts[cursor + 2], '');
+    const volumeEndState = toShortText(parts.slice(cursor + 3).join('｜'), '') || undefined;
+
+    if (!title || !goal || !conflict || !climax) {
+      continue;
+    }
+
+    volumeDrafts.push({
+      title,
+      goal,
+      conflict,
+      climax,
+      volumeEndState,
+      range,
+    });
+  }
+
+  if (volumeDrafts.length === 0) {
+    throw new Error('Master outline text has no volumes');
+  }
+
+  const shouldUseExplicitRanges = volumeDrafts.every((draft) => draft.range);
+  const fallbackRanges = buildDefaultVolumeRanges(targetChapters, volumeDrafts.length);
+
+  return {
+    mainGoal: mainGoal || '主角完成阶段性崛起并推动主线冲突升级',
+    milestones,
+    volumes: volumeDrafts.map((draft, index) => {
+      const range = shouldUseExplicitRanges
+        ? draft.range!
+        : fallbackRanges[index];
+      return {
+        title: draft.title,
+        startChapter: range.startChapter,
+        endChapter: range.endChapter,
+        goal: draft.goal,
+        conflict: draft.conflict,
+        climax: draft.climax,
+        volumeEndState: draft.volumeEndState,
+      };
+    }),
+  };
+}
+
+function parseStructuredAdditionalVolumesText(
+  raw: string,
+  startChapterBase: number,
+  chaptersPerVolume: number
+): Omit<VolumeOutline, 'chapters'>[] {
+  const lines = stripCodeFenceText(raw)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const volumeDrafts: Array<{
+    title: string;
+    goal: string;
+    conflict: string;
+    climax: string;
+    volumeEndState?: string;
+  }> = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine
+      .replace(/^[-*•]\s*/, '')
+      .replace(/^\d+\.\s*/, '')
+      .trim();
+    if (!line) continue;
+
+    const parts = line
+      .split(/[|｜]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length < 5 || !isVolumeToken(parts[0])) {
+      continue;
+    }
+
+    const title = toShortText(parts[1], `第${volumeDrafts.length + 1}卷`);
+    const goal = toShortText(parts[2], '');
+    const conflict = toShortText(parts[3], '');
+    const climax = toShortText(parts[4], '');
+    const volumeEndState = toShortText(parts.slice(5).join('｜'), '') || undefined;
+
+    if (!title || !goal || !conflict || !climax) {
+      continue;
+    }
+
+    volumeDrafts.push({
+      title,
+      goal,
+      conflict,
+      climax,
+      volumeEndState,
+    });
+  }
+
+  if (volumeDrafts.length === 0) {
+    throw new Error('Additional volumes text has no volumes');
+  }
+
+  const ranges = buildDefaultVolumeRanges(volumeDrafts.length * chaptersPerVolume, volumeDrafts.length, startChapterBase);
+  return volumeDrafts.map((draft, index) => ({
+    title: draft.title,
+    startChapter: ranges[index].startChapter,
+    endChapter: ranges[index].endChapter,
+    goal: draft.goal,
+    conflict: draft.conflict,
+    climax: draft.climax,
+    volumeEndState: draft.volumeEndState,
+  }));
+}
+
 /**
  * 生成总大纲
  */
@@ -497,35 +751,12 @@ export async function generateMasterOutline(
 7. 篇幅规划：章节推进要匹配字数预算，默认每章不少于 ${minChapterWords} 字
 ${characters ? '8. 人物驱动：大纲必须围绕人物关系冲突展开，每卷的核心冲突应与人物关系变化绑定' : ''}
 
-输出严格的 JSON 格式，不要有其他文字。
-
-JSON 结构：
-{
-  "mainGoal": "整本书的终极目标/主线",
-  "milestones": ["第100章里程碑", "第200章里程碑", ...],
-  "volumes": [
-    {
-      "title": "第一卷：xxx",
-      "startChapter": 1,
-      "endChapter": 80,
-      "goal": "本卷要完成什么（包含关键转折和阶段性目标）",
-      "conflict": "本卷核心冲突（包含对立双方、stakes和冲突升级路径）",
-      "climax": "本卷高潮（包含高潮场景、结果和代价）",
-      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念",
-      "storyContract": {
-        "scope": { "ceiling": "本卷允许触达的叙事范围上限" },
-        "crisis": { "maxConcurrent": 2, "requiredBridge": false },
-        "threads": { "mustAdvance": ["本卷必须推进的线程"], "forbiddenIntroductions": ["本卷禁止突兀引入的内容"] },
-        "stateTransition": { "target": "本卷结束时应落到的状态" },
-        "notes": ["额外卷级约束"],
-        "chapterDefaults": {
-          "crisis": { "maxConcurrent": 1 }
-        }
-      }
-    },
-    ...
-  ]
-}
+只输出纯文本，不要输出 JSON，不要输出 Markdown 代码块，不要写解释。
+严格按以下格式输出：
+主线|整本书主线目标
+里程碑|第100章里程碑
+里程碑|第200章里程碑
+卷|卷名|起始章节|结束章节|本卷目标|本卷冲突|本卷高潮|卷末状态
 `.trim();
 
   // 构建人物关系摘要（如果有）
@@ -566,18 +797,41 @@ ${bible}
 - 预计分卷数: ${volumeCount} 卷
 ${charactersSummary}
 
-请生成总大纲。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
+输出要求：
+- 先输出 1 行主线
+- 再输出若干行里程碑
+- 最后每卷输出 1 行，必须以 卷| 开头
+- 不要输出多余说明
 `.trim();
 
-  // 总大纲 JSON 体量较大，确保 maxTokens 足够
-  const estimatedTokens = Math.max(8192, volumeCount * 600);
-  const raw = await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.7, maxTokens: estimatedTokens });
+  const parseRetryLimit = 3;
+  let lastError = 'Failed to parse master outline response';
 
-  try {
-    return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
-  } catch {
-    throw new Error('Failed to parse master outline JSON');
+  for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt += 1) {
+    const estimatedTokens = Math.max(2048, volumeCount * 220);
+    const raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.6 + parseAttempt * 0.05,
+      maxTokens: estimatedTokens,
+    });
+
+    try {
+      return parseStructuredMasterOutlineText(raw, targetChapters);
+    } catch (textError) {
+      try {
+        return normalizeMasterOutlinePayload(parseLooseJson(raw, 'object'));
+      } catch {
+        lastError = (textError as Error).message || 'Failed to parse master outline response';
+      }
+    }
+
+    if (parseAttempt < parseRetryLimit - 1) {
+      await sleep(2000);
+    }
   }
+
+  throw new Error(lastError);
 }
 
 /**
@@ -929,33 +1183,9 @@ export async function generateAdditionalVolumes(
 7. 篇幅规划：每章不少于 ${minChapterWords} 字
 8. 时间线一致：如果上一卷出现“时间线重置/轮回重启/回到开端”等设定，新卷必须以重置后的状态为新的起点，不能无理由回到旧时间线已经结束或被覆盖的冲突
 
-输出严格的 JSON 格式，不要有其他文字。
-
-JSON 结构：
-{
-  "volumes": [
-    {
-      "title": "第X卷：xxx",
-      "startChapter": 起始章节号,
-      "endChapter": 结束章节号,
-      "goal": "本卷要完成什么（包含关键转折和阶段性目标）",
-      "conflict": "本卷核心冲突（包含对立双方、stakes和冲突升级路径）",
-      "climax": "本卷高潮（包含高潮场景、结果和代价）",
-      "volumeEndState": "本卷结束时主角状态、世界格局变化、遗留悬念",
-      "storyContract": {
-        "scope": { "ceiling": "本卷允许触达的叙事范围上限" },
-        "crisis": { "maxConcurrent": 2, "requiredBridge": false },
-        "threads": { "mustAdvance": ["本卷必须推进的线程"] },
-        "stateTransition": { "target": "本卷结束时应落到的状态" },
-        "notes": ["额外卷级约束"],
-        "chapterDefaults": {
-          "crisis": { "maxConcurrent": 1 }
-        }
-      }
-    },
-    ...
-  ]
-}
+只输出纯文本，不要输出 JSON，不要输出 Markdown 代码块，不要写解释。
+每个新卷一行，严格按以下格式输出：
+卷|卷名|本卷目标|本卷冲突|本卷高潮|卷末状态
 `.trim();
 
   const prompt = `
@@ -983,29 +1213,48 @@ ${actualStorySummary
 - 起始章节号: 第${startChapterBase}章
 - 每章最低字数: ${minChapterWords} 字
 
-请生成 ${newVolumeCount} 个新卷的大纲（JSON格式）。所有合同字段都必须使用自由文本，不要发明固定枚举或分类表：
+输出要求：
+- 只输出 ${newVolumeCount} 行
+- 每行必须以 卷| 开头
+- 不要输出多余说明
 `.trim();
 
-  // 追加卷骨架 JSON 需要足够的输出空间
-  const estimatedTokens = Math.max(8192, newVolumeCount * 600);
-  const raw = await generateTextWithRetry(aiConfig, {
-    system,
-    prompt,
-    temperature: 0.7,
-    maxTokens: estimatedTokens,
-  });
+  const parseRetryLimit = 3;
+  let lastError = 'Failed to parse additional volumes response';
 
-  try {
-    return {
-      volumes: normalizeAdditionalVolumePayload(
-        parseLooseJson(raw, 'object'),
-        startChapterBase,
-        chaptersPerVolume
-      ),
-    };
-  } catch {
-    throw new Error('Failed to parse additional volumes JSON');
+  for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt += 1) {
+    const estimatedTokens = Math.max(1024, newVolumeCount * 180);
+    const raw = await generateTextWithRetry(aiConfig, {
+      system,
+      prompt,
+      temperature: 0.6 + parseAttempt * 0.05,
+      maxTokens: estimatedTokens,
+    });
+
+    try {
+      return {
+        volumes: parseStructuredAdditionalVolumesText(raw, startChapterBase, chaptersPerVolume),
+      };
+    } catch (textError) {
+      try {
+        return {
+          volumes: normalizeAdditionalVolumePayload(
+            parseLooseJson(raw, 'object'),
+            startChapterBase,
+            chaptersPerVolume
+          ),
+        };
+      } catch {
+        lastError = (textError as Error).message || 'Failed to parse additional volumes response';
+      }
+    }
+
+    if (parseAttempt < parseRetryLimit - 1) {
+      await sleep(2000);
+    }
   }
+
+  throw new Error(lastError);
 }
 
 /**
