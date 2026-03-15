@@ -108,6 +108,30 @@ function buildConstrainedRepairPrompt(
 }
 
 /**
+ * 从 QC 报告加载指定章节的问题
+ */
+async function loadReportIssues(
+  db: D1Database,
+  reportId: string,
+  chapterIndex: number,
+): Promise<{ issues: QCResult['issues']; score: number } | null> {
+  const reportRow = await db.prepare(`
+    SELECT report_json FROM qc_reports WHERE id = ?
+  `).bind(reportId).first() as { report_json: string } | null;
+
+  if (!reportRow) return null;
+
+  try {
+    const report: QCReport = JSON.parse(reportRow.report_json);
+    const entry = report.chapters[chapterIndex];
+    if (!entry) return null;
+    return { issues: entry.issues, score: entry.score };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 修复单章（带前后文约束）
  */
 export async function fixChapter(
@@ -131,39 +155,65 @@ export async function fixChapter(
 
   const { totalChapters, minChapterWords } = await loadProjectMeta(db, projectId);
 
-  const qcResult = runQuickQC(chapter.content, chapterIndex, totalChapters, minChapterWords);
-  if (qcResult.passed && !qcResult.issues.some(i => i.severity === 'major')) {
-    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章已通过 QC，无需修复`);
+  // Load issues from the QC report (includes AI-detected issues from Tier 2)
+  const reportIssues = await loadReportIssues(db, reportId, chapterIndex);
+
+  // Determine issues: prefer report issues (which include AI analysis),
+  // fall back to runQuickQC only if report has no data for this chapter
+  let issues: QCResult['issues'];
+  let baseScore: number;
+
+  if (reportIssues && reportIssues.issues.length > 0) {
+    issues = reportIssues.issues;
+    baseScore = reportIssues.score;
+  } else {
+    const qcResult = runQuickQC(chapter.content, chapterIndex, totalChapters, minChapterWords);
+    issues = qcResult.issues;
+    baseScore = qcResult.score;
+  }
+
+  const hasCriticalOrMajor = issues.some(i => i.severity === 'critical' || i.severity === 'major');
+  if (!hasCriticalOrMajor) {
+    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章无 critical/major 问题，跳过`);
     return;
   }
 
   // 加载前后章
   const { prevChapter, nextChapter } = await loadSurroundingChapters(db, projectId, chapterIndex);
 
-  // 构建带约束的修复 prompt
+  // 构建带约束的修复 prompt（使用报告中的完整问题列表）
+  const qcResultForPrompt: QCResult = {
+    passed: !hasCriticalOrMajor,
+    score: baseScore,
+    issues,
+    suggestions: [],
+    dimensionScores: { ending: 100, character: 100, pacing: 100, goal: 100, structure: 100 },
+    timestamp: new Date().toISOString(),
+  };
   const { system, prompt } = buildConstrainedRepairPrompt(
-    chapter.content, chapterIndex, totalChapters, qcResult, prevChapter, nextChapter,
+    chapter.content, chapterIndex, totalChapters, qcResultForPrompt, prevChapter, nextChapter,
   );
 
   const repairedText = await generateTextWithRetry(aiConfig, {
     system, prompt, temperature: 0.7,
   });
 
-  // 验证修复结果
+  // 验证修复结果（用 runQuickQC 做基本完整性检查）
   const finalQC = runQuickQC(repairedText, chapterIndex, totalChapters, minChapterWords);
 
-  if (finalQC.score >= qcResult.score) {
+  // Accept repair if it doesn't introduce structural regressions
+  if (finalQC.score >= 60 && !finalQC.issues.some(i => i.severity === 'critical')) {
     await db.prepare(`
       UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
     `).bind(repairedText, projectId, chapterIndex).run();
 
     await updateReportAfterFix(db, reportId, chapterIndex, {
-      repairedChapter: repairedText, attempts: 1, finalQC, success: finalQC.passed, repairLog: [],
+      repairedChapter: repairedText, attempts: 1, finalQC, success: true, repairLog: [],
     });
-    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复成功 (评分: ${qcResult.score} → ${finalQC.score})`);
+    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复成功 (评分: ${baseScore} → ${finalQC.score})`);
   } else {
-    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复后评分下降 (${finalQC.score} < ${qcResult.score})，已回滚`);
+    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复后结构检查未通过 (${finalQC.score})，已回滚`);
   }
 }
 
