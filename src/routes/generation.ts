@@ -45,6 +45,8 @@ import {
   getImagineTemplateRefreshJob,
   listImagineTemplateRefreshJobs,
 } from '../services/imagineTemplateJobService.js';
+import { ExploreAgentOrchestrator, type ExploreProgressEvent } from '../agent/explore/orchestrator.js';
+import type { ExploreToolContext } from '../agent/explore/tools.js';
 
 export const generationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -2844,7 +2846,117 @@ ${templateHint ? `${templateHint}\n` : ''}
   }
 });
 
-// Helper: Generate master outline
+// Generate bible with ExploreAgent — SSE streaming
+generationRoutes.post('/generate-bible-explore', async (c) => {
+  const aiConfig = await getAIConfig(c, c.env.DB, 'generate_outline');
+  if (!aiConfig) {
+    return c.json({ success: false, error: 'Missing AI configuration' }, 400);
+  }
+
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: 'Invalid request body' }, 400);
+  }
+
+  const concept = typeof body.concept === 'string' ? body.concept.trim() : '';
+  if (!concept) {
+    return c.json({ success: false, error: '请输入创意描述 (concept)' }, 400);
+  }
+
+  const genre = typeof body.genre === 'string' ? body.genre.trim() : '';
+  const theme = typeof body.theme === 'string' ? body.theme.trim() : '';
+  const keywords = typeof body.keywords === 'string' ? body.keywords.trim() : '';
+
+  let fallbackConfigs: AIConfig[] | undefined;
+  try {
+    fallbackConfigs = await getFallbackAIConfigsFromRegistry(c.env.DB, aiConfig.model) || undefined;
+  } catch { /* ignore */ }
+
+  const toolContext: ExploreToolContext = {
+    db: c.env.DB,
+    browserBinding: c.env.FANQIE_BROWSER,
+    aiConfig,
+    fallbackConfigs,
+    concept,
+    genre,
+    theme,
+    keywords,
+  };
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false;
+
+      const sendEvent = (type: string, data: any) => {
+        if (closed) return;
+        try {
+          const payload = JSON.stringify({ type, ...data });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        } catch (e) {
+          console.error('Error sending SSE event', e);
+        }
+      };
+
+      const heartbeatInterval = setInterval(() => {
+        if (closed) { clearInterval(heartbeatInterval); return; }
+        try {
+          controller.enqueue(encoder.encode(`data: {"type":"heartbeat"}\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+        }
+      }, 5000);
+
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeatInterval);
+        try { controller.close(); } catch { /* ignore */ }
+      };
+
+      c.req.raw.signal.addEventListener('abort', () => close());
+
+      try {
+        sendEvent('start', { message: '正在启动 ExploreAgent...' });
+
+        const orchestrator = new ExploreAgentOrchestrator(
+          toolContext,
+          (event: ExploreProgressEvent) => {
+            sendEvent(event.type, {
+              phase: event.phase,
+              detail: event.detail,
+              data: event.data,
+            });
+          },
+        );
+
+        const { bible, trace } = await orchestrator.run();
+
+        if (!bible) {
+          sendEvent('error', { error: 'Agent 未能生成有效的 Bible' });
+        } else {
+          sendEvent('done', { bible, trace });
+        }
+      } catch (error) {
+        console.error('[generate-bible-explore] error:', error);
+        sendEvent('error', { error: (error as Error).message });
+      } finally {
+        close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
 
 
 
