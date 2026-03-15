@@ -4,7 +4,7 @@ import { eventBus } from '../eventBus.js';
 
 export const tasksRoutes = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 
-export type TaskType = 'chapters' | 'outline' | 'bible' | 'other';
+export type TaskType = 'chapters' | 'outline' | 'bible' | 'qc' | 'qc_fix' | 'other';
 type ActiveTaskStatus = 'running' | 'paused' | 'completed' | 'failed';
 const TASK_STREAM_POLL_INTERVAL_MS = 1500;
 const TASK_STREAM_KEEPALIVE_MS = 15000;
