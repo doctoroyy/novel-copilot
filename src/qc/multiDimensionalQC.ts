@@ -317,9 +317,9 @@ function checkStructuralIntegrity(
   if (charCount + wordTolerance < normalizedMinWords) {
     issues.push({
       type: 'structure',
-      severity: 'critical',
-      description: `章节字数严重不足 (${charCount}字)，最低要求 ${normalizedMinWords} 字`,
-      suggestion: '请扩充正文，直到达到项目的最低字数要求后再落库',
+      severity: 'major',
+      description: `章节字数不足 (${charCount}字)，最低要求 ${normalizedMinWords} 字`,
+      suggestion: '扩充正文场景细节和对话，达到最低字数要求',
     });
     score -= 30;
   } else if (charCount < normalizedMinWords) {

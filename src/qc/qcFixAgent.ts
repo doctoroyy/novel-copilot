@@ -1,9 +1,115 @@
-import { getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
+import { getAIConfigFromRegistry, generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
 import { updateTaskMessage, completeTask } from '../routes/tasks.js';
-import { repairChapter, type RepairResult } from './repairLoop.js';
-import { runQuickQC } from './multiDimensionalQC.js';
+import { runQuickQC, type QCResult } from './multiDimensionalQC.js';
 import type { QCReport, ActionableIssue, ChapterQCEntry } from './qcAgent.js';
+import type { RepairResult } from './repairLoop.js';
 
+/**
+ * 加载项目的 total_chapters 和 min_chapter_words（从 states 表）
+ */
+async function loadProjectMeta(db: D1Database, projectId: string) {
+  const row = await db.prepare(`
+    SELECT total_chapters, min_chapter_words FROM states WHERE project_id = ?
+  `).bind(projectId).first() as { total_chapters: number; min_chapter_words: number } | null;
+  return {
+    totalChapters: row?.total_chapters || 100,
+    minChapterWords: row?.min_chapter_words || 1500,
+  };
+}
+
+/**
+ * 加载前后章内容，用于约束修复不破坏连续性
+ */
+async function loadSurroundingChapters(
+  db: D1Database,
+  projectId: string,
+  chapterIndex: number,
+): Promise<{ prevChapter: string | null; nextChapter: string | null }> {
+  const rows = await db.prepare(`
+    SELECT chapter_index, content FROM chapters
+    WHERE project_id = ? AND chapter_index IN (?, ?) AND deleted_at IS NULL
+  `).bind(projectId, chapterIndex - 1, chapterIndex + 1).all() as {
+    results: { chapter_index: number; content: string }[];
+  };
+
+  let prevChapter: string | null = null;
+  let nextChapter: string | null = null;
+  for (const r of rows.results) {
+    if (r.chapter_index === chapterIndex - 1) prevChapter = r.content;
+    if (r.chapter_index === chapterIndex + 1) nextChapter = r.content;
+  }
+  return { prevChapter, nextChapter };
+}
+
+/**
+ * 构建带前后章约束的修复 prompt
+ */
+function buildConstrainedRepairPrompt(
+  chapterText: string,
+  chapterIndex: number,
+  totalChapters: number,
+  issues: QCResult,
+  prevChapter: string | null,
+  nextChapter: string | null,
+): { system: string; prompt: string } {
+  const criticalIssues = issues.issues.filter(i => i.severity === 'critical');
+  const majorIssues = issues.issues.filter(i => i.severity === 'major');
+
+  const system = `你是一个专业的网文修复编辑。你的任务是做最小修复——只修复指出的问题，尽量保留原文。
+
+核心原则：
+1. 保持原有情节走向、角色名称、关系不变
+2. 保持原有写作风格和语气
+3. 只改动存在问题的部分，其余原文逐字保留
+4. 修复后的章节必须与前一章的结尾自然衔接
+5. 修复后的章节必须与后一章的开头保持兼容，不能引发新的断裂
+6. 只输出修复后的完整章节正文，不要任何解释`.trim();
+
+  const parts: string[] = [];
+  parts.push(`【修复任务 - 第${chapterIndex}/${totalChapters}章】\n`);
+
+  if (criticalIssues.length > 0) {
+    parts.push('【必须修复的问题】');
+    criticalIssues.forEach((issue, i) => {
+      parts.push(`${i + 1}. ${issue.description}`);
+      if (issue.suggestion) parts.push(`   建议: ${issue.suggestion}`);
+    });
+    parts.push('');
+  }
+
+  if (majorIssues.length > 0) {
+    parts.push('【尽量修复的问题】');
+    majorIssues.slice(0, 5).forEach((issue, i) => {
+      parts.push(`${i + 1}. ${issue.description}`);
+      if (issue.suggestion) parts.push(`   建议: ${issue.suggestion}`);
+    });
+    parts.push('');
+  }
+
+  // 前章约束
+  if (prevChapter) {
+    const prevEnding = prevChapter.slice(-800);
+    parts.push('【前一章结尾（修复后必须与此衔接）】');
+    parts.push(`...${prevEnding}\n`);
+  }
+
+  // 后章约束
+  if (nextChapter) {
+    const nextOpening = nextChapter.slice(0, 800);
+    parts.push('【后一章开头（修复后必须与此兼容，不能矛盾）】');
+    parts.push(`${nextOpening}...\n`);
+  }
+
+  parts.push('【待修复章节原文】');
+  parts.push(chapterText);
+  parts.push('\n请输出修复后的完整章节内容:');
+
+  return { system, prompt: parts.join('\n') };
+}
+
+/**
+ * 修复单章（带前后文约束）
+ */
 export async function fixChapter(
   db: D1Database,
   projectId: string,
@@ -16,7 +122,6 @@ export async function fixChapter(
 
   await updateTaskMessage(db, taskId, `修复第 ${chapterIndex} 章...`);
 
-  // Load chapter text
   const chapter = await db.prepare(`
     SELECT content FROM chapters
     WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
@@ -24,49 +129,47 @@ export async function fixChapter(
 
   if (!chapter) throw new Error(`第 ${chapterIndex} 章未找到`);
 
-  // Load project state for totalChapters
-  const project = await db.prepare(`
-    SELECT state_json FROM projects WHERE id = ?
-  `).bind(projectId).first() as { state_json: string } | null;
+  const { totalChapters, minChapterWords } = await loadProjectMeta(db, projectId);
 
-  const stateJson = project?.state_json ? JSON.parse(project.state_json) : {};
-  const totalChapters = stateJson.totalChapters || 100;
-  const minChapterWords = stateJson.minChapterWords || 1500;
-
-  // Run quick QC to get current issues
   const qcResult = runQuickQC(chapter.content, chapterIndex, totalChapters, minChapterWords);
-
-  if (qcResult.passed) {
+  if (qcResult.passed && !qcResult.issues.some(i => i.severity === 'major')) {
     await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章已通过 QC，无需修复`);
     return;
   }
 
-  // Repair
-  const result = await repairChapter(
-    aiConfig,
-    chapter.content,
-    qcResult,
-    chapterIndex,
-    totalChapters,
-    2,
-    minChapterWords,
+  // 加载前后章
+  const { prevChapter, nextChapter } = await loadSurroundingChapters(db, projectId, chapterIndex);
+
+  // 构建带约束的修复 prompt
+  const { system, prompt } = buildConstrainedRepairPrompt(
+    chapter.content, chapterIndex, totalChapters, qcResult, prevChapter, nextChapter,
   );
 
-  if (result.success) {
-    // Update chapter text in DB
+  const repairedText = await generateTextWithRetry(aiConfig, {
+    system, prompt, temperature: 0.7,
+  });
+
+  // 验证修复结果
+  const finalQC = runQuickQC(repairedText, chapterIndex, totalChapters, minChapterWords);
+
+  if (finalQC.score >= qcResult.score) {
     await db.prepare(`
       UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(result.repairedChapter, projectId, chapterIndex).run();
+    `).bind(repairedText, projectId, chapterIndex).run();
 
-    // Update report
-    await updateReportAfterFix(db, reportId, chapterIndex, result);
-    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复成功 (评分: ${result.finalQC.score})`);
+    await updateReportAfterFix(db, reportId, chapterIndex, {
+      repairedChapter: repairedText, attempts: 1, finalQC, success: finalQC.passed, repairLog: [],
+    });
+    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复成功 (评分: ${qcResult.score} → ${finalQC.score})`);
   } else {
-    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复未完全成功 (评分: ${result.finalQC.score})`);
+    await updateTaskMessage(db, taskId, `第 ${chapterIndex} 章修复后评分下降 (${finalQC.score} < ${qcResult.score})，已回滚`);
   }
 }
 
+/**
+ * 批量修复（按章节顺序，带前后章约束）
+ */
 export async function fixAllChapters(
   db: D1Database,
   projectId: string,
@@ -74,7 +177,6 @@ export async function fixAllChapters(
   taskId: number,
   maxSeverity: string = 'major',
 ): Promise<void> {
-  // Load report
   const reportRow = await db.prepare(`
     SELECT report_json FROM qc_reports WHERE id = ?
   `).bind(reportId).first() as { report_json: string } | null;
@@ -84,7 +186,6 @@ export async function fixAllChapters(
   const report: QCReport = JSON.parse(reportRow.report_json);
   const severities = maxSeverity === 'critical' ? ['critical'] : ['critical', 'major'];
 
-  // Filter chapters with issues to fix
   const chaptersToFix = report.actionableIssues
     .filter(i => !i.fixed && severities.includes(i.severity))
     .map(i => i.chapterIndex);
@@ -95,61 +196,20 @@ export async function fixAllChapters(
     return;
   }
 
-  const aiConfig = await getAIConfigFromRegistry(db, 'qc');
-  if (!aiConfig) throw new Error('未配置 AI 模型');
-
-  const project = await db.prepare(`
-    SELECT state_json FROM projects WHERE id = ?
-  `).bind(projectId).first() as { state_json: string } | null;
-
-  const stateJson = project?.state_json ? JSON.parse(project.state_json) : {};
-  const totalChapters = stateJson.totalChapters || 100;
-  const minChapterWords = stateJson.minChapterWords || 1500;
-
   let fixedCount = 0;
   for (let i = 0; i < uniqueChapters.length; i++) {
     const chIdx = uniqueChapters[i];
     await updateTaskMessage(db, taskId, `修复第 ${chIdx} 章 (${i + 1}/${uniqueChapters.length})...`);
 
-    const chapter = await db.prepare(`
-      SELECT content FROM chapters
-      WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(projectId, chIdx).first() as { content: string } | null;
-
-    if (!chapter) continue;
-
-    const qcResult = runQuickQC(chapter.content, chIdx, totalChapters, minChapterWords);
-    if (qcResult.passed) {
-      fixedCount++;
-      continue;
-    }
-
     try {
-      const result = await repairChapter(
-        aiConfig,
-        chapter.content,
-        qcResult,
-        chIdx,
-        totalChapters,
-        2,
-        minChapterWords,
-      );
-
-      if (result.success) {
-        await db.prepare(`
-          UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000)
-          WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-        `).bind(result.repairedChapter, projectId, chIdx).run();
-
-        await updateReportAfterFix(db, reportId, chIdx, result);
-        fixedCount++;
-      }
+      await fixChapter(db, projectId, chIdx, reportId, taskId);
+      fixedCount++;
     } catch (err) {
       console.warn(`Fix failed for chapter ${chIdx}:`, err);
     }
   }
 
-  await updateTaskMessage(db, taskId, `批量修复完成: ${fixedCount}/${uniqueChapters.length} 章修复成功`);
+  await updateTaskMessage(db, taskId, `批量修复完成: ${fixedCount}/${uniqueChapters.length} 章`);
 }
 
 async function updateReportAfterFix(
@@ -167,7 +227,6 @@ async function updateReportAfterFix(
   try {
     const report: QCReport = JSON.parse(reportRow.report_json);
 
-    // Update chapter entry
     report.chapters[chapterIndex] = {
       passed: result.finalQC.passed,
       score: result.finalQC.score,
@@ -175,14 +234,12 @@ async function updateReportAfterFix(
       issues: result.finalQC.issues,
     };
 
-    // Mark actionable issues as fixed
     for (const issue of report.actionableIssues) {
       if (issue.chapterIndex === chapterIndex && result.success) {
         issue.fixed = true;
       }
     }
 
-    // Recalculate summary
     const entries = Object.values(report.chapters);
     const allIssues = entries.flatMap(e => e.issues);
     report.summary.overallScore = entries.length > 0
