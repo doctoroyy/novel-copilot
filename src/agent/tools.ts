@@ -21,6 +21,12 @@ export type ToolContext = {
   chapterIndex: number;
   totalChapters: number;
   enhancedOutline?: EnhancedChapterOutline;
+  /** 每章最少字数（中文字），默认 2500 */
+  minChapterWords?: number;
+  /** 章节 prompt 风格 profile 名 */
+  chapterPromptProfile?: string;
+  /** 章节自定义 prompt */
+  chapterPromptCustom?: string;
 };
 
 /** AI 增强工具名称列表（消耗 AI 调用预算） */
@@ -113,6 +119,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         enum: ['conflict', 'character_consistency', 'pacing', 'reader_engagement', 'all'],
       },
     },
+  },
+  {
+    name: 'soft_validate',
+    description: '快速校验草稿格式和字数（不消耗 AI 预算）。返回字数统计和格式问题。写完章节后务必调用。',
+    parameters: {},
   },
   {
     name: 'rewrite_section',

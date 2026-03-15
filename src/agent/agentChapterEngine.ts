@@ -108,6 +108,9 @@ export async function writeChapterWithAgent(
     chapterIndex,
     totalChapters,
     enhancedOutline,
+    minChapterWords: params.minChapterWords,
+    chapterPromptProfile: params.chapterPromptProfile,
+    chapterPromptCustom: params.chapterPromptCustom,
   };
 
   // 3. 创建 ToolExecutor 和 Orchestrator

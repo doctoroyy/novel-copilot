@@ -14,6 +14,7 @@ import { optimizePlotContext } from '../contextOptimizer.js';
 import { getActiveCharacterSnapshots, formatSnapshotForPrompt } from '../types/characterState.js';
 import { getRecentlyCompletedEvents, getActiveEvents, getCompletedEvents } from '../types/timeline.js';
 import { formatTimelineContext } from '../types/timeline.js';
+import { quickChapterFormatHeuristic } from '../qc.js';
 
 export class ToolExecutor {
   private currentDraft: string | null = null;
@@ -50,6 +51,8 @@ export class ToolExecutor {
         return this.designSceneSequence(call.args.goal, call.args.constraints);
       case 'evaluate_draft':
         return this.evaluateDraft(call.args.focus ?? 'all');
+      case 'soft_validate':
+        return this.softValidate();
       case 'rewrite_section':
         return this.rewriteSection(call.args.section, call.args.guidance);
       case 'write_chapter':
@@ -335,5 +338,27 @@ ${focus !== 'all' ? `【重点评估】${focus}` : ''}
 
   private rewriteSection(section: string, guidance: string): string {
     return '[REWRITE_SECTION_SIGNAL]' + JSON.stringify({ section, guidance });
+  }
+
+  /** 本地快速校验草稿（不消耗 AI 调用） */
+  private softValidate(): string {
+    if (!this.currentDraft) return '当前没有草稿可校验。请先调用 write_chapter 生成草稿。';
+    const minWords = this.ctx.minChapterWords || 2500;
+    const minChars = minWords * 2; // 中文 1 字 ≈ 2 字符
+    const result = quickChapterFormatHeuristic(this.currentDraft, { minBodyChars: minChars });
+
+    // 提取正文字数（去掉标题行）
+    const lines = this.currentDraft.split('\n');
+    const bodyStartIndex = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
+    const bodyText = bodyStartIndex > 0 ? lines.slice(bodyStartIndex).join('\n') : this.currentDraft;
+    const wordCount = bodyText.replace(/\s/g, '').length;
+
+    return JSON.stringify({
+      wordCount,
+      targetMinWords: minWords,
+      wordCountStatus: wordCount >= minWords ? 'PASS' : `FAIL - 差 ${minWords - wordCount} 字`,
+      heuristicIssues: result.blockingReasons.concat(result.reviewReasons),
+      totalChars: this.currentDraft.length,
+    }, null, 2);
   }
 }
