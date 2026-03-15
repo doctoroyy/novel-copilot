@@ -829,6 +829,11 @@ async function runRefineOutlineMode(params: {
     if (!volume) {
       continue;
     }
+    const previousVolumeEndChapter = Math.max(0, Number(volume.startChapter || 1) - 1);
+    const actualStorySnapshot = previousVolumeEndChapter > 0
+      ? await loadSummarySnapshotUpToChapter(env.DB, project.id, previousVolumeEndChapter)
+      : null;
+    const actualStorySummary = actualStorySnapshot?.rollingSummary || undefined;
 
     await updateTaskMessage(
       env.DB,
@@ -843,6 +848,7 @@ async function runRefineOutlineMode(params: {
       volume,
       previousVolumeSummary: volumeIndex > 0 ? buildPreviousVolumeSummary(volumes[volumeIndex - 1]) : undefined,
       minChapterWords: effectiveMinChapterWords,
+      actualStorySummary,
       onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
         const suffix = totalBatches > 1
           ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
