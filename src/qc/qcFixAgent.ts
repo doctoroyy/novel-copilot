@@ -204,7 +204,7 @@ export async function fixChapter(
   // Accept repair if it doesn't introduce structural regressions
   if (finalQC.score >= 60 && !finalQC.issues.some(i => i.severity === 'critical')) {
     await db.prepare(`
-      UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000)
+      UPDATE chapters SET content = ?
       WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
     `).bind(repairedText, projectId, chapterIndex).run();
 
