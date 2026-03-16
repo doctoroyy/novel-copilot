@@ -717,14 +717,29 @@ function parseStructuredMasterOutlineText(
     throw new Error('Master outline text has no volumes');
   }
 
-  const shouldUseExplicitRanges = volumeDrafts.every((draft) => draft.range);
+  let useExplicitRanges = volumeDrafts.every((draft) => draft.range);
+
+  // 验证 AI 返回的章节范围是否合理覆盖目标章节数
+  if (useExplicitRanges) {
+    const firstStart = Math.min(...volumeDrafts.map((d) => d.range!.startChapter));
+    const lastEnd = Math.max(...volumeDrafts.map((d) => d.range!.endChapter));
+    const aiTotalChapters = lastEnd - firstStart + 1;
+    if (aiTotalChapters < targetChapters * 0.8) {
+      console.warn(
+        `AI returned chapter range [${firstStart}-${lastEnd}] = ${aiTotalChapters} chapters, ` +
+        `but target is ${targetChapters}. Falling back to even distribution.`
+      );
+      useExplicitRanges = false;
+    }
+  }
+
   const fallbackRanges = buildDefaultVolumeRanges(targetChapters, volumeDrafts.length);
 
   return {
     mainGoal: mainGoal || '主角完成阶段性崛起并推动主线冲突升级',
     milestones,
     volumes: volumeDrafts.map((draft, index) => {
-      const range = shouldUseExplicitRanges
+      const range = useExplicitRanges
         ? draft.range!
         : fallbackRanges[index];
       return {

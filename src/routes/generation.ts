@@ -525,24 +525,93 @@ export async function runOutlineGenerationTaskInBackground(params: {
       return;
     }
 
-    // ---- 全量生成模式（原有逻辑）----
-    await updateTaskMessage(
-      env.DB,
-      taskId,
-      characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...',
-      12
-    );
+    // ---- 全量生成模式 ----
+    // 断点续传：检查 DB 中是否已有部分大纲数据（上次超时中断的进度）
+    let resumedVolumes: any[] = [];
+    let masterOutline: any;
 
-    const masterOutline = await generateMasterOutline(aiConfig, {
-      bible,
-      targetChapters,
-      targetWordCount,
-      characters,
-      minChapterWords: effectiveMinChapterWords,
-    });
+    const existingOutlineRow = await env.DB.prepare(`
+      SELECT outline_json FROM outlines WHERE project_id = ?
+    `).bind(project.id).first() as { outline_json?: string } | null;
+
+    const existingSnapshot = existingOutlineRow?.outline_json
+      ? JSON.parse(existingOutlineRow.outline_json)
+      : null;
+
+    const canResume = existingSnapshot
+      && existingSnapshot.totalChapters === targetChapters
+      && Array.isArray(existingSnapshot.volumes)
+      && existingSnapshot.volumes.length > 0;
+
+    if (canResume) {
+      // 检查哪些卷已有 chapters（已完成）
+      const completedCount = existingSnapshot.volumes.filter(
+        (v: any) => Array.isArray(v.chapters) && v.chapters.length > 0
+      ).length;
+
+      if (completedCount >= existingSnapshot.volumes.length) {
+        // 所有卷都已完成，直接跳到最终保存
+        console.log(`Resume: all ${completedCount} volumes already completed, skipping to final save`);
+        await updateTaskMessage(env.DB, taskId, '检测到完整大纲，正在验证并保存...', 90);
+
+        const outline = existingSnapshot;
+        const validation = validateOutline(outline, targetChapters);
+        if (!validation.valid) {
+          console.warn('Outline validation issues:', validation.issues);
+        }
+
+        await env.DB.prepare(`
+          UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
+        `).bind(targetChapters, effectiveMinChapterWords, project.id).run();
+
+        await updateTaskMessage(env.DB, taskId, '大纲生成完成', OUTLINE_TASK_PROGRESS_TOTAL);
+        await completeTask(env.DB, taskId, true, undefined);
+        return;
+      }
+
+      // 部分卷已完成 — 从 snapshot 恢复 master outline 结构
+      console.log(`Resume: ${completedCount}/${existingSnapshot.volumes.length} volumes completed, resuming from checkpoint`);
+      resumedVolumes = existingSnapshot.volumes;
+      masterOutline = {
+        mainGoal: existingSnapshot.mainGoal || '',
+        milestones: existingSnapshot.milestones || [],
+        volumes: existingSnapshot.volumes.map((v: any) => ({
+          title: v.title,
+          startChapter: v.startChapter,
+          endChapter: v.endChapter,
+          goal: v.goal,
+          conflict: v.conflict,
+          climax: v.climax,
+          volumeEndState: v.volumeEndState,
+        })),
+      };
+
+      await updateTaskMessage(
+        env.DB,
+        taskId,
+        `检测到已有进度（${completedCount}/${existingSnapshot.volumes.length} 卷），继续生成...`,
+        computeOutlineProgress(completedCount, existingSnapshot.volumes.length)
+      );
+    } else {
+      // 没有可恢复的数据，正常生成 master outline
+      await updateTaskMessage(
+        env.DB,
+        taskId,
+        characters ? '正在基于人物关系生成总体大纲...' : '正在生成总体大纲...',
+        12
+      );
+
+      masterOutline = await generateMasterOutline(aiConfig, {
+        bible,
+        targetChapters,
+        targetWordCount,
+        characters,
+        minChapterWords: effectiveMinChapterWords,
+      });
+    }
 
     const totalVolumes = masterOutline.volumes?.length || 0;
-    const volumes = [];
+    const volumes: any[] = [];
 
     const buildOutlineSnapshot = (currentVolumes: any[]) => ({
       totalChapters: targetChapters,
@@ -562,9 +631,19 @@ export async function runOutlineGenerationTaskInBackground(params: {
         return;
       }
 
+      // 断点续传：如果该卷已有 chapters，直接复用
+      const resumedVol = resumedVolumes[i];
+      if (resumedVol && Array.isArray(resumedVol.chapters) && resumedVol.chapters.length > 0) {
+        volumes.push(resumedVol);
+        console.log(`Resume: skipping volume ${i + 1} "${resumedVol.title}" (already has ${resumedVol.chapters.length} chapters)`);
+        continue;
+      }
+
       const vol = masterOutline.volumes[i];
       const previousVolumeEndState = i > 0
-        ? buildPreviousVolumeSummary(masterOutline.volumes[i - 1])
+        ? buildPreviousVolumeSummary(
+            volumes[i - 1] || masterOutline.volumes[i - 1]
+          )
         : null;
 
       await updateTaskMessage(
