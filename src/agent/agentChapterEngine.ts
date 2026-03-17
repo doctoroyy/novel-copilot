@@ -22,6 +22,7 @@ import {
 import { buildOptimizedContext, getContextStats } from '../contextOptimizer.js';
 import { generateNarrativeGuide } from '../narrative/pacingController.js';
 import type { NarrativeGuide } from '../types/narrative.js';
+import { createEmptyRegistry } from '../types/characterState.js';
 import { createEmptyTimelineState } from '../types/timeline.js';
 import {
   analyzeChapterForStateChanges,
@@ -218,15 +219,16 @@ export async function writeChapterWithAgent(
 
     // Task B: 人物状态更新
     const characterStateTask = (async () => {
-      if (skipStateUpdate || !characterStates) return;
+      if (skipStateUpdate) return;
+      const currentStates = characterStates || createEmptyRegistry();
       try {
         const stateStartedAt = Date.now();
         const stateChanges = await analyzeChapterForStateChanges(
-          aiConfig, chapterText, chapterIndex, characterStates,
+          aiConfig, chapterText, chapterIndex, currentStates,
           { tracer, phase: 'characterState' },
         );
         if (stateChanges.changes.length > 0) {
-          updatedCharacterStates = updateCharacterRegistry(characterStates, stateChanges, chapterIndex);
+          updatedCharacterStates = updateCharacterRegistry(currentStates, stateChanges, chapterIndex);
         }
         characterStateDurationMs = Date.now() - stateStartedAt;
       } catch (error) {
