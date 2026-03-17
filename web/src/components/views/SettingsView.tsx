@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Save, BookMarked, Users, Map, FileText, PenLine, Sparkles } from 'lucide-react';
+import { Loader2, Save, BookMarked, Users, Map, FileText, PenLine } from 'lucide-react';
 import { updateProject, type ProjectDetail } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import { useToast } from '@/components/ui/use-toast';
@@ -51,8 +51,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     normalizeChapterPromptProfile(project.chapter_prompt_profile)
   );
   const [chapterPromptCustom, setChapterPromptCustom] = useState(project.chapter_prompt_custom || '');
-  const [enableAgentMode, setEnableAgentMode] = useState(project.enable_agent_mode || false);
-  
+
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('bible');
 
@@ -63,7 +62,6 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     setRoleSettings(project.role_settings || '');
     setChapterPromptProfile(normalizeChapterPromptProfile(project.chapter_prompt_profile));
     setChapterPromptCustom(project.chapter_prompt_custom || '');
-    setEnableAgentMode(project.enable_agent_mode || false);
   }, [project]);
 
   const handleSave = async () => {
@@ -75,7 +73,6 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
         role_settings: roleSettings,
         chapter_prompt_profile: chapterPromptProfile,
         chapter_prompt_custom: chapterPromptCustom,
-        enable_agent_mode: enableAgentMode,
       });
       
       toast({
@@ -254,29 +251,6 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
                     <p className="text-xs text-muted-foreground">
                       这里填写的是补充要求；留空时仅使用模板默认规则。
                     </p>
-                  </div>
-
-                  <div className="space-y-2 pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium flex items-center gap-1.5">
-                          <Sparkles className="h-4 w-4 text-amber-500" />
-                          Agent 模式（实验性）
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          启用 ReAct Agent 循环：AI 会多轮推理、查询剧情/角色/伏笔状态后再写作，生成质量更高但耗时更长。
-                        </p>
-                      </div>
-                      <Select value={enableAgentMode ? 'on' : 'off'} onValueChange={(v) => setEnableAgentMode(v === 'on')}>
-                        <SelectTrigger className="w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="off">关闭</SelectItem>
-                          <SelectItem value="on">开启</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
                   </div>
                 </CardContent>
               </Card>

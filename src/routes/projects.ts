@@ -180,7 +180,7 @@ projectsRoutes.post('/', async (c) => {
     const id = crypto.randomUUID();
 
     await c.env.DB.prepare(`
-      INSERT INTO projects (id, name, bible, user_id) VALUES (?, ?, ?, ?)
+      INSERT INTO projects (id, name, bible, user_id, enable_agent_mode) VALUES (?, ?, ?, ?, 1)
     `).bind(id, trimmedName, trimmedBible, userId).run();
 
     await c.env.DB.prepare(`

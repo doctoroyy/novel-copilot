@@ -6,6 +6,7 @@ import { logGenerationMetrics } from '../services/logger.js';
 import { generateMasterOutline, generateVolumeChapters, generateAdditionalVolumes } from '../generateOutline.js';
 import { writeEnhancedChapter } from '../enhancedChapterEngine.js';
 import { initializeRegistryFromGraph } from '../context/characterStateManager.js';
+import { createEmptyRegistry } from '../types/characterState.js';
 import { createEmptyPlotGraph } from '../types/plotGraph.js';
 import { generateNarrativeArc } from '../narrative/pacingController.js';
 import {
@@ -1812,7 +1813,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         ? undefined
         : (project.character_states_json
             ? JSON.parse(project.character_states_json)
-            : (characters ? initializeRegistryFromGraph(characters) : undefined));
+            : (characters ? initializeRegistryFromGraph(characters) : createEmptyRegistry()));
       const plotGraph = isHistoricalRewrite
         ? createEmptyPlotGraph()
         : (project.plot_graph_json
@@ -1876,7 +1877,6 @@ export async function runChapterGenerationTaskInBackground(params: {
           enableSelfReview: false,
           enableFullQC: shouldEnforceStoryContract,
           enableAutoRepair: shouldEnforceStoryContract,
-          enableAgentMode: Boolean(project.enable_agent_mode),
           skipSummaryUpdate: !summaryUpdatePlan.shouldUpdate,
           onProgress: (message, status) => {
             updateTaskMessage(env.DB, taskId, message, chapterIndex).catch(console.warn);
