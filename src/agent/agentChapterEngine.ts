@@ -425,8 +425,8 @@ ${chapterText.slice(0, 5000)}
 
 请输出 JSON:
 {
-  "updatedSummary": "更新后的剧情摘要（保留关键事件，删除过旧细节，加入本章新进展）",
-  "updatedOpenLoops": ["更新后的未解伏笔列表（已解决的删除，新增的加入）"]
+  "rollingSummary": "更新后的剧情摘要（保留关键事件，删除过旧细节，加入本章新进展）",
+  "openLoops": ["更新后的未解伏笔列表（已解决的删除，新增的加入）"]
 }`;
 
   const raw = fallbackConfigs?.length
