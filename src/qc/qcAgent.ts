@@ -150,7 +150,7 @@ export async function runQCScan(
       tier2Candidates.push(chIdx);
     }
 
-    if (i % 50 === 0 || i === chapterRows.length - 1) {
+    if (i % 20 === 0 || i === chapterRows.length - 1) {
       await updateTaskMessage(db, taskId, `Tier 1: 扫描第 ${i + 1}/${chapterRows.length} 章...`);
       const runtime = await getTaskRuntimeControl(db, taskId);
       if (runtime.cancelRequested) {
@@ -259,6 +259,11 @@ export async function runQCScan(
 
         const CONCURRENCY = 3;
         for (let batch = 0; batch < continuityPairs.length; batch += CONCURRENCY) {
+          const runtime = await getTaskRuntimeControl(db, taskId);
+          if (runtime.cancelRequested) {
+            throw new Error('任务已取消');
+          }
+
           const batchPairs = continuityPairs.slice(batch, batch + CONCURRENCY);
 
           await Promise.all(batchPairs.map(async (pair: ContinuityPair) => {
@@ -305,6 +310,11 @@ export async function runQCScan(
   };
 
   if (scanMode !== 'quick') {
+    const runtime = await getTaskRuntimeControl(db, taskId);
+    if (runtime.cancelRequested) {
+      throw new Error('任务已取消');
+    }
+
     const aiConfig = await getAIConfigFromRegistry(db, 'qc');
     if (aiConfig) {
       await updateTaskMessage(db, taskId, '全局分析: 正在分析...');
