@@ -21,6 +21,7 @@ export type AICallPhase =
   | 'plotGraph'
   | 'timeline'
   | 'outline'
+  | 'qc'
   | 'other';
 
 export interface AICallTrace {

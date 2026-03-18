@@ -206,7 +206,7 @@ export type EnhancedWriteChapterParams = {
   skipSummaryUpdate?: boolean;
   /** 跳过状态更新 */
   skipStateUpdate?: boolean;
-  /** Agent 最大推理轮次（默认 8） */
+  /** Agent 最大推理轮次（默认 4） */
   agentMaxTurns?: number;
   /** Agent AI 调用预算（默认 15） */
   agentMaxAICalls?: number;
@@ -737,10 +737,10 @@ async function generateSummaryUpdate(
 
 输出格式：
 {
-  “longTermMemory”: “长期记忆内容”,
-  “midTermMemory”: “中期记忆内容”,
-  “recentMemory”: “近期记忆内容”,
-  “openLoops”: [“未解伏笔1”, “未解伏笔2”, ...] // 3~8 条，每条不超过 30 字
+  "longTermMemory": "长期记忆内容",
+  "midTermMemory": "中期记忆内容",
+  "recentMemory": "近期记忆内容",
+  "openLoops": ["未解伏笔1", "未解伏笔2", ...] // 3~8 条，每条不超过 30 字
 }
 `.trim();
 
