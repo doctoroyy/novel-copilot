@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { ProjectDetail, QCReportResponse } from '@/lib/api';
-import { startQCScan, getQCReport, fixChapterIssues, fixAllIssues, cancelTaskById } from '@/lib/api';
+import { startQCScan, getQCReport, fixChapterIssues, fixAllIssues, cancelTaskById, cancelAllActiveTasks } from '@/lib/api';
 import { useGeneration } from '@/contexts/GenerationContext';
 
 interface QualityViewProps {
@@ -120,7 +120,8 @@ export function QualityView({ project }: QualityViewProps) {
         // Fallback for page refresh: cancel by numeric ID directly
         await cancelTaskById(activeBackendTaskId);
       } else {
-        return;
+        // Ultimate fallback: cancel any active tasks for this project
+        await cancelAllActiveTasks(project.name);
       }
       
       setScanning(false);
