@@ -158,6 +158,7 @@ export async function writeChapterWithAgent(
     chapterIndex,
     totalChapters,
     chapterOutlineCharacters: enhancedOutline?.scenes.flatMap(s => s.characters),
+    outlineContext: params.outlineContext,
   });
   const contextStats = getContextStats(optimizedContext);
   const contextBuildDurationMs = Date.now() - contextBuildStartedAt;

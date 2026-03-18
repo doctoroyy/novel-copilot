@@ -26,7 +26,8 @@ import {
   buildTimelineContext,
   getCharacterNameMap,
 } from './context/timelineManager.js';
-import { compressRollingSummaryRecency } from './utils/rollingSummary.js';
+import { compressRollingSummaryRecency, normalizeRollingSummary } from './utils/rollingSummary.js';
+import type { OutlineChapterContext } from './utils/outline.js';
 
 /**
  * 上下文预算配置
@@ -408,6 +409,9 @@ export function optimizeLastChapters(
 
 /**
  * 构建优化后的完整上下文
+ *
+ * 策略：现代模型上下文窗口足够大（128K-200K tokens），
+ * 不再做压缩/预算裁剪，直接塞入全量 bible、记忆、大纲和近章原文。
  */
 export function buildOptimizedContext(params: {
   bible: string;
@@ -421,6 +425,8 @@ export function buildOptimizedContext(params: {
   chapterIndex: number;
   totalChapters: number;
   chapterOutlineCharacters?: string[];
+  outlineContext?: OutlineChapterContext | null;
+  /** @deprecated 不再使用预算系统，保留参数兼容性 */
   budget?: ContextBudget;
 }): string {
   const {
@@ -434,14 +440,8 @@ export function buildOptimizedContext(params: {
     narrativeGuide,
     chapterIndex,
     totalChapters,
-    chapterOutlineCharacters,
+    outlineContext,
   } = params;
-
-  // 根据节奏调整预算
-  let budget = params.budget || DEFAULT_BUDGET;
-  if (narrativeGuide) {
-    budget = adjustBudgetForPacing(budget, narrativeGuide.pacingType);
-  }
 
   const parts: string[] = [];
 
@@ -450,39 +450,70 @@ export function buildOptimizedContext(params: {
 - 当前章节: 第${chapterIndex}/${totalChapters}章
 - 是否终章: ${chapterIndex === totalChapters ? '是' : '否'}`);
 
-  // Story Bible (压缩)
-  const compressedBible = compressBible(
-    bible,
-    Math.floor(budget.totalTokens * budget.allocation.bible)
-  );
-  parts.push(`【核心设定】\n${compressedBible}`);
+  // Story Bible — 全量，不压缩
+  if (bible) {
+    parts.push(`【核心设定】\n${bible}`);
+  }
 
-  // 人物状态 (优化)
+  // 当前卷大纲上下文（全量）
+  if (outlineContext) {
+    parts.push(formatOutlineContext(outlineContext, chapterIndex));
+  }
+
+  // 人物状态 — 全量输出，不按评分截断
   if (characterStates && Object.keys(characterStates.snapshots).length > 0) {
-    const charContext = optimizeCharacterContext(
-      characterStates,
-      chapterIndex,
-      chapterOutlineCharacters,
-      Math.floor(budget.totalTokens * budget.allocation.characterState)
-    );
-    if (charContext) {
-      parts.push(charContext);
+    const snapshots = Object.values(characterStates.snapshots);
+    const charParts: string[] = ['【人物状态】'];
+    for (const s of snapshots) {
+      charParts.push(formatCompactSnapshot(s));
+    }
+    if (charParts.length > 1) {
+      parts.push(charParts.join('\n'));
     }
   }
 
-  // 剧情图谱 (优化)
+  // 剧情图谱 — 全量输出，不按预算截断
   if (plotGraph && plotGraph.nodes.length > 0) {
-    const plotContext = optimizePlotContext(
-      plotGraph,
-      chapterIndex,
-      Math.floor(budget.totalTokens * budget.allocation.plotContext)
+    const plotParts: string[] = [];
+
+    // 紧急伏笔
+    const urgentForeshadowing = plotGraph.pendingForeshadowing.filter(
+      (p) => p.urgency === 'critical' || p.urgency === 'high'
     );
-    if (plotContext) {
-      parts.push(plotContext);
+    if (urgentForeshadowing.length > 0) {
+      plotParts.push(formatUrgentForeshadowing(urgentForeshadowing));
+    }
+
+    // 活跃主线
+    const mainPlots = plotGraph.activeMainPlots
+      .map((id) => plotGraph.nodes.find((n) => n.id === id))
+      .filter(Boolean) as PlotNode[];
+    if (mainPlots.length > 0) {
+      plotParts.push(formatActivePlots(mainPlots, '主线'));
+    }
+
+    // 活跃事件
+    const activeNodes = plotGraph.nodes
+      .filter((n) => n.status === 'active')
+      .sort((a, b) => b.introducedAt - a.introducedAt);
+    if (activeNodes.length > 0) {
+      plotParts.push(`【活跃事件】\n${activeNodes.map((e) => `• 第${e.introducedAt}章: ${e.content}`).join('\n')}`);
+    }
+
+    // 关键历史里程碑
+    const milestones = plotGraph.nodes
+      .filter((n) => n.importance >= 8 && chapterIndex - n.introducedAt >= 15)
+      .sort((a, b) => b.importance - a.importance);
+    if (milestones.length > 0) {
+      plotParts.push(`【关键历史里程碑】\n${milestones.map((m) => `• 第${m.introducedAt}章: ${m.content}`).join('\n')}`);
+    }
+
+    if (plotParts.length > 0) {
+      parts.push(plotParts.join('\n\n'));
     }
   }
 
-  // 时间线上下文 (防止事件重复)
+  // 时间线上下文
   if (timeline && timeline.events.length > 0) {
     const characterNameMap = getCharacterNameMap(characters, characterStates);
     const timelineContext = buildTimelineContext(timeline, chapterIndex, characterNameMap);
@@ -500,17 +531,13 @@ export function buildOptimizedContext(params: {
 ${narrativeGuide.prohibitions.length > 0 ? `- 禁止: ${narrativeGuide.prohibitions.join('; ')}` : ''}`);
   }
 
-  // 滚动摘要 (优化)
-  const optSummary = optimizeRollingSummary(
-    rollingSummary,
-    chapterIndex,
-    Math.floor(budget.totalTokens * budget.allocation.rollingSummary)
-  );
-  if (optSummary) {
-    parts.push(`【剧情摘要】\n${optSummary}`);
+  // 滚动摘要 — 全量，仅做 normalize，不压缩
+  const normalizedSummary = normalizeRollingSummary(rollingSummary || '');
+  if (normalizedSummary) {
+    parts.push(`【剧情摘要】\n${normalizedSummary}`);
   }
 
-  // 近章原文：完整保留，不做压缩（现代模型上下文窗口足够大）
+  // 近章原文：全量保留
   const lastChapterParts: string[] = [];
   if (lastChapters.length >= 2) {
     lastChapterParts.push(`【前一章原文】\n${lastChapters[lastChapters.length - 2]}`);
@@ -524,6 +551,29 @@ ${narrativeGuide.prohibitions.length > 0 ? `- 禁止: ${narrativeGuide.prohibiti
   }
 
   return parts.join('\n\n');
+}
+
+/**
+ * 格式化卷级大纲上下文
+ */
+function formatOutlineContext(outlineContext: OutlineChapterContext, currentChapterIndex: number): string {
+  const { volume, volumeIndex } = outlineContext;
+  const lines: string[] = [`【当前卷大纲】`];
+  lines.push(`卷名: ${volume.title}`);
+  if (volume.goal) lines.push(`卷目标: ${volume.goal}`);
+  if (volume.conflict) lines.push(`核心冲突: ${volume.conflict}`);
+  if (volume.climax) lines.push(`卷高潮: ${volume.climax}`);
+  if (volume.volumeEndState) lines.push(`卷末状态: ${volume.volumeEndState}`);
+  lines.push(`章节范围: 第${volume.startChapter}-${volume.endChapter}章`);
+  lines.push('');
+  lines.push('本卷章节列表:');
+  for (const ch of volume.chapters) {
+    const marker = ch.index === currentChapterIndex ? ' ← 当前章' : '';
+    lines.push(`  第${ch.index}章 ${ch.title}${marker}`);
+    if (ch.goal) lines.push(`    目标: ${ch.goal}`);
+    if (ch.hook) lines.push(`    钩子: ${ch.hook}`);
+  }
+  return lines.join('\n');
 }
 
 /**

@@ -1869,6 +1869,7 @@ export async function runChapterGenerationTaskInBackground(params: {
           plotGraph,
           narrativeArc,
           enhancedOutline,
+          outlineContext,
           chapterPromptProfile: project.chapter_prompt_profile,
           chapterPromptCustom: project.chapter_prompt_custom,
           enableContextOptimization: true,
