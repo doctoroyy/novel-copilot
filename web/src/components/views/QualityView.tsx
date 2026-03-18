@@ -29,6 +29,7 @@ export function QualityView({ project }: QualityViewProps) {
   const [scanning, setScanning] = useState(false);
   const [fixing, setFixing] = useState<number | 'all' | null>(null);
   const [activeBackendTaskId, setActiveBackendTaskId] = useState<number | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [scanMode, setScanMode] = useState<ScanMode>('standard');
   const [expandedChapters, setExpandedChapters] = useState<Set<number>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -111,25 +112,34 @@ export function QualityView({ project }: QualityViewProps) {
   };
 
   const handleCancelScan = async () => {
+    // console.log("Attempting to cancel scan...", { tid: scanTaskIdRef.current, activeBackendTaskId });
+    setCancelling(true);
     const tid = scanTaskIdRef.current || fixTaskIdRef.current;
     
     try {
       if (tid) {
-        await cancelCtxTask(tid);
-      } else if (activeBackendTaskId) {
-        // Fallback for page refresh: cancel by numeric ID directly
+        // First try the context task to update floating ball UI
+        await cancelCtxTask(tid).catch(e => console.warn("Context cancel failed:", e));
+      }
+      
+      if (activeBackendTaskId) {
+        // Always try direct numeric cancellation for robustness
         await cancelTaskById(activeBackendTaskId);
       } else {
-        // Ultimate fallback: cancel any active tasks for this project
+        // Ultimate fallback: cancel everything for this project
         await cancelAllActiveTasks(project.name);
       }
       
       setScanning(false);
       setFixing(null);
       setActiveBackendTaskId(null);
-      setTimeout(() => loadReport(true), 500);
+      setTimeout(() => {
+        loadReport(true);
+        setCancelling(false);
+      }, 800);
     } catch (err) {
       setError((err as Error).message);
+      setCancelling(false);
     }
   };
 
@@ -242,13 +252,25 @@ export function QualityView({ project }: QualityViewProps) {
               <SelectItem value="full">全量扫描</SelectItem>
             </SelectContent>
           </Select>
-            {scanning ? (
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={handleCancelScan} className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive">
-                  <XCircle className="h-4 w-4" />
+            {scanning || cancelling ? (
+              <div className="flex items-center gap-3">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  onClick={handleCancelScan} 
+                  disabled={cancelling}
+                  className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  title="取消扫描"
+                >
+                  {cancelling ? (
+                    <RefreshCw className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <XCircle className="h-5 w-5" />
+                  )}
                 </Button>
-                <div className="flex items-center text-sm font-medium animate-pulse text-primary">
-                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />扫描中
+                <div className="flex items-center text-sm font-medium animate-pulse text-primary shrink-0">
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                  {cancelling ? '正在取消...' : '扫描中...'}
                 </div>
               </div>
             ) : (
