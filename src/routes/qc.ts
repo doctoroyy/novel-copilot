@@ -41,12 +41,6 @@ qcRoutes.post('/:name/qc/scan', async (c) => {
 
     const reportId = generateReportId();
 
-    // Create report row
-    await c.env.DB.prepare(`
-      INSERT INTO qc_reports (id, project_id, user_id, scan_mode, report_json, status)
-      VALUES (?, ?, ?, ?, '{}', 'running')
-    `).bind(reportId, projectId, userId, scanMode).run();
-
     // Create background task
     const { taskId } = await createBackgroundTask(
       c.env.DB,
@@ -57,6 +51,12 @@ qcRoutes.post('/:name/qc/scan', async (c) => {
       0,
       '准备开始质量扫描...',
     );
+
+    // Create report row
+    await c.env.DB.prepare(`
+      INSERT INTO qc_reports (id, project_id, user_id, scan_mode, report_json, status, task_id)
+      VALUES (?, ?, ?, ?, '{}', 'running', ?)
+    `).bind(reportId, projectId, userId, scanMode, taskId).run();
 
     // Enqueue
     await c.env.GENERATION_QUEUE.send({
@@ -87,7 +87,7 @@ qcRoutes.get('/:name/qc/report', async (c) => {
 
     const report = await c.env.DB.prepare(`
       SELECT id, scan_mode, report_json, overall_score, total_issues,
-             critical_count, major_count, minor_count, status, created_at, updated_at
+             critical_count, major_count, minor_count, status, created_at, updated_at, task_id
       FROM qc_reports
       WHERE project_id = ? AND user_id = ?
       ORDER BY created_at DESC
@@ -115,6 +115,7 @@ qcRoutes.get('/:name/qc/report', async (c) => {
         minorCount: report.minor_count,
         status: report.status,
         createdAt: report.created_at,
+        taskId: report.task_id,
         data: reportData,
       },
     });
@@ -137,7 +138,7 @@ qcRoutes.get('/:name/qc/report/:reportId', async (c) => {
 
     const report = await c.env.DB.prepare(`
       SELECT id, scan_mode, report_json, overall_score, total_issues,
-             critical_count, major_count, minor_count, status, created_at, updated_at
+             critical_count, major_count, minor_count, status, created_at, updated_at, task_id
       FROM qc_reports
       WHERE id = ? AND project_id = ? AND user_id = ?
     `).bind(reportId, projectId, userId).first() as any;
@@ -163,6 +164,7 @@ qcRoutes.get('/:name/qc/report/:reportId', async (c) => {
         minorCount: report.minor_count,
         status: report.status,
         createdAt: report.created_at,
+        taskId: report.task_id,
         data: reportData,
       },
     });
@@ -189,11 +191,6 @@ qcRoutes.post('/:name/qc/fix', async (c) => {
       return c.json({ success: false, error: 'Missing chapterIndex or reportId' }, 400);
     }
 
-    // Mark report as repairing so frontend can poll
-    await c.env.DB.prepare(`
-      UPDATE qc_reports SET status = 'repairing', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(reportId).run();
-
     const { taskId } = await createBackgroundTask(
       c.env.DB,
       projectId,
@@ -203,6 +200,11 @@ qcRoutes.post('/:name/qc/fix', async (c) => {
       chapterIndex,
       `准备修复第 ${chapterIndex} 章...`,
     );
+
+    // Mark report as repairing so frontend can poll
+    await c.env.DB.prepare(`
+      UPDATE qc_reports SET status = 'repairing', task_id = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(taskId, reportId).run();
 
     await c.env.GENERATION_QUEUE.send({
       taskType: 'qc_fix',
@@ -237,11 +239,6 @@ qcRoutes.post('/:name/qc/fix-all', async (c) => {
       return c.json({ success: false, error: 'Missing reportId' }, 400);
     }
 
-    // Mark report as repairing so frontend can poll
-    await c.env.DB.prepare(`
-      UPDATE qc_reports SET status = 'repairing', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(reportId).run();
-
     const { taskId } = await createBackgroundTask(
       c.env.DB,
       projectId,
@@ -251,6 +248,11 @@ qcRoutes.post('/:name/qc/fix-all', async (c) => {
       0,
       '准备批量修复...',
     );
+
+    // Mark report as repairing so frontend can poll
+    await c.env.DB.prepare(`
+      UPDATE qc_reports SET status = 'repairing', task_id = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
+    `).bind(taskId, reportId).run();
 
     await c.env.GENERATION_QUEUE.send({
       taskType: 'qc_fix',

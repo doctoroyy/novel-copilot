@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { ProjectDetail, QCReportResponse } from '@/lib/api';
-import { startQCScan, getQCReport, fixChapterIssues, fixAllIssues } from '@/lib/api';
+import { startQCScan, getQCReport, fixChapterIssues, fixAllIssues, cancelTaskById } from '@/lib/api';
 import { useGeneration } from '@/contexts/GenerationContext';
 
 interface QualityViewProps {
@@ -28,6 +28,7 @@ export function QualityView({ project }: QualityViewProps) {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [fixing, setFixing] = useState<number | 'all' | null>(null);
+  const [activeBackendTaskId, setActiveBackendTaskId] = useState<number | null>(null);
   const [scanMode, setScanMode] = useState<ScanMode>('standard');
   const [expandedChapters, setExpandedChapters] = useState<Set<number>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<string>('all');
@@ -44,8 +45,14 @@ export function QualityView({ project }: QualityViewProps) {
       setReport(r);
       if (r?.status === 'running') {
         setScanning(true);
+        if (r.taskId) setActiveBackendTaskId(r.taskId);
+      } else if (r?.status === 'repairing') {
+        setScanning(false);
+        if (r.taskId) setActiveBackendTaskId(r.taskId);
       } else {
         setScanning(false);
+        setFixing(null);
+        setActiveBackendTaskId(null);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -105,11 +112,20 @@ export function QualityView({ project }: QualityViewProps) {
 
   const handleCancelScan = async () => {
     const tid = scanTaskIdRef.current || fixTaskIdRef.current;
-    if (!tid) return;
+    
     try {
-      await cancelCtxTask(tid);
+      if (tid) {
+        await cancelCtxTask(tid);
+      } else if (activeBackendTaskId) {
+        // Fallback for page refresh: cancel by numeric ID directly
+        await cancelTaskById(activeBackendTaskId);
+      } else {
+        return;
+      }
+      
       setScanning(false);
       setFixing(null);
+      setActiveBackendTaskId(null);
       setTimeout(() => loadReport(true), 500);
     } catch (err) {
       setError((err as Error).message);
