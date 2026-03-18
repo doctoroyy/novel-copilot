@@ -65,6 +65,7 @@ export type ProjectDetail = {
   role_settings?: string;
   chapter_prompt_profile?: string;
   chapter_prompt_custom?: string;
+  custom_system_prompt?: string;
   enable_agent_mode?: boolean;
   outline: NovelOutline | null;
   chapters: string[];
@@ -1612,6 +1613,7 @@ export async function updateProject(
     role_settings?: string;
     chapter_prompt_profile?: string;
     chapter_prompt_custom?: string;
+    custom_system_prompt?: string;
     enable_agent_mode?: boolean;
     minChapterWords?: number;
   }

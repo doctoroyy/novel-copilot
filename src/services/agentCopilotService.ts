@@ -113,6 +113,7 @@ type ProjectSnapshot = {
     enableAgentMode: boolean;
     background: string | null;
     roleSettings: string | null;
+    customSystemPrompt: string | null;
   };
   state: {
     totalChapters: number;
@@ -858,6 +859,7 @@ async function buildProjectSnapshot(
     projectColumns.has('enable_agent_mode') ? 'p.enable_agent_mode' : '0 AS enable_agent_mode',
     projectColumns.has('background') ? 'p.background' : 'NULL AS background',
     projectColumns.has('role_settings') ? 'p.role_settings' : 'NULL AS role_settings',
+    projectColumns.has('custom_system_prompt') ? 'p.custom_system_prompt' : 'NULL AS custom_system_prompt',
     's.total_chapters',
     's.min_chapter_words',
     's.next_chapter_index',
@@ -936,6 +938,7 @@ async function buildProjectSnapshot(
       enableAgentMode: Boolean((row as any).enable_agent_mode),
       background: (row as any).background ? String((row as any).background) : null,
       roleSettings: (row as any).role_settings ? String((row as any).role_settings) : null,
+      customSystemPrompt: (row as any).custom_system_prompt ? String((row as any).custom_system_prompt) : null,
     },
     state,
     outline,
@@ -982,7 +985,7 @@ function buildSystemPrompt(skills: AgentSkillRecord[]): string {
     '如果要修改项目，请优先组合成一份完整 proposal；同一轮里尽量避免拆成多份 proposal。',
     '输出必须是严格 JSON，不要附带 Markdown 代码块之外的解释。',
     '支持的 action type 只有以下几种：',
-    '- update_project: payload 可包含 bible, chapter_prompt_profile, chapter_prompt_custom, enable_agent_mode, background, role_settings, minChapterWords。',
+    '- update_project: payload 可包含 bible, chapter_prompt_profile, chapter_prompt_custom, custom_system_prompt, enable_agent_mode, background, role_settings, minChapterWords。',
     '- replace_outline: payload 必须包含 outline 对象；如果要改大纲，请给出完整可落地的大纲结构。',
     '- update_characters: payload 必须包含 characters 对象。',
     '- upsert_chapter: payload 必须包含 chapterIndex 和 content；章节不存在时可创建，存在时覆盖。',
@@ -1033,6 +1036,7 @@ function buildUserPrompt(
     truncateText(projectSnapshot.project.bible, 8000),
     projectSnapshot.project.background ? `\n【背景补充】\n${truncateText(projectSnapshot.project.background, 3000)}` : '',
     projectSnapshot.project.roleSettings ? `\n【角色设定补充】\n${truncateText(projectSnapshot.project.roleSettings, 3000)}` : '',
+    projectSnapshot.project.customSystemPrompt ? `\n【核心规则设定(System Prompt)】\n${truncateText(projectSnapshot.project.customSystemPrompt, 3000)}` : '',
     projectSnapshot.project.chapterPromptCustom ? `\n【正文附加提示】\n${truncateText(projectSnapshot.project.chapterPromptCustom, 2000)}` : '',
     '',
     '【滚动摘要】',

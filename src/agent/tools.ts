@@ -27,6 +27,8 @@ export type ToolContext = {
   chapterPromptProfile?: string;
   /** 章节自定义 prompt */
   chapterPromptCustom?: string;
+  /** 自定义系统级规则提示词 */
+  customSystemPrompt?: string | null;
 };
 
 /** AI 增强工具名称列表（消耗 AI 调用预算） */

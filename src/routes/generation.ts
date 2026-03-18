@@ -1577,6 +1577,7 @@ export async function runChapterGenerationTaskInBackground(params: {
           p.bible,
           p.chapter_prompt_profile,
           p.chapter_prompt_custom,
+          p.custom_system_prompt,
           s.*,
           o.outline_json,
           c.characters_json,
@@ -1872,6 +1873,7 @@ export async function runChapterGenerationTaskInBackground(params: {
           outlineContext,
           chapterPromptProfile: project.chapter_prompt_profile,
           chapterPromptCustom: project.chapter_prompt_custom,
+          customSystemPrompt: project.custom_system_prompt,
           enableContextOptimization: true,
           // Outline-derived title/goal/hook already provide structured guidance.
           enablePlanning: shouldEnablePlanning,

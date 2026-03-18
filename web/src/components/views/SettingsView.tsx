@@ -51,6 +51,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     normalizeChapterPromptProfile(project.chapter_prompt_profile)
   );
   const [chapterPromptCustom, setChapterPromptCustom] = useState(project.chapter_prompt_custom || '');
+  const [customSystemPrompt, setCustomSystemPrompt] = useState(project.custom_system_prompt || '');
 
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('bible');
@@ -62,6 +63,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     setRoleSettings(project.role_settings || '');
     setChapterPromptProfile(normalizeChapterPromptProfile(project.chapter_prompt_profile));
     setChapterPromptCustom(project.chapter_prompt_custom || '');
+    setCustomSystemPrompt(project.custom_system_prompt || '');
   }, [project]);
 
   const handleSave = async () => {
@@ -73,6 +75,7 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
         role_settings: roleSettings,
         chapter_prompt_profile: chapterPromptProfile,
         chapter_prompt_custom: chapterPromptCustom,
+        custom_system_prompt: customSystemPrompt,
       });
       
       toast({
@@ -240,17 +243,25 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
                     </p>
                   </div>
 
-                  <div className="space-y-2 flex-1 min-h-[260px] flex flex-col">
-                    <p className="text-sm font-medium">自定义补充提示词（可选）</p>
-                    <Textarea
-                      value={chapterPromptCustom}
-                      onChange={(e) => setChapterPromptCustom(e.target.value)}
-                      className="flex-1 resize-none font-mono text-sm leading-relaxed"
-                      placeholder="例如：减少形容词密度，多写人物动作和决策，不要机械承接上一章最后一句。"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      这里填写的是补充要求；留空时仅使用模板默认规则。
-                    </p>
+                  <div className="space-y-4 flex-1 min-h-[260px] flex flex-col">
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <p className="text-sm font-medium">自定义核心提示词 (System Prompt)</p>
+                      <Textarea
+                        value={customSystemPrompt}
+                        onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                        className="flex-1 resize-none font-mono text-sm leading-relaxed"
+                        placeholder="留空则使用默认小白文规则。填写后将完全覆盖系统的写作基础规则（保留格式约束），实现千文千面。"
+                      />
+                    </div>
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <p className="text-sm font-medium">自定义补充提示词（可选附加说明）</p>
+                      <Textarea
+                        value={chapterPromptCustom}
+                        onChange={(e) => setChapterPromptCustom(e.target.value)}
+                        className="flex-1 resize-none font-mono text-sm leading-relaxed"
+                        placeholder="例如：减少形容词密度，多写人物动作和决策，不要机械承接上一章最后一句。"
+                      />
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -264,6 +275,9 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
                     `**模板**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.label || '轻快网文（默认）'}`,
                     '',
                     `**模板说明**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.description || ''}`,
+                    '',
+                    '**自定义核心提示词**:',
+                    customSystemPrompt || '*未设置（使用系统默认）*',
                     '',
                     '**自定义补充提示词**:',
                     chapterPromptCustom || '*未设置*',
