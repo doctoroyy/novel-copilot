@@ -118,10 +118,10 @@ export async function writeChapterWithAgent(
   // 3. 创建 ToolExecutor 和 Orchestrator
   const toolExecutor = new ToolExecutor(toolContext, aiConfig, { tracer, phase: 'other' });
   const agentConfig: AgentConfig = {
-    maxTurns: params.agentMaxTurns ?? 8,
-    maxToolCallsPerTurn: 3,
+    maxTurns: params.agentMaxTurns ?? 4,
+    maxToolCallsPerTurn: 2,
     enableReaderSimulation: true,
-    maxAICalls: params.agentMaxAICalls ?? 15,
+    maxAICalls: params.agentMaxAICalls ?? 6,
     onProgress: params.onProgress
       ? (phase, detail) => {
           const statusMap: Record<string, 'analyzing' | 'planning' | 'generating' | 'reviewing'> = {
