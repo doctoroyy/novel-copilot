@@ -10,6 +10,12 @@ const TASK_STREAM_POLL_INTERVAL_MS = 1500;
 const TASK_STREAM_KEEPALIVE_MS = 15000;
 const CHAPTER_TASK_STALE_THRESHOLD_MS = 12 * 60 * 1000;
 const DEFAULT_TASK_STALE_THRESHOLD_MS = 30 * 60 * 1000;
+export type TaskRuntimeControl = {
+  exists: boolean;
+  status: string | null;
+  cancelRequested: boolean;
+};
+
 
 function toTimestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -513,6 +519,24 @@ tasksRoutes.get('/tasks/:id', async (c) => {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+export async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<TaskRuntimeControl> {
+  const row = await db.prepare(`
+    SELECT status, cancel_requested
+    FROM generation_tasks
+    WHERE id = ?
+  `).bind(taskId).first() as { status: string; cancel_requested: number | null } | null;
+
+  if (!row) {
+    return { exists: false, status: null, cancelRequested: false };
+  }
+
+  return {
+    exists: true,
+    status: row.status,
+    cancelRequested: Boolean(row.cancel_requested),
+  };
+}
 
 // Get active task for a project
 tasksRoutes.get('/projects/:name/active-task', async (c) => {

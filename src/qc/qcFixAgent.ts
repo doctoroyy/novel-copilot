@@ -1,5 +1,5 @@
 import { getAIConfigFromRegistry, generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
-import { updateTaskMessage, completeTask } from '../routes/tasks.js';
+import { updateTaskMessage, completeTask, getTaskRuntimeControl } from '../routes/tasks.js';
 import { runQuickQC, type QCResult } from './multiDimensionalQC.js';
 import type { QCReport, ActionableIssue, ChapterQCEntry } from './qcAgent.js';
 import type { RepairResult } from './repairLoop.js';
@@ -250,6 +250,11 @@ export async function fixAllChapters(
   for (let i = 0; i < uniqueChapters.length; i++) {
     const chIdx = uniqueChapters[i];
     await updateTaskMessage(db, taskId, `修复第 ${chIdx} 章 (${i + 1}/${uniqueChapters.length})...`);
+
+    const runtime = await getTaskRuntimeControl(db, taskId);
+    if (runtime.cancelRequested) {
+      throw new Error('任务已取消');
+    }
 
     try {
       await fixChapter(db, projectId, chIdx, reportId, taskId);

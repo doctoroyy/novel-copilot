@@ -1,5 +1,5 @@
 import { getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
-import { createBackgroundTask, updateTaskMessage, completeTask } from '../routes/tasks.js';
+import { createBackgroundTask, updateTaskMessage, completeTask, getTaskRuntimeControl } from '../routes/tasks.js';
 import { runQuickQC, type QCResult, type QCIssue } from './multiDimensionalQC.js';
 import { quickEndingHeuristic, quickChapterFormatHeuristic } from '../qc.js';
 import { checkConsistency } from '../context/consistencyChecker.js';
@@ -152,6 +152,10 @@ export async function runQCScan(
 
     if (i % 50 === 0 || i === chapterRows.length - 1) {
       await updateTaskMessage(db, taskId, `Tier 1: 扫描第 ${i + 1}/${chapterRows.length} 章...`);
+      const runtime = await getTaskRuntimeControl(db, taskId);
+      if (runtime.cancelRequested) {
+        throw new Error('任务已取消');
+      }
     }
   }
 
@@ -186,6 +190,11 @@ export async function runQCScan(
         if (!row) continue;
 
         await updateTaskMessage(db, taskId, `Tier 2: AI 检测第 ${chIdx} 章 (${i + 1}/${tier2Candidates.length})...`);
+
+        const runtime = await getTaskRuntimeControl(db, taskId);
+        if (runtime.cancelRequested) {
+          throw new Error('任务已取消');
+        }
 
         const existingEntry = chapters[chIdx];
         const aiIssues: QCIssue[] = [];
@@ -242,6 +251,11 @@ export async function runQCScan(
       const aiConfig = await getAIConfigFromRegistry(db, 'qc');
       if (aiConfig) {
         await updateTaskMessage(db, taskId, `连续性检测: 共 ${continuityPairs.length} 对...`);
+
+        const runtime = await getTaskRuntimeControl(db, taskId);
+        if (runtime.cancelRequested) {
+          throw new Error('任务已取消');
+        }
 
         const CONCURRENCY = 3;
         for (let batch = 0; batch < continuityPairs.length; batch += CONCURRENCY) {
