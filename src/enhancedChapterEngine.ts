@@ -166,6 +166,8 @@ export type EnhancedWriteChapterParams = {
   chapterPromptProfile?: string;
   /** 正文自定义补充提示词 */
   chapterPromptCustom?: string;
+  /** 自定义系统级核心设定 */
+  customSystemPrompt?: string | null;
   /** 人物关系图谱 */
   characters?: CharacterRelationGraph;
 

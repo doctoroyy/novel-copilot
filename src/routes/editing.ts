@@ -358,7 +358,7 @@ editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
 
     // Get project details
     const project = await c.env.DB.prepare(`
-      SELECT p.bible, p.background, p.role_settings FROM projects p
+      SELECT p.bible, p.background, p.role_settings, p.custom_system_prompt FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
@@ -424,6 +424,7 @@ editingRoutes.put('/projects/:name', async (c) => {
       role_settings,
       chapter_prompt_profile,
       chapter_prompt_custom,
+      custom_system_prompt,
       enable_agent_mode,
       outline,
       minChapterWords,
@@ -470,6 +471,7 @@ editingRoutes.put('/projects/:name', async (c) => {
         role_settings = COALESCE(?, role_settings),
         chapter_prompt_profile = COALESCE(?, chapter_prompt_profile),
         chapter_prompt_custom = COALESCE(?, chapter_prompt_custom),
+        custom_system_prompt = COALESCE(?, custom_system_prompt),
         enable_agent_mode = COALESCE(?, enable_agent_mode),
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
@@ -479,6 +481,7 @@ editingRoutes.put('/projects/:name', async (c) => {
       role_settings,
       chapter_prompt_profile,
       chapter_prompt_custom,
+      custom_system_prompt,
       enable_agent_mode != null ? (enable_agent_mode ? 1 : 0) : null,
       (project as any).id
     ).run();
@@ -521,7 +524,7 @@ editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
 
     // Get project details
     const project = await c.env.DB.prepare(`
-      SELECT p.bible, p.background, p.role_settings FROM projects p
+      SELECT p.bible, p.background, p.role_settings, p.custom_system_prompt FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
