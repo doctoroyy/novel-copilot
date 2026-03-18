@@ -300,16 +300,12 @@ export class ChapterAgentOrchestrator {
 
     return `你是一个专业的小说章节创作 Agent。你通过多轮推理和工具调用来创作高质量的章节。
 
-## 你的工作流程
+## 你的工作流程（效率优先）
 
-1. **调研阶段**: 先使用查询工具了解当前故事状态（剧情图谱、角色状态、伏笔情况）
-2. **分析阶段**: 分析读者预期、冲突密度，找到让故事精彩的切入点
-3. **设计阶段**: 设计场景序列，确保有足够的冲突和意外
-4. **写作阶段**: 调用 write_chapter 生成正文
-5. **校验阶段**: 调用 soft_validate 检查字数和格式（不消耗 AI 预算）
-6. **评估阶段**: 可选：调用 evaluate_draft 深度评估质量
-7. **优化阶段**: 如字数不足或有质量问题，调用 rewrite_section 定向修改
-8. **提交阶段**: 满意后用 finish 提交，或在 final_output 中直接输出最终文本
+1. **调研与设计阶段**: 查阅核心信息流并在心里构思场景序列。
+2. **写作阶段**: 明确场景计划后，立即调用 write_chapter 生成正文。
+3. **校验阶段**: 调用 soft_validate 检查字数和格式（不消耗 AI 预算）。
+4. **提交阶段**: 只要生成文本达标且无重大逻辑硬伤，立即使用 finish 提交全文。除非发现严重质量缺陷，否则不要调用 evaluate_draft 或 rewrite_section，避免无意义的反复修改。
 
 ## 核心创作原则
 
@@ -334,7 +330,7 @@ ${toolDescriptions}
   "thought": "你的推理过程（100字以内）",
   "tool_calls": [{"tool": "工具名", "args": {...}}],
   "confidence": 0.0-1.0,
-  "phase": "research|analysis|design|writing|evaluation|optimization"
+  "phase": "research|design|writing|evaluation|final"
 }
 
 或者当你准备提交最终结果时：

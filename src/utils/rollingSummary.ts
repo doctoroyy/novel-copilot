@@ -162,7 +162,7 @@ export function parseSummaryUpdateResponse(
   previousSummary: string,
   previousOpenLoops: string[]
 ): { updatedSummary: string; updatedOpenLoops: string[] } {
-  const jsonText = rawResponse.replace(/```json\s*|```\s*/g, '').trim();
+  const jsonText = rawResponse.replace(/```json\s*|```\s*/g, '').replace(/[“”]/g, '"').trim();
 
   try {
     const parsed = SummaryUpdateSchema.parse(JSON.parse(jsonText));

@@ -62,8 +62,8 @@ export type AgentConfig = {
 };
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
-  maxTurns: 8,
-  maxToolCallsPerTurn: 3,
+  maxTurns: 4,
+  maxToolCallsPerTurn: 2,
   enableReaderSimulation: true,
-  maxAICalls: 15,
+  maxAICalls: 6,
 };
