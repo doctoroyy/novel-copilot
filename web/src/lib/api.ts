@@ -2265,6 +2265,7 @@ export type QCReportResponse = {
   minorCount: number;
   status: 'running' | 'completed' | 'repairing' | 'failed';
   createdAt: number;
+  taskId?: number;
   data: any;
 };
 
