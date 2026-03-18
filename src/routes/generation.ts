@@ -33,6 +33,8 @@ import {
   checkRunningTask,
   updateTaskMessage,
   getTaskById,
+  getTaskRuntimeControl,
+  type TaskRuntimeControl,
 } from './tasks.js';
 import {
   getImagineTemplateSnapshot,
@@ -1194,29 +1196,6 @@ async function emitProgressEvent(data: {
   }
 }
 
-type TaskRuntimeControl = {
-  exists: boolean;
-  status: string | null;
-  cancelRequested: boolean;
-};
-
-async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<TaskRuntimeControl> {
-  const row = await db.prepare(`
-    SELECT status, cancel_requested
-    FROM generation_tasks
-    WHERE id = ?
-  `).bind(taskId).first() as { status: string; cancel_requested: number | null } | null;
-
-  if (!row) {
-    return { exists: false, status: null, cancelRequested: false };
-  }
-
-  return {
-    exists: true,
-    status: row.status,
-    cancelRequested: Boolean(row.cancel_requested),
-  };
-}
 
 async function handleTaskCancellationIfNeeded(params: {
   db: D1Database;

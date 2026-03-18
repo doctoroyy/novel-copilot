@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { cancelTaskById } from '@/lib/api';
 
 // Task types for tracking different generation operations
 export type TaskType = 'chapters' | 'outline' | 'bible' | 'qc' | 'qc_fix' | 'other';
@@ -36,9 +37,10 @@ interface GenerationContextValue {
   setGenerationState: React.Dispatch<React.SetStateAction<GenerationState>>;
   // Multi-task tracking
   activeTasks: ActiveTask[];
-  startTask: (type: TaskType, title: string, projectName?: string, total?: number) => string;
+  startTask: (type: TaskType, title: string, projectName?: string, total?: number, backendTaskId?: number) => string;
   updateTask: (taskId: string, updates: Partial<ActiveTask>) => void;
   completeTask: (taskId: string, success: boolean, details?: string) => void;
+  cancelTask: (taskId: string) => Promise<void>;
   // Legacy helpers
   startGeneration: (projectName: string, total: number) => void;
   updateProgress: (updates: Partial<GenerationState>) => void;
@@ -59,10 +61,11 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
   const [activeTasks, setActiveTasks] = useState<ActiveTask[]>([]);
 
   // Start a new task and return its ID
-  const startTask = useCallback((type: TaskType, title: string, projectName?: string, total?: number) => {
+  const startTask = useCallback((type: TaskType, title: string, projectName?: string, total?: number, backendTaskId?: number) => {
     const taskId = `${type}-${Date.now()}`;
     const newTask: ActiveTask = {
       id: taskId,
+      taskId: backendTaskId,
       type,
       title,
       status: 'generating',
@@ -92,6 +95,18 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
       setActiveTasks(prev => prev.filter(task => task.id !== taskId));
     }, 1500);
   }, []);
+
+  const cancelTask = useCallback(async (taskId: string) => {
+    const task = activeTasks.find(t => t.id === taskId);
+    if (!task || !task.taskId) return;
+
+    try {
+      await cancelTaskById(task.taskId);
+      completeTask(taskId, false, '已取消');
+    } catch (err) {
+      console.warn('Failed to cancel task:', err);
+    }
+  }, [activeTasks, completeTask]);
 
   // Legacy support for chapters
   const startGeneration = useCallback((projectName: string, total: number) => {
@@ -133,6 +148,7 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
       startTask,
       updateTask,
       completeTask,
+      cancelTask,
       startGeneration,
       updateProgress,
       completeGeneration,

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Shield, ShieldCheck, ShieldAlert, Play, RefreshCw, Wrench,
   ChevronDown, ChevronRight, AlertTriangle, AlertCircle, Info,
-  TrendingUp, Users, GitBranch, Swords, Filter
+  TrendingUp, Users, GitBranch, Swords, Filter, XCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,8 +32,9 @@ export function QualityView({ project }: QualityViewProps) {
   const [expandedChapters, setExpandedChapters] = useState<Set<number>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
-  const { startTask, completeTask: completeCtxTask } = useGeneration();
+  const { startTask, completeTask: completeCtxTask, cancelTask: cancelCtxTask } = useGeneration();
   const fixTaskIdRef = useRef<string | null>(null);
+  const scanTaskIdRef = useRef<string | null>(null);
 
   const loadReport = useCallback(async (showLoading = true) => {
     try {
@@ -92,11 +93,26 @@ export function QualityView({ project }: QualityViewProps) {
     try {
       setScanning(true);
       setError(null);
-      await startQCScan(project.name, scanMode);
+      const res = await startQCScan(project.name, scanMode);
+      const tid = startTask('qc', '高质量扫描中...', project.name, undefined, res.taskId);
+      scanTaskIdRef.current = tid;
       setTimeout(loadReport, 1000);
     } catch (err) {
       setError((err as Error).message);
       setScanning(false);
+    }
+  };
+
+  const handleCancelScan = async () => {
+    const tid = scanTaskIdRef.current || fixTaskIdRef.current;
+    if (!tid) return;
+    try {
+      await cancelCtxTask(tid);
+      setScanning(false);
+      setFixing(null);
+      setTimeout(() => loadReport(true), 500);
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -105,9 +121,9 @@ export function QualityView({ project }: QualityViewProps) {
     try {
       setFixing(chapterIndex);
       setError(null);
-      const tid = startTask('qc_fix', `修复第 ${chapterIndex} 章...`, project.name);
+      const res = await fixChapterIssues(project.name, chapterIndex, report.reportId);
+      const tid = startTask('qc_fix', `修复第 ${chapterIndex} 章...`, project.name, undefined, res.taskId);
       fixTaskIdRef.current = tid;
-      await fixChapterIssues(project.name, chapterIndex, report.reportId);
       // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
@@ -124,9 +140,9 @@ export function QualityView({ project }: QualityViewProps) {
     try {
       setFixing('all');
       setError(null);
-      const tid = startTask('qc_fix', '批量质量修复中...', project.name);
+      const res = await fixAllIssues(project.name, report.reportId);
+      const tid = startTask('qc_fix', '批量质量修复中...', project.name, undefined, res.taskId);
       fixTaskIdRef.current = tid;
-      await fixAllIssues(project.name, report.reportId);
       // Don't clear fixing here - polling will clear it when report status changes
     } catch (err) {
       setError((err as Error).message);
@@ -209,17 +225,20 @@ export function QualityView({ project }: QualityViewProps) {
               <SelectItem value="full">全量扫描</SelectItem>
             </SelectContent>
           </Select>
-          <Button
-            onClick={handleStartScan}
-            disabled={scanning || !hasChapters}
-            size="sm"
-          >
             {scanning ? (
-              <><RefreshCw className="h-4 w-4 mr-1 animate-spin" />扫描中</>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={handleCancelScan} className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive">
+                  <XCircle className="h-4 w-4" />
+                </Button>
+                <div className="flex items-center text-sm font-medium animate-pulse text-primary">
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />扫描中
+                </div>
+              </div>
             ) : (
-              <><Play className="h-4 w-4 mr-1" />{report ? '重新扫描' : '开始扫描'}</>
+              <Button onClick={handleStartScan} disabled={scanning || !hasChapters} size="sm">
+                <Play className="h-4 w-4 mr-1" />{report ? '重新扫描' : '开始扫描'}
+              </Button>
             )}
-          </Button>
         </div>
       </div>
 
