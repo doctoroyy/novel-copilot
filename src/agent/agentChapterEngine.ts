@@ -39,9 +39,10 @@ import {
   checkEventDuplication,
 } from '../context/timelineManager.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from '../utils/rollingSummary.js';
+import { buildChapterMemoryDigest } from '../utils/chapterMemoryDigest.js';
 import { formatStoryContractForPrompt } from '../utils/storyContract.js';
 import { generateTextWithRetry, generateTextWithFallback, type FallbackConfig } from '../services/aiClient.js';
-import { getSupportPassMaxTokens } from '../utils/aiModelHelpers.js';
+import { getSupportPassMaxTokens, DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS } from '../utils/aiModelHelpers.js';
 
 function isSameAiConfig(a: AIConfig, b: AIConfig): boolean {
   return a.provider === b.provider && a.model === b.model;
@@ -413,30 +414,47 @@ async function generateSummaryUpdate(
 ): Promise<{ updatedSummary: string; updatedOpenLoops: string[] }> {
   const normalizedSummary = normalizeRollingSummary(currentSummary || '');
   const maxTokens = getSupportPassMaxTokens(aiConfig, SUMMARY_UPDATE_MAX_TOKENS, 1800);
+  const summarySource = buildChapterMemoryDigest(chapterText, DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS);
 
-  const system = '你是故事摘要维护助手。根据新章节内容更新滚动摘要和伏笔列表。只输出 JSON。';
-  const prompt = `【当前摘要】
-${normalizedSummary.slice(0, 3000)}
+  const system = `你是小说编辑助理。你的任务是更新剧情摘要和未解伏笔列表。
+只输出严格的 JSON 格式，不要有任何其他文字。
 
-【未解伏笔】
-${openLoops.map((l, i) => `${i + 1}. ${l}`).join('\n') || '(无)'}
+【三层记忆更新规则 — 必须严格执行】
+- longTermMemory（长期记忆）：稳定设定、人物长期目标与核心因果链。每 10 章至少更新一次：将中期记忆中已稳定的内容精华压缩合入。建议 180~320 字。
+- midTermMemory（中期记忆）：当前阶段的进展与关键转折。每 3~5 章更新：将近期记忆中已过时的重要内容提升合并，删除不再相关的细节。建议 220~380 字。
+- recentMemory（近期记忆）：最近 3~5 章的细节、冲突状态、即时动机。每章必须更新，只保留最近内容。建议 280~520 字，信息最完整。
 
-【新章节内容】
-${chapterText.slice(0, 5000)}
+【重要】你必须对比之前的记忆内容，确认三个层级都有实质变化。如果长期记忆和中期记忆内容与之前完全相同，说明你没有正确执行压缩和提升操作，必须重新调整。
 
-请输出 JSON:
+输出格式：
 {
-  "rollingSummary": "更新后的剧情摘要（保留关键事件，删除过旧细节，加入本章新进展）",
-  "openLoops": ["更新后的未解伏笔列表（已解决的删除，新增的加入）"]
-}`;
+  "longTermMemory": "长期记忆内容",
+  "midTermMemory": "中期记忆内容",
+  "recentMemory": "近期记忆内容",
+  "openLoops": ["未解伏笔1", "未解伏笔2", ...] // 3~8 条，每条不超过 30 字
+}`.trim();
+
+  const prompt = `【Story Bible】
+${bible}
+
+【此前 Rolling Summary】
+${normalizedSummary || '（无）'}
+
+【此前 Open Loops】
+${openLoops.map((l, i) => `${i + 1}. ${l}`).join('\n') || '（无）'}
+
+【本章压缩摘录（非全文，按开场/中段/结尾抽取）】
+${summarySource}
+
+请按"越近越详细、越远越压缩"的原则输出更新后的 JSON。注意：三个层级都必须有内容变化。`.trim();
 
   const raw = fallbackConfigs?.length
     ? await generateTextWithFallback(
       buildFallbackConfig(aiConfig, fallbackConfigs),
-      { system, prompt, temperature: 0.3, maxTokens },
+      { system, prompt, temperature: 0.2, maxTokens },
       2, callOptions,
     )
-    : await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.3, maxTokens }, 2, callOptions);
+    : await generateTextWithRetry(aiConfig, { system, prompt, temperature: 0.2, maxTokens }, 2, callOptions);
 
   const result = parseSummaryUpdateResponse(raw, normalizedSummary, openLoops);
   return {

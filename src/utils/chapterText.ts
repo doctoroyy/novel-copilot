@@ -112,6 +112,21 @@ function stripTrailingMeta(text: string): string {
   return text;
 }
 
+/**
+ * 清理 AI 输出末尾的统计文本和收尾标记。
+ * 例如：「（本章完，共计2856字）」「（全文共计xxx字）」「---\n字数统计」等。
+ */
+function stripTrailingStats(text: string): string {
+  return text
+    // 匹配末尾的「（本章完...）」「（全文共...）」「（完）」「（以上为...）」等
+    .replace(/\n*[（\(]\s*(本章完|全文共[计]?|以上为|完|字数[：:]?|共计|本章共)\s*[^）\)]*[）\)]\s*$/i, '')
+    // 匹配末尾的 --- 分隔线后的统计信息
+    .replace(/\n+-{3,}\s*\n+.*?(字数|共计|统计|总计|本章完).*$/s, '')
+    // 匹配末尾单独的「本章完」「全文完」等行
+    .replace(/\n+\s*(本章完|全文完|本卷完|完)\s*[。.]?\s*$/, '')
+    .trimEnd();
+}
+
 export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex: number): string {
   const parsed = extractJsonObject(rawResponse);
   if (parsed && typeof parsed.content === 'string') {
@@ -119,14 +134,14 @@ export function normalizeGeneratedChapterText(rawResponse: string, chapterIndex:
       typeof parsed.title === 'string' ? parsed.title : '',
       chapterIndex
     );
-    return stripTrailingMeta(`${finalTitle}\n\n${parsed.content.trim()}`);
+    return stripTrailingStats(stripTrailingMeta(`${finalTitle}\n\n${parsed.content.trim()}`));
   }
 
   const cleaned = stripCodeFence(rawResponse);
   const plain = extractPlainTextTitleAndBody(cleaned, chapterIndex);
   if (plain) {
-    return stripTrailingMeta(`${plain.title}\n\n${plain.content}`.trim());
+    return stripTrailingStats(stripTrailingMeta(`${plain.title}\n\n${plain.content}`.trim()));
   }
 
-  return stripTrailingMeta(cleaned);
+  return stripTrailingStats(stripTrailingMeta(cleaned));
 }
