@@ -18,7 +18,7 @@ import {
   type FallbackConfig,
   type AICallOptions,
 } from '../services/aiClient.js';
-import { normalizeGeneratedChapterText } from '../utils/chapterText.js';
+import { normalizeGeneratedChapterText, cleanChapterTitle } from '../utils/chapterText.js';
 import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
 
 /** Agent 单轮输出 Schema */
@@ -356,7 +356,8 @@ ${toolDescriptions}
     const minChapterWords = ctx.minChapterWords || 2500;
     const recommendedMaxWords = Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
 
-    const chapterTitle = enhancedOutline?.title;
+    const chapterTitleRaw = enhancedOutline?.title;
+    const chapterTitle = cleanChapterTitle(chapterTitleRaw || '');
     const titleText = chapterTitle
       ? `第${chapterIndex}章 ${chapterTitle}`
       : `第${chapterIndex}章 [你需要起一个创意标题]`;
