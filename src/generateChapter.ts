@@ -14,6 +14,7 @@ import { buildChapterMemoryDigest } from './utils/chapterMemoryDigest.js';
 import { DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS, getSupportPassMaxTokens } from './utils/aiModelHelpers.js';
 import { normalizeRollingSummary, parseSummaryUpdateResponse } from './utils/rollingSummary.js';
 import { buildChapterPromptStyleSection } from './chapterPromptProfiles.js';
+import { cleanChapterTitle } from './utils/chapterText.js';
 
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
@@ -117,9 +118,12 @@ function buildSystemPrompt(
   chapterPromptCustom?: string
 ): string {
   const recommendedMaxWords = buildRecommendedMaxChapterWords(minChapterWords);
-  const titleText = chapterTitle
-    ? `第${chapterIndex}章 ${chapterTitle}`
+  const cleanedTitle = cleanChapterTitle(chapterTitle || '');
+
+  const titleText = cleanedTitle
+    ? `第${chapterIndex}章 ${cleanedTitle}`
     : `第${chapterIndex}章 [你需要起一个创意标题]`;
+
   const styleSection = buildChapterPromptStyleSection(chapterPromptProfile, chapterPromptCustom);
 
   return `

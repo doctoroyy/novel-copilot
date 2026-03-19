@@ -42,12 +42,37 @@ export function looksLikeJsonChapterPayload(text: string): boolean {
   return /"content"\s*:/.test(cleaned) && /"title"\s*:/.test(cleaned);
 }
 
+/**
+ * 清洗章节标题中的特殊符号，如「」『』【】等
+ */
+export function cleanChapterTitle(title: string): string {
+  if (!title) return '';
+  // 移除常见特殊包装符号，替换为空格
+  return title
+    .replace(/[「」『』【】《》［］\[\]]/g, ' ')
+    .replace(/\s+/g, ' ') // 连续空格转单个空格
+    .trim();
+}
+
 function normalizeTitle(title: string, chapterIndex: number): string {
-  const cleaned = title.replace(/^#+\s*/, '').trim();
+  // 1. 基础清洗（去掉 # 和 之前可能存在的题目/标题字样）
+  let cleaned = title.trim()
+    .replace(/^#+\s*/, '')
+    .replace(/^(标题|题目)\s*[:：]\s*/, '')
+    .trim();
+
+  // 2. 深度清洗（去掉 「」等符号）
+  cleaned = cleanChapterTitle(cleaned);
+
   if (!cleaned) return `第${chapterIndex}章`;
+
+  // 3. 规范化 "第X章" 前缀
+  // 如果已经以 第...章 开头
   if (/^第[一二三四五六七八九十百千万零两\d]+[章节回]/.test(cleaned)) {
-    return cleaned;
+    // 检查 "第16章 寒症复发" 这种连在一起的情况，确保中间有空格且只有一个
+    return cleaned.replace(/^(第[一二三四五六七八九十百千万零两\d]+[章节回])\s*/, '$1 ');
   }
+
   return `第${chapterIndex}章 ${cleaned}`;
 }
 
