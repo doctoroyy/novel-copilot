@@ -450,6 +450,12 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND user_id = ?
       `).bind(taskId, userId).run();
+
+      // 同步取消关联的 qc_reports
+      await c.env.DB.prepare(`
+        UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
+        WHERE task_id = ? AND status IN ('running', 'repairing')
+      `).bind(taskId).run();
       
       if (task.project_name) {
         eventBus.progress({
@@ -614,6 +620,13 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
+
+      // 同步取消关联的 qc_reports
+      await c.env.DB.prepare(`
+        UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
+        WHERE task_id = ? AND status IN ('running', 'repairing')
+      `).bind(taskId).run();
+
       const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
       if (project) {
         eventBus.progress({
@@ -635,6 +648,13 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
       `).bind(taskId, projectId, userId).run();
+
+      // 同步取消关联的 qc_reports
+      await c.env.DB.prepare(`
+        UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
+        WHERE task_id = ? AND status IN ('running', 'repairing')
+      `).bind(taskId).run();
+
       const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
       if (project) {
         eventBus.progress({
@@ -699,6 +719,12 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
       UPDATE generation_tasks
       SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
+    `).bind(projectId, userId).run();
+
+    // 同步取消该项目下所有进行中的 qc_reports
+    await c.env.DB.prepare(`
+      UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
+      WHERE project_id = ? AND user_id = ? AND status IN ('running', 'repairing')
     `).bind(projectId, userId).run();
     
     const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;

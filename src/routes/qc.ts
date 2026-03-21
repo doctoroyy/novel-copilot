@@ -98,6 +98,20 @@ qcRoutes.get('/:name/qc/report', async (c) => {
       return c.json({ success: true, report: null });
     }
 
+    // 同步检查关联 task 状态：如果 task 已被取消/失败，修正 report 状态
+    if ((report.status === 'running' || report.status === 'repairing') && report.task_id) {
+      const task = await c.env.DB.prepare(
+        'SELECT status, cancel_requested FROM generation_tasks WHERE id = ?'
+      ).bind(report.task_id).first() as { status: string; cancel_requested: number } | null;
+      if (task && (task.cancel_requested || task.status === 'failed' || task.status === 'completed')) {
+        const newStatus = task.status === 'completed' ? 'completed' : 'failed';
+        await c.env.DB.prepare(
+          'UPDATE qc_reports SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
+        ).bind(newStatus, report.id).run();
+        report.status = newStatus;
+      }
+    }
+
     let reportData = null;
     try {
       reportData = JSON.parse(report.report_json);
@@ -145,6 +159,20 @@ qcRoutes.get('/:name/qc/report/:reportId', async (c) => {
 
     if (!report) {
       return c.json({ success: false, error: 'Report not found' }, 404);
+    }
+
+    // 同步检查关联 task 状态
+    if ((report.status === 'running' || report.status === 'repairing') && report.task_id) {
+      const task = await c.env.DB.prepare(
+        'SELECT status, cancel_requested FROM generation_tasks WHERE id = ?'
+      ).bind(report.task_id).first() as { status: string; cancel_requested: number } | null;
+      if (task && (task.cancel_requested || task.status === 'failed' || task.status === 'completed')) {
+        const newStatus = task.status === 'completed' ? 'completed' : 'failed';
+        await c.env.DB.prepare(
+          'UPDATE qc_reports SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
+        ).bind(newStatus, report.id).run();
+        report.status = newStatus;
+      }
     }
 
     let reportData = null;
