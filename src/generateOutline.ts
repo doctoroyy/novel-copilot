@@ -1062,6 +1062,44 @@ function buildVolumeBatchSummary(args: {
   return '【这是第一卷】';
 }
 
+/**
+ * 构建包含章节级别信息的已有卷大纲上下文
+ * 用于在生成新卷大纲时，把之前所有卷的大纲作为 AI 上下文
+ */
+function buildExistingVolumesDetailedContext(
+  volumes: Array<Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }>,
+): string {
+  if (volumes.length === 0) return '';
+
+  const RECENT_VOLUMES_COUNT = 3;
+
+  return volumes.map((vol, i) => {
+    const header = [
+      `第${i + 1}卷「${vol.title}」（第${vol.startChapter}-${vol.endChapter}章）`,
+      vol.goal ? `  目标: ${vol.goal}` : '',
+      vol.conflict ? `  冲突: ${vol.conflict}` : '',
+      vol.climax ? `  高潮: ${vol.climax}` : '',
+      vol.volumeEndState ? `  结束状态: ${vol.volumeEndState}` : '',
+    ].filter(Boolean).join('\n');
+
+    const chapters = vol.chapters;
+    // 如果没有章节数据，或者是较早的远期卷（保留最近3卷），只保留卷级摘要以节省 token
+    if (!Array.isArray(chapters) || chapters.length === 0 || i < volumes.length - RECENT_VOLUMES_COUNT) {
+      if (Array.isArray(chapters) && chapters.length > 0) {
+        return `${header}\n  （本卷包含 ${chapters.length} 章，章节详情已折叠）`;
+      }
+      return header;
+    }
+
+    // 构建近期卷的完整章节概要
+    const chapterLines = chapters.map((ch) => {
+      return `    第${ch.index}章 ${ch.title}${ch.goal ? ' | ' + ch.goal : ''}`;
+    }).join('\n');
+
+    return `${header}\n  章节概要:\n${chapterLines}`;
+  }).join('\n\n');
+}
+
 async function generateVolumeChapterBatch(
   aiConfig: AIConfig,
   args: {
@@ -1076,6 +1114,8 @@ async function generateVolumeChapterBatch(
     minChapterWords?: number;
     actualStorySummary?: string;
     generatedChapters?: ChapterOutline[];
+    /** 之前所有已完成的卷（含章节），用于构建全局大纲上下文 */
+    previousVolumes?: Array<Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }>;
   }
 ): Promise<ChapterOutline[]> {
   const {
@@ -1090,6 +1130,7 @@ async function generateVolumeChapterBatch(
     minChapterWords = 2500,
     actualStorySummary,
     generatedChapters = [],
+    previousVolumes = [],
   } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
@@ -1143,11 +1184,17 @@ async function generateVolumeChapterBatch(
 章节序号|章节标题|章节描述|章末钩子
 `.trim();
 
+  // 构建已有卷大纲上下文
+  const existingVolumesContext = previousVolumes.length > 0
+    ? `\n【已有卷大纲概要（共${previousVolumes.length}卷）】\n${buildExistingVolumesDetailedContext(previousVolumes)}\n`
+    : '';
+
   const prompt = `
 【Story Bible】
 ${bible.slice(0, 4000)}
 
 【总目标】${masterOutline.mainGoal}
+${existingVolumesContext}
 
 【本卷信息】
 - ${volume.title}
@@ -1254,6 +1301,8 @@ export async function generateVolumeChapters(
     minChapterWords?: number;
     /** 实际已生成章节的滚动摘要（用于校准，不覆盖上一卷精确结尾） */
     actualStorySummary?: string;
+    /** 之前所有已完成的卷（含章节），用于构建全局大纲上下文 */
+    previousVolumes?: Array<Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }>;
     onBatchStart?: (progress: VolumeChapterBatchProgress) => Promise<void> | void;
   }
 ): Promise<ChapterOutline[]> {
@@ -1264,6 +1313,7 @@ export async function generateVolumeChapters(
     previousVolumeSummary,
     minChapterWords = 2500,
     actualStorySummary,
+    previousVolumes,
     onBatchStart,
   } = args;
 
@@ -1299,6 +1349,7 @@ export async function generateVolumeChapters(
       minChapterWords,
       actualStorySummary: generatedChapters.length === 0 ? actualStorySummary : undefined,
       generatedChapters,
+      previousVolumes,
     });
 
     generatedChapters.push(...batchChapters);
@@ -1352,16 +1403,8 @@ export async function generateAdditionalVolumes(
     bridgeChapterCount: VOLUME_BRIDGE_CHAPTER_COUNT,
   });
 
-  // 构建已有卷的摘要
-  const existingVolumesSummary = existingOutline.volumes.map((vol, i) =>
-    [
-      `第${i + 1}卷「${vol.title}」: 第${vol.startChapter}-${vol.endChapter}章`,
-      vol.goal ? `目标: ${vol.goal}` : '',
-      vol.conflict ? `冲突: ${vol.conflict}` : '',
-      vol.climax ? `高潮: ${vol.climax}` : '',
-      vol.volumeEndState ? `结束状态: ${vol.volumeEndState}` : '',
-    ].filter(Boolean).join(' | ')
-  ).join('\n');
+  // 构建已有卷的详细摘要（包含章节级大纲信息）
+  const existingVolumesSummary = buildExistingVolumesDetailedContext(existingOutline.volumes);
 
   const system = `
 你是一个起点白金级网文大纲策划专家。你需要为一部已有大纲的小说追加新卷。

@@ -662,6 +662,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
         volume: vol,
         previousVolumeSummary: previousVolumeEndState || undefined,
         minChapterWords: effectiveMinChapterWords,
+        previousVolumes: volumes,
         onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
           const suffix = totalBatches > 1
             ? ` (批次 ${batchIndex + 1}/${totalBatches}，第 ${startChapter}-${endChapter} 章)`
@@ -811,6 +812,8 @@ async function runAppendVolumesMode(params: {
       minChapterWords: effectiveMinChapterWords,
       // 第一个新卷使用实际剧情摘要，确保与已生成内容对齐
       actualStorySummary: i === 0 ? actualStorySummary : undefined,
+      // 传入所有已有卷 + 已填充的新卷作为上下文
+      previousVolumes: [...existingVolumes, ...filledVolumes],
       onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
         const suffix = totalBatches > 1
           ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
@@ -933,6 +936,7 @@ async function runRefineOutlineMode(params: {
       previousVolumeSummary: volumeIndex > 0 ? buildPreviousVolumeSummary(volumes[volumeIndex - 1]) : undefined,
       minChapterWords: effectiveMinChapterWords,
       actualStorySummary,
+      previousVolumes: volumes.slice(0, volumeIndex),
       onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
         const suffix = totalBatches > 1
           ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
@@ -3278,6 +3282,7 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
             previousVolumeSummary,
             minChapterWords: effectiveMinChapterWords,
             actualStorySummary: i === 0 ? actualStorySummary : undefined,
+            previousVolumes: [...existingVolumes, ...filledVolumes],
             onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
               const suffix = totalBatches > 1
                 ? `，批次 ${batchIndex + 1}/${totalBatches}（第 ${startChapter}-${endChapter} 章）`
