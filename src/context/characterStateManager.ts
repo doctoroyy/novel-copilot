@@ -73,13 +73,13 @@ function createSnapshotFromProfile(profile: CharacterProfile): CharacterStateSna
     },
     psychological: {
       mood: '平静',
-      motivation: profile.personality.desires?.[0] || '未知',
+      motivation: profile.personality?.desires?.[0] || '未知',
       knownSecrets: [],
       beliefs: [],
       innerConflict: undefined,
     },
     social: {
-      publicIdentity: profile.basic.identity || '未知',
+      publicIdentity: profile.basic?.identity || '未知',
       hiddenIdentity: undefined,
       reputation: '未知',
       activeAlliances: [],
