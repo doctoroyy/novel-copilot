@@ -109,6 +109,13 @@ export class ExploreAgentOrchestrator {
               this.aiCallCount++;
             }
 
+            if (call.tool === 'analyze_and_generate') {
+              call.args = {
+                search_data: this.scratchpad,
+                user_concept: this.ctx.concept,
+              };
+            }
+
             let result: string;
             try {
               result = await this.toolExecutor.execute(call);
@@ -247,7 +254,7 @@ export class ExploreAgentOrchestrator {
    - search_web: Bing 搜索行业趋势（需要浏览器可用）
    注意：一次调用中最多 ${EXPLORE_CONFIG.maxToolCallsPerTurn} 个工具
 
-2. **生成阶段（Turn 2）**: 调用 analyze_and_generate，传入所有搜索数据和用户创意。该工具会直接输出最终 Bible，无需额外 finish 步骤。
+2. **生成阶段（Turn 2）**: 调用 analyze_and_generate 生成定制化 Story Bible。该工具会自动提取上下文并处理最终输出。
 
 ## 可用工具
 
@@ -266,7 +273,7 @@ ${toolDescriptions}
 - 尽量在 2 轮内完成任务（搜索 + 生成）
 - 第一轮应并行调用所有数据搜索工具
 - 如果浏览器不可用，跳过 search_fanqie_rank 和 search_web
-- 不需要调用 finish，analyze_and_generate 会自动完成`;
+- 调用 analyze_and_generate 即可完成全部任务`;
   }
 
   private countToolCalls(trace: AgentTrace): number {
