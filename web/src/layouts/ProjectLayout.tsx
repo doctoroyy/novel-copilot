@@ -28,7 +28,6 @@ import { useEffect, useState } from 'react';
 import {
   fetchBibleTemplates,
   refreshBibleTemplates,
-  generateBible as apiBible,
   generateBibleExplore,
   type BibleImagineTemplate,
 } from '@/lib/api';
@@ -152,104 +151,76 @@ function ProjectLayoutInner() {
     }
   };
 
-  // AI Bible generation for new project — ExploreAgent SSE or fallback
+  // AI Bible generation for new project — ExploreAgent SSE
   const handleGenerateBibleForNew = async () => {
     setGeneratingBible(true);
     setExploreProgress(null);
     setExplorePhase('idle');
 
-    // If concept is provided, use ExploreAgent SSE
-    if (aiConcept.trim()) {
-      try {
-        setExplorePhase('searching');
-        setExploreProgress('正在搜索市场数据...');
-
-        const result = await generateBibleExplore(
-          {
-            concept: aiConcept.trim(),
-            genre: aiGenre || undefined,
-            theme: aiTheme || undefined,
-            keywords: aiKeywords || undefined,
-          },
-          {
-            onStart: () => {
-              setExplorePhase('searching');
-              setExploreProgress('正在搜索市场数据...');
-            },
-            onProgress: (data) => {
-              const phase = data.phase || '';
-              if (phase === 'tool_call') {
-                const detail = data.detail || '';
-                if (detail.includes('search_cached_templates') || detail.includes('search_fanqie_rank') || detail.includes('search_web')) {
-                  setExplorePhase('searching');
-                  setExploreProgress(detail);
-                } else if (detail.includes('analyze_and_generate')) {
-                  setExplorePhase('analyzing');
-                  setExploreProgress('正在分析趋势 + 生成设定...');
-                } else if (detail.includes('finish')) {
-                  setExplorePhase('generating');
-                  setExploreProgress('正在生成最终设定...');
-                } else {
-                  setExploreProgress(detail);
-                }
-              } else if (phase === 'reasoning') {
-                setExploreProgress(data.detail || '正在推理...');
-              }
-            },
-            onSearchResult: () => {
-              // search result received — keep searching phase
-            },
-            onDone: (bible) => {
-              setExplorePhase('done');
-              setExploreProgress('生成完成');
-              setNewProjectBible(bible);
-            },
-            onError: (error) => {
-              setExplorePhase('idle');
-              setExploreProgress(null);
-              setError(`ExploreAgent 失败：${error}`);
-            },
-          },
-        );
-
-        if (result) {
-          setNewProjectBible(result);
-        }
-      } catch (err) {
-        console.error('Failed to generate bible with ExploreAgent:', err);
-        setError(`生成设定失败：${(err as Error).message}`);
-      } finally {
-        setGeneratingBible(false);
-        setTimeout(() => {
-          setExplorePhase('idle');
-          setExploreProgress(null);
-        }, 2000);
-      }
-      return;
-    }
-
-    // Fallback: use existing generate-bible API
     try {
-      const selectedTemplate = templateOptions.find((item) => item.id === selectedTemplateId);
-      const result = await apiBible({
-        genre: aiGenre,
-        theme: aiTheme,
-        keywords: aiKeywords,
-        templateId: selectedTemplateId || undefined,
-        templateSnapshotDate:
-          templateSnapshotDate && templateSnapshotDate !== 'latest'
-            ? templateSnapshotDate
-            : undefined,
-        template: selectedTemplate,
-      });
+      setExplorePhase('searching');
+      setExploreProgress('正在搜索市场数据...');
+
+      const result = await generateBibleExplore(
+        {
+          concept: aiConcept.trim(),
+          genre: aiGenre || undefined,
+          theme: aiTheme || undefined,
+          keywords: aiKeywords || undefined,
+        },
+        {
+          onStart: () => {
+            setExplorePhase('searching');
+            setExploreProgress('正在搜索市场数据...');
+          },
+          onProgress: (data) => {
+            const phase = data.phase || '';
+            if (phase === 'tool_call') {
+              const detail = data.detail || '';
+              if (detail.includes('search_cached_templates') || detail.includes('search_fanqie_rank') || detail.includes('search_web')) {
+                setExplorePhase('searching');
+                setExploreProgress(detail);
+              } else if (detail.includes('analyze_and_generate')) {
+                setExplorePhase('analyzing');
+                setExploreProgress('正在分析趋势 + 生成设定...');
+              } else if (detail.includes('finish')) {
+                setExplorePhase('generating');
+                setExploreProgress('正在生成最终设定...');
+              } else {
+                setExploreProgress(detail);
+              }
+            } else if (phase === 'reasoning') {
+              setExploreProgress(data.detail || '正在推理...');
+            }
+          },
+          onSearchResult: () => {
+            // search result received — keep searching phase
+          },
+          onDone: (bible) => {
+            setExplorePhase('done');
+            setExploreProgress('生成完成');
+            setNewProjectBible(bible);
+          },
+          onError: (error) => {
+            setExplorePhase('idle');
+            setExploreProgress(null);
+            setError(`ExploreAgent 失败：${error}`);
+          },
+        },
+      );
+
       if (result) {
         setNewProjectBible(result);
       }
     } catch (err) {
-      console.error('Failed to generate bible:', err);
+      console.error('Failed to generate bible with ExploreAgent:', err);
       setError(`生成设定失败：${(err as Error).message}`);
     } finally {
       setGeneratingBible(false);
+      setTimeout(() => {
+        setExplorePhase('idle');
+        setExploreProgress(null);
+      }, 2000);
     }
   };
 
@@ -567,7 +538,7 @@ function ProjectLayoutInner() {
                 className="flex items-center gap-2"
               >
                 <Sparkles className="h-4 w-4" />
-                {generatingBible ? '生成中...' : aiConcept.trim() ? 'AI 搜索 + 生成设定' : 'AI 生成设定'}
+                {generatingBible ? '生成中...' : 'AI 搜索 + 生成设定'}
               </Button>
             </div>
 

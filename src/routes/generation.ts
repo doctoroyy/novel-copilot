@@ -2981,9 +2981,9 @@ generationRoutes.post('/generate-bible-explore', async (c) => {
     return c.json({ success: false, error: 'Invalid request body' }, 400);
   }
 
-  const concept = typeof body.concept === 'string' ? body.concept.trim() : '';
+  let concept = typeof body.concept === 'string' ? body.concept.trim() : '';
   if (!concept) {
-    return c.json({ success: false, error: '请输入创意描述 (concept)' }, 400);
+    concept = '请基于当前网络文学各大平台的大盘热点和流行趋势，随机创作一个极具潜力、脑洞大开的爆款小说核心设定。';
   }
 
   const genre = typeof body.genre === 'string' ? body.genre.trim() : '';
