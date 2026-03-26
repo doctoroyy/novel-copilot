@@ -820,16 +820,16 @@ function buildSeedTemplateFromHotItem(
   const safeTitle = normalizeHotTitleForTemplate(item.title, index);
   const summarySeedRaw = pickFirstClause(item.summary || '', 34);
   const summarySeed = isLowQualitySentence(summarySeedRaw) ? '' : summarySeedRaw;
-  const conflictSeed = summarySeed || `${genre}题材下的高压危机`;
+  const conflictSeed = summarySeed || `围绕${genre}展开的核心冲突`;
   const name = buildReadableTemplateName(index, genre);
-  const coreTheme = summarySeed || `${genre}题材下的高压破局与成长跃迁`;
-  const oneLineSellingPoint = `${genre}题材：危机开局→冲突升级→反转兑现→阶段成长`;
-  const protagonistSetup = `主角从弱势处境切入，围绕“${clipText(conflictSeed, 18)}”这一代价目标，在资源短板中持续补强。`;
-  const hookDesign = `首章 300 字内抛出「${clipText(conflictSeed, 18)}」级不可逆事件，逼迫主角立刻选边站队。`;
-  const conflictDesign = `设置外压（对手/规则）与内耗（短板/关系）双线推进，每 3-5 章完成一次冲突抬升。`;
+  const coreTheme = summarySeed || `探索${genre}世界的成长之旅`;
+  const oneLineSellingPoint = summarySeed ? `极致展现${clipText(summarySeed, 15)}的爽快故事` : `${genre}题材破局爽文`;
+  const protagonistSetup = `主角开局面临困境，逐步积累优势并完成命运反转。`;
+  const hookDesign = `开篇遭遇突发事件，展现主角的特殊应对方式。`;
+  const conflictDesign = `外在生存压力与内在目标追求交织，推动剧情不断升级。`;
   const growthRoute = GROWTH_ROUTE_VARIANTS[index % GROWTH_ROUTE_VARIANTS.length];
-  const fanqieSignals = ['高压开局', '连续反转', '章节尾钩子', '情绪快兑现'];
-  const recommendedOpening = `开篇先给危机场景与代价，再给主角第一步反制动作，末段留下一层更大风险。`;
+  const fanqieSignals = ['节奏紧凑', '期待感强', '爽点密集', '人设鲜明'];
+  const recommendedOpening = `迅速切入核心矛盾，展现主角性格底色，制造阅读悬念。`;
 
   return {
     id: buildTemplateId(snapshotDate, index, name),
@@ -965,36 +965,21 @@ function mergeTemplatesWithSeeds(templates: ImagineTemplate[], seeds: ImagineTem
     };
   });
 
-  const minUnique = Math.max(2, Math.ceil(Math.min(merged.length, 10) * 0.4));
-  const textFields: Array<keyof ImagineTemplate> = [
-    'coreTheme',
-    'oneLineSellingPoint',
-    'protagonistSetup',
-    'hookDesign',
-    'conflictDesign',
-    'growthRoute',
-    'recommendedOpening',
-  ];
+  // Removed the destructive diversity check for textFields
+  // that was aggressively wiping out LLM generation and
+  // replacing it with robotic seed phrases.
 
-  for (const field of textFields) {
-    const uniqueCount = new Set(
-      merged.map((item) => cleanCopyText(String(item[field] || ''))).filter(Boolean)
-    ).size;
-    if (uniqueCount >= minUnique) continue;
-    for (let i = 0; i < merged.length; i += 1) {
-      merged[i][field] = seeds[i % seeds.length][field] as any;
-    }
-  }
+  const minUnique = Math.max(2, Math.ceil(Math.min(merged.length, 10) * 0.4));
 
   const keywordUnique = new Set(merged.map((item) => normalizeStringArray(item.keywords, 10).join('|')).filter(Boolean)).size;
-  if (keywordUnique < minUnique) {
+  if (keywordUnique < minUnique / 2) {
     for (let i = 0; i < merged.length; i += 1) {
       merged[i].keywords = seeds[i % seeds.length].keywords;
     }
   }
 
   const signalUnique = new Set(merged.map((item) => normalizeStringArray(item.fanqieSignals, 10).join('|')).filter(Boolean)).size;
-  if (signalUnique < minUnique) {
+  if (signalUnique < minUnique / 2) {
     for (let i = 0; i < merged.length; i += 1) {
       merged[i].fanqieSignals = seeds[i % seeds.length].fanqieSignals;
     }
