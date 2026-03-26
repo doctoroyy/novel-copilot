@@ -58,29 +58,7 @@ export const EXPLORE_TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'analyze_and_generate',
-    description: '综合分析所有搜索数据 + 用户创意，生成定制化 Story Bible（Markdown 格式）。消耗 AI 预算。',
-    parameters: {
-      search_data: {
-        type: 'string',
-        description: '搜集到的所有数据（榜单、模板、网页搜索结果）的汇总',
-        required: true,
-      },
-      user_concept: {
-        type: 'string',
-        description: '用户的核心创意描述',
-        required: true,
-      },
-    },
-  },
-  {
-    name: 'finish',
-    description: '确认最终输出。当 Bible 质量满意时调用此工具提交。',
-    parameters: {
-      bible: {
-        type: 'string',
-        description: '最终的 Story Bible 文本（Markdown）',
-        required: true,
-      },
-    },
+    description: '综合分析所有搜索数据 + 用户创意，生成定制化 Story Bible（Markdown 格式）。由于系统会自动读取上下文，你无需提供任何参数。',
+    parameters: {},
   },
 ];
