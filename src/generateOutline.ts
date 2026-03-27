@@ -17,6 +17,7 @@ import type {
   StoryContractSection,
   VolumeStoryContract,
 } from './types/narrative.js';
+import { cleanChapterTitle } from './utils/chapterText.js';
 
 /**
  * 大纲类型
@@ -300,7 +301,7 @@ function parseStructuredVolumeChapterText(
       hookPart = parts.slice(2).join('｜');
     }
 
-    titlePart = titlePart.replace(/^标题[:：]\s*/i, '').trim();
+    titlePart = cleanChapterTitle(titlePart.replace(/^标题[:：]\s*/i, '').trim());
     goalPart = goalPart.replace(/^(?:描述|剧情|梗概|概要|内容)[:：]\s*/i, '').trim();
     hookPart = hookPart.replace(/^(?:钩子|悬念|章末钩子)[:：]\s*/i, '').trim();
 
@@ -340,7 +341,7 @@ function normalizeVolumeChapterPayload(payload: unknown, startChapter: number): 
     const index = startChapter + offset;
     return {
       index: toNumber(record?.index ?? record?.chapterIndex ?? record?.chapter ?? record?.id, index),
-      title: toShortText(record?.title, `第${index}章`),
+      title: cleanChapterTitle(toShortText(record?.title, `第${index}章`)),
       goal: toShortText(record?.goal ?? record?.summary ?? record?.description, ''),
       hook: toShortText(record?.hook ?? record?.cliffhanger, ''),
       storyContract: normalizeStoryContract(record?.storyContract ?? record?.contract),
@@ -373,7 +374,7 @@ function normalizeMasterOutlinePayload(payload: unknown): {
       }
 
       return {
-        title: toShortText(vol.title, `第${offset + 1}卷`),
+        title: cleanChapterTitle(toShortText(vol.title, `第${offset + 1}卷`)),
         startChapter: toNumber(vol.startChapter, offset * 80 + 1),
         endChapter: toNumber(vol.endChapter, (offset + 1) * 80),
         goal: toShortText(vol.goal ?? vol.summary, ''),
@@ -404,7 +405,7 @@ function normalizeAdditionalVolumePayload(
   let currentStart = startChapterBase;
   return rawVolumes.map((volume, offset) => {
     const record = asRecord(volume);
-    const title = toShortText(record?.title, `第${offset + 1}卷`);
+    const title = cleanChapterTitle(toShortText(record?.title, `第${offset + 1}卷`));
     const normalizedVolume: Omit<VolumeOutline, 'chapters'> = {
       title,
       startChapter: currentStart,
@@ -675,7 +676,7 @@ function parseStructuredMasterOutlineText(
     }
 
     let cursor = 1;
-    const title = toShortText(parts[cursor], `第${volumeDrafts.length + 1}卷`);
+    const title = cleanChapterTitle(toShortText(parts[cursor], `第${volumeDrafts.length + 1}卷`));
     cursor += 1;
 
     let range: { startChapter: number; endChapter: number } | undefined;
@@ -789,7 +790,7 @@ function parseStructuredAdditionalVolumesText(
       continue;
     }
 
-    const title = toShortText(parts[1], `第${volumeDrafts.length + 1}卷`);
+    const title = cleanChapterTitle(toShortText(parts[1], `第${volumeDrafts.length + 1}卷`));
     const goal = toShortText(parts[2], '');
     const conflict = toShortText(parts[3], '');
     const climax = toShortText(parts[4], '');
