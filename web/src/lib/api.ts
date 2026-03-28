@@ -1386,7 +1386,25 @@ export async function generateBible(
 
 /**
  * Generate Bible with ExploreAgent — SSE streaming
+ * 带有丰富进度事件的 Agent 执行流
  */
+export type ExploreEvent = {
+  type: string;
+  phase?: string;
+  detail?: string;
+  data?: any;
+  thought?: string;
+  toolName?: string;
+  toolResultPreview?: string;
+  turn?: number;
+  maxTurns?: number;
+  aiCallBudget?: { used: number; max: number };
+  bible?: string;
+  trace?: any;
+  error?: string;
+  message?: string;
+};
+
 export async function generateBibleExplore(
   options: {
     concept: string;
@@ -1396,9 +1414,17 @@ export async function generateBibleExplore(
   },
   callbacks?: {
     onStart?: (data: { message: string }) => void;
-    onProgress?: (data: { phase?: string; detail?: string }) => void;
-    onSearchResult?: (data: { phase?: string; detail?: string; data?: any }) => void;
-    onDone?: (bible: string) => void;
+    onProgress?: (data: ExploreEvent) => void;
+    onSearchResult?: (data: ExploreEvent) => void;
+    /** Agent 推理过程 */
+    onThought?: (data: ExploreEvent) => void;
+    /** 工具调用成功 */
+    onToolResult?: (data: ExploreEvent) => void;
+    /** 工具调用失败/跳过 */
+    onToolError?: (data: ExploreEvent) => void;
+    /** Agent 运行总结 */
+    onSummary?: (data: ExploreEvent) => void;
+    onDone?: (bible: string, trace?: any) => void;
     onError?: (error: string) => void;
   },
 ): Promise<string> {
@@ -1442,21 +1468,29 @@ export async function generateBibleExplore(
         if (!jsonStr) continue;
 
         try {
-          const event = JSON.parse(jsonStr);
+          const event: ExploreEvent = JSON.parse(jsonStr);
 
           if (event.type === 'heartbeat') continue;
 
           if (event.type === 'start') {
-            callbacks?.onStart?.(event);
+            callbacks?.onStart?.(event as { message: string });
           } else if (event.type === 'progress') {
             callbacks?.onProgress?.(event);
           } else if (event.type === 'search_result') {
             callbacks?.onSearchResult?.(event);
+          } else if (event.type === 'thought') {
+            callbacks?.onThought?.(event);
+          } else if (event.type === 'tool_result') {
+            callbacks?.onToolResult?.(event);
+          } else if (event.type === 'tool_error') {
+            callbacks?.onToolError?.(event);
+          } else if (event.type === 'summary') {
+            callbacks?.onSummary?.(event);
           } else if (event.type === 'done') {
             bible = event.bible || '';
-            callbacks?.onDone?.(bible);
+            callbacks?.onDone?.(bible, event.trace);
           } else if (event.type === 'error') {
-            callbacks?.onError?.(event.error);
+            callbacks?.onError?.(event.error || '未知错误');
             throw new Error(event.error);
           }
         } catch (parseErr) {
