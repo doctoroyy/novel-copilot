@@ -151,15 +151,34 @@ function ProjectLayoutInner() {
     }
   };
 
+  /** Agent 执行日志条目 */
+  type ExploreLogEntry = {
+    id: number;
+    type: 'start' | 'thought' | 'tool_call' | 'tool_result' | 'tool_error' | 'search_data' | 'summary' | 'error';
+    icon: string;
+    text: string;
+    detail?: string;
+    timestamp: number;
+  };
+
+  const [exploreLogs, setExploreLogs] = useState<ExploreLogEntry[]>([]);
+  const logIdRef = { current: 0 };
+
+  const addLog = (entry: Omit<ExploreLogEntry, 'id' | 'timestamp'>) => {
+    logIdRef.current += 1;
+    setExploreLogs(prev => [...prev, { ...entry, id: logIdRef.current, timestamp: Date.now() }]);
+  };
+
   // AI Bible generation for new project — ExploreAgent SSE
   const handleGenerateBibleForNew = async () => {
     setGeneratingBible(true);
     setExploreProgress(null);
     setExplorePhase('idle');
+    setExploreLogs([]);
+    logIdRef.current = 0;
 
     try {
       setExplorePhase('searching');
-      setExploreProgress('正在搜索市场数据...');
 
       const result = await generateBibleExplore(
         {
@@ -171,30 +190,74 @@ function ProjectLayoutInner() {
         {
           onStart: () => {
             setExplorePhase('searching');
-            setExploreProgress('正在搜索市场数据...');
+            addLog({ type: 'start', icon: '🚀', text: '启动 ExploreAgent' });
           },
           onProgress: (data) => {
             const phase = data.phase || '';
-            if (phase === 'tool_call') {
-              const detail = data.detail || '';
-              if (detail.includes('search_cached_templates') || detail.includes('search_fanqie_rank') || detail.includes('search_web')) {
+            if (phase === 'reasoning') {
+              const budgetInfo = data.aiCallBudget
+                ? ` (AI 预算: ${data.aiCallBudget.used}/${data.aiCallBudget.max})`
+                : '';
+              setExploreProgress(`${data.detail || '推理中...'}${budgetInfo}`);
+            } else if (phase === 'tool_call') {
+              const toolName = data.toolName || data.detail || '';
+              if (toolName.includes('search_cached_templates') || toolName.includes('search_fanqie_rank') || toolName.includes('search_web')) {
                 setExplorePhase('searching');
-                setExploreProgress(detail);
-              } else if (detail.includes('analyze_and_generate')) {
+              } else if (toolName.includes('analyze_and_generate')) {
                 setExplorePhase('analyzing');
-                setExploreProgress('正在分析趋势 + 生成设定...');
-              } else if (detail.includes('finish')) {
+              } else if (toolName.includes('finish')) {
                 setExplorePhase('generating');
-                setExploreProgress('正在生成最终设定...');
-              } else {
-                setExploreProgress(detail);
               }
-            } else if (phase === 'reasoning') {
-              setExploreProgress(data.detail || '正在推理...');
+              addLog({ type: 'tool_call', icon: '🔧', text: `调用工具: ${data.toolName || ''}`, detail: data.detail });
+            } else if (phase === 'budget_exceeded') {
+              addLog({ type: 'error', icon: '⚠️', text: data.detail || '推理预算已用完' });
+            } else if (phase === 'fallback') {
+              addLog({ type: 'error', icon: '🔄', text: data.detail || '降级为直接生成' });
             }
           },
-          onSearchResult: () => {
-            // search result received — keep searching phase
+          onThought: (data) => {
+            addLog({
+              type: 'thought',
+              icon: '💭',
+              text: data.thought || '推理中...',
+              detail: data.detail,
+            });
+          },
+          onToolResult: (data) => {
+            addLog({
+              type: 'tool_result',
+              icon: '✅',
+              text: `${data.toolName}: ${data.toolResultPreview || '完成'}`,
+              detail: data.detail,
+            });
+          },
+          onToolError: (data) => {
+            addLog({
+              type: 'tool_error',
+              icon: '❌',
+              text: `${data.toolName}: ${data.toolResultPreview || '失败'}`,
+              detail: data.detail,
+            });
+          },
+          onSearchResult: (data) => {
+            // 搜索数据条目
+            const toolLabel = data.phase === 'search_cached_templates' ? '缓存模板'
+              : data.phase === 'search_fanqie_rank' ? '番茄热榜'
+              : data.phase === 'search_web' ? '网页搜索'
+              : data.phase || '搜索';
+            addLog({
+              type: 'search_data',
+              icon: '📊',
+              text: `${toolLabel}数据已获取`,
+              detail: data.detail?.slice(0, 200),
+            });
+          },
+          onSummary: (data) => {
+            addLog({
+              type: 'summary',
+              icon: data.detail?.startsWith('✅') ? '🎉' : '⚠️',
+              text: data.detail || '执行完成',
+            });
           },
           onDone: (bible) => {
             setExplorePhase('done');
@@ -204,6 +267,7 @@ function ProjectLayoutInner() {
           onError: (error) => {
             setExplorePhase('idle');
             setExploreProgress(null);
+            addLog({ type: 'error', icon: '❌', text: `失败: ${error}` });
             setError(`ExploreAgent 失败：${error}`);
           },
         },
@@ -220,7 +284,7 @@ function ProjectLayoutInner() {
       setTimeout(() => {
         setExplorePhase('idle');
         setExploreProgress(null);
-      }, 2000);
+      }, 3000);
     }
   };
 
@@ -506,9 +570,10 @@ function ProjectLayoutInner() {
                 rows={2}
                 className="text-sm"
               />
-              {/* ExploreAgent progress indicator */}
-              {generatingBible && explorePhase !== 'idle' && (
+              {/* ExploreAgent 执行详情 */}
+              {(generatingBible || exploreLogs.length > 0) && explorePhase !== 'idle' && (
                 <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  {/* 三步进度概览 */}
                   <div className="flex items-center gap-3">
                     {(['searching', 'analyzing', 'generating'] as const).map((phase, i) => {
                       const icons = [Search, BarChart3, FileText];
@@ -526,7 +591,43 @@ function ProjectLayoutInner() {
                     })}
                   </div>
                   {exploreProgress && (
-                    <p className="text-xs text-muted-foreground truncate">{exploreProgress}</p>
+                    <p className="text-xs text-muted-foreground">{exploreProgress}</p>
+                  )}
+                  {/* Agent 执行日志 */}
+                  {exploreLogs.length > 0 && (
+                    <div className="border-t border-primary/20 pt-2 mt-1">
+                      <p className="text-[11px] text-muted-foreground/70 font-medium mb-1">执行日志</p>
+                      <div className="max-h-[180px] overflow-y-auto space-y-1 text-xs">
+                        {exploreLogs.map((log) => (
+                          <div
+                            key={log.id}
+                            className={`flex items-start gap-1.5 ${
+                              log.type === 'tool_error' || log.type === 'error'
+                                ? 'text-red-500'
+                                : log.type === 'summary'
+                                ? 'text-primary font-medium'
+                                : log.type === 'thought'
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-muted-foreground'
+                            }`}
+                          >
+                            <span className="shrink-0 leading-[18px]">{log.icon}</span>
+                            <div className="min-w-0">
+                              <span>{log.text}</span>
+                              {log.detail && (
+                                <span className="block text-[11px] text-muted-foreground/60 truncate">{log.detail}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {generatingBible && explorePhase !== 'done' && (
+                          <div className="flex items-center gap-1.5 text-muted-foreground/50">
+                            <span className="shrink-0 animate-pulse">⏳</span>
+                            <span>执行中...</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

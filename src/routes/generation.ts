@@ -3050,6 +3050,12 @@ generationRoutes.post('/generate-bible-explore', async (c) => {
               phase: event.phase,
               detail: event.detail,
               data: event.data,
+              thought: event.thought,
+              toolName: event.toolName,
+              toolResultPreview: event.toolResultPreview,
+              turn: event.turn,
+              maxTurns: event.maxTurns,
+              aiCallBudget: event.aiCallBudget,
             });
           },
         );
