@@ -2096,8 +2096,10 @@ export async function runChapterGenerationTaskInBackground(params: {
         status: 'error',
         message: `第 ${chapterIndex} 章失败: ${chapterErrorMessage}`,
       });
-      await completeTask(env.DB, taskId, false, `第 ${chapterIndex} 章生成失败: ${chapterErrorMessage}`);
-      return;
+      // Re-throw so the queue handler calls message.retry().
+      // On retry the task state is still 'running', the chapter (not in completedChapters)
+      // will be attempted again, up to max_retries times.
+      throw chapterError;
     }
 
     // 7. Check Completion & Relay to Next Step
@@ -2123,32 +2125,33 @@ export async function runChapterGenerationTaskInBackground(params: {
     }
 
     // RELAY: Trigger next step via Queue (more robust than fetch)
-    if (env.GENERATION_QUEUE && !task.cancelRequested) {
+    if (env.GENERATION_QUEUE && !freshTask?.cancelRequested) {
       console.log(`[Queue] Enqueuing next step for task: ${taskId}`);
-
-      try {
-        await env.GENERATION_QUEUE.send({
-          taskType: 'chapters',
-          taskId,
-          userId,
-          aiConfig,
-          fallbackConfigs,
-          chaptersToGenerate,
-          enqueuedAt: Date.now(),
-        });
-      } catch (queueError) {
-        console.error('[Queue] Failed to enqueue next step:', queueError);
-        // If enqueuing next step fails, we might want to mark the task as failed or just rely on manual resume
-      }
+      // Do NOT swallow queue errors — propagate to the outer catch so the queue handler
+      // calls message.retry(). On retry, the now-completed chapter is already in
+      // completedChapters, so getContiguousCompletedCount advances past it and the
+      // NEXT chapter is processed automatically.
+      await env.GENERATION_QUEUE.send({
+        taskType: 'chapters',
+        taskId,
+        userId,
+        aiConfig,
+        fallbackConfigs,
+        chaptersToGenerate,
+        enqueuedAt: Date.now(),
+      });
     }
 
   } catch (error) {
     console.error(`Background task ${taskId} fatal error:`, error);
-    try {
-      await completeTask(env.DB, taskId, false, (error as Error).message);
-    } catch (dbError) {
-      console.warn('Failed to mark task as failed:', dbError);
-    }
+    // Re-throw so the queue handler calls message.retry() instead of message.ack().
+    // Handles three scenarios:
+    //   1. Chapter error: chapter not in completedChapters → same chapter retried.
+    //   2. Relay error: chapter IS in completedChapters → retry advances to next chapter
+    //      automatically via getContiguousCompletedCount.
+    //   3. Fatal/transient error: retried up to max_retries; if exhausted, the task
+    //      stays 'running' until the stale-task timeout cleans it up.
+    throw error;
   }
 }
 
