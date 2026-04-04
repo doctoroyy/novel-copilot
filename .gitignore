@@ -6,3 +6,4 @@ config.json
 projects/*/chapters/*.md
 !projects/demo-book/
 .wrangler
+.history/
