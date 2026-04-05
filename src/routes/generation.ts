@@ -1529,6 +1529,7 @@ export async function runChapterGenerationTaskInBackground(params: {
   taskId: number;
   chaptersToGenerate?: number;
   enqueuedAt?: number;
+  chapterAttemptCounts?: Record<string, number>;
 }) {
   const {
     env,
@@ -1538,6 +1539,7 @@ export async function runChapterGenerationTaskInBackground(params: {
     taskId,
     chaptersToGenerate,
     enqueuedAt,
+    chapterAttemptCounts,
   } = params;
   const queueLatencyMs = enqueuedAt ? Date.now() - enqueuedAt : 0;
   if (queueLatencyMs > 0) {
@@ -1623,6 +1625,9 @@ export async function runChapterGenerationTaskInBackground(params: {
     // 5. Identify Next Chapter
     const currentStepIndex = completedCount;
     const chapterIndex = task.startChapter + currentStepIndex;
+    const CHAPTER_MAX_ATTEMPTS = 3;
+    const chapterKey = String(chapterIndex);
+    const currentChapterAttempt = (chapterAttemptCounts?.[chapterKey] ?? 0) + 1;
 
     if (chapterIndex > rebasedState.nextChapterIndex) {
       const message = `检测到章节断档，当前必须先处理第 ${rebasedState.nextChapterIndex} 章，不能直接生成第 ${chapterIndex} 章。`;
@@ -2086,7 +2091,29 @@ export async function runChapterGenerationTaskInBackground(params: {
     } catch (chapterError) {
       console.error(`Chapter ${chapterIndex} failed:`, chapterError);
       const chapterErrorMessage = (chapterError as Error).message || '未知错误';
-      await updateTaskProgress(env.DB, taskId, chapterIndex, true, chapterErrorMessage);
+
+      if (currentChapterAttempt >= CHAPTER_MAX_ATTEMPTS) {
+        const finalErrorMessage = `第 ${chapterIndex} 章在 ${currentChapterAttempt} 次尝试后仍失败：${chapterErrorMessage}`;
+        await updateTaskProgress(env.DB, taskId, chapterIndex, true, finalErrorMessage);
+        await completeTask(env.DB, taskId, false, finalErrorMessage);
+        await emitProgressEvent({
+          userId,
+          projectName: project.name,
+          current: completedCount,
+          total: task.targetCount,
+          chapterIndex,
+          status: 'error',
+          message: finalErrorMessage,
+        });
+        return;
+      }
+
+      const nextAttemptCounts: Record<string, number> = {
+        ...(chapterAttemptCounts || {}),
+        [chapterKey]: currentChapterAttempt,
+      };
+      const retryMessage = `第 ${chapterIndex} 章失败（第 ${currentChapterAttempt}/${CHAPTER_MAX_ATTEMPTS} 次）：${chapterErrorMessage}。准备重试...`;
+      await updateTaskMessage(env.DB, taskId, retryMessage, chapterIndex);
       await emitProgressEvent({
         userId,
         projectName: project.name,
@@ -2094,11 +2121,24 @@ export async function runChapterGenerationTaskInBackground(params: {
         total: task.targetCount,
         chapterIndex,
         status: 'error',
-        message: `第 ${chapterIndex} 章失败: ${chapterErrorMessage}`,
+        message: retryMessage,
       });
-      // Re-throw so the queue handler calls message.retry().
-      // On retry the task state is still 'running', the chapter (not in completedChapters)
-      // will be attempted again, up to max_retries times.
+
+      if (env.GENERATION_QUEUE) {
+        await env.GENERATION_QUEUE.send({
+          taskType: 'chapters',
+          taskId,
+          userId,
+          aiConfig,
+          fallbackConfigs,
+          chaptersToGenerate,
+          enqueuedAt: Date.now(),
+          chapterAttemptCounts: nextAttemptCounts,
+        });
+        return;
+      }
+
+      // Local dev fallback when queue binding is missing.
       throw chapterError;
     }
 
@@ -2139,6 +2179,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         fallbackConfigs,
         chaptersToGenerate,
         enqueuedAt: Date.now(),
+        chapterAttemptCounts: {},
       });
     }
 
