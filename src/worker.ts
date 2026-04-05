@@ -292,6 +292,7 @@ export default {
             taskId: payload.taskId,
             chaptersToGenerate: payload.chaptersToGenerate,
             enqueuedAt: payload.enqueuedAt,
+            chapterAttemptCounts: payload.chapterAttemptCounts,
           });
         }
 
