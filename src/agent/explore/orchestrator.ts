@@ -169,7 +169,7 @@ export class ExploreAgentOrchestrator {
 
               // 为每个工具发送结果摘要
               const preview = this.buildToolResultPreview(call.tool, result);
-              const isError = result.startsWith('[ERROR]') || result.startsWith('[SKIP]');
+              const isError = result.startsWith('[ERROR]');
 
               this.emit({
                 type: isError ? 'tool_error' : 'tool_result',
@@ -256,7 +256,6 @@ export class ExploreAgentOrchestrator {
     if (genre) parts.push(`【类型】${genre}`);
     if (theme) parts.push(`【主题】${theme}`);
     if (keywords) parts.push(`【关键词】${keywords}`);
-    parts.push(`\n浏览器绑定: ${this.ctx.browserBinding ? '可用（可爬取番茄热榜和 Bing 搜索）' : '不可用（仅可搜索缓存模板）'}`);
     return parts.join('\n');
   }
 
@@ -325,12 +324,19 @@ export class ExploreAgentOrchestrator {
 ## 工作流程
 
 1. **搜索阶段（Turn 1）**: 并行调用多个搜索工具获取市场数据
-   - search_cached_templates: 搜索已有模板（总是可用）
-   - search_fanqie_rank: 爬取实时热榜（需要浏览器可用）
+   - search_cached_templates: 搜索已有模板（总是可用，会返回缓存数据）
+   - search_fanqie_rank: 爬取实时热榜（优先实时，失败时自动降级到缓存）
    - search_web: Bing 搜索行业趋势（需要浏览器可用）
    注意：一次调用中最多 ${EXPLORE_CONFIG.maxToolCallsPerTurn} 个工具
 
 2. **生成阶段（Turn 2）**: 调用 analyze_and_generate 生成定制化 Story Bible。该工具会自动提取上下文并处理最终输出。
+
+## 重要原则
+
+- **无论搜索工具返回什么结果（包括无数据、空结果），都必须在 Turn 2 调用 analyze_and_generate**
+- 搜索结果仅供参考，analyze_and_generate 能够根据用户创意直接生成高质量内容
+- 不要因搜索失败而重试或停止，直接进入生成阶段
+- 尽量在 2 轮内完成任务（搜索 + 生成）
 
 ## 可用工具
 
@@ -346,9 +352,8 @@ ${toolDescriptions}
 
 注意：
 - tool_calls 和 final_output 不能同时存在
-- 尽量在 2 轮内完成任务（搜索 + 生成）
-- 第一轮应并行调用所有数据搜索工具
-- 如果浏览器不可用，跳过 search_fanqie_rank 和 search_web
+- 第一轮并行调用所有数据搜索工具
+- 第二轮直接调用 analyze_and_generate（无论搜索是否成功）
 - 调用 analyze_and_generate 即可完成全部任务`;
   }
 

@@ -134,7 +134,33 @@ export class ExploreToolExecutor {
     }
 
     if (parts.length === 0) {
-      return `搜索"${query}"未找到匹配的缓存模板或排行数据。`;
+      // 关键词无匹配时，降级返回最新快照的通用数据供 Agent 参考
+      const latestRow = rows.results[0] as any;
+      try {
+        const fallbackParts: string[] = [];
+
+        const templates: ImagineTemplate[] = JSON.parse(latestRow.templates_json || '[]');
+        if (templates.length > 0) {
+          const tplTexts = templates.slice(0, 6).map((t) =>
+            `[${latestRow.snapshot_date}] ${t.name} | 类型:${t.genre} | 主题:${t.coreTheme} | 卖点:${t.oneLineSellingPoint} | 关键词:${(t.keywords || []).join('、')}`
+          );
+          fallbackParts.push(`**最新市场模板（通用，无关键词匹配）**:\n${tplTexts.join('\n')}`);
+        }
+
+        const rankings: FanqieHotItem[] = JSON.parse(latestRow.ranking_json || '[]');
+        if (rankings.length > 0) {
+          const rankTexts = rankings.slice(0, 10).map((item) =>
+            `#${item.rank} ${item.title} | ${item.category || '未知'} | ${item.summary?.slice(0, 60) || '无摘要'}`
+          );
+          fallbackParts.push(`**最新热榜（通用）**:\n${rankTexts.join('\n')}`);
+        }
+
+        if (fallbackParts.length > 0) {
+          return fallbackParts.join('\n\n');
+        }
+      } catch { /* ignore */ }
+
+      return `搜索"${query}"未找到匹配数据，缓存库中暂无相关内容。`;
     }
 
     return parts.join('\n\n');
@@ -143,39 +169,56 @@ export class ExploreToolExecutor {
   // ========== search_fanqie_rank ==========
 
   private async searchFanqieRank(category?: string): Promise<string> {
-    if (!this.ctx.browserBinding) {
-      return '[SKIP] FANQIE_BROWSER 不可用，跳过番茄热榜爬取。';
+    // 优先尝试实时爬取（Playwright）
+    if (this.ctx.browserBinding) {
+      try {
+        const hotItems = await scrapeFanqieHotListWithPlaywright(
+          { DB: this.ctx.db, FANQIE_BROWSER: this.ctx.browserBinding },
+          { limit: 30 },
+        );
+
+        let filtered = hotItems;
+        if (category) {
+          const catLower = category.toLowerCase();
+          filtered = hotItems.filter(item =>
+            item.category?.toLowerCase().includes(catLower)
+          );
+          if (filtered.length < 3) filtered = hotItems;
+        }
+
+        if (filtered.length > 0) {
+          const lines = filtered.slice(0, 20).map(item =>
+            `#${item.rank} ${item.title}${item.author ? ` (${item.author})` : ''} | ${item.category || '未知'} | ${item.summary?.slice(0, 80) || '无摘要'}`
+          );
+          return `**番茄热榜 (${filtered.length} 本${category ? `, 筛选: ${category}` : ''})**:\n${lines.join('\n')}`;
+        }
+      } catch {
+        // 实时爬取失败，降级到 DB 缓存
+      }
     }
 
+    // 降级：使用 DB 最近缓存的快照
     try {
-      const hotItems = await scrapeFanqieHotListWithPlaywright(
-        { DB: this.ctx.db, FANQIE_BROWSER: this.ctx.browserBinding },
-        { limit: 30 },
-      );
-
-      let filtered = hotItems;
-      if (category) {
-        const catLower = category.toLowerCase();
-        filtered = hotItems.filter(item =>
-          item.category?.toLowerCase().includes(catLower)
-        );
-        // 如果过滤后太少，返回全部
-        if (filtered.length < 3) {
-          filtered = hotItems;
-        }
+      const snapshot = await getImagineTemplateSnapshot(this.ctx.db);
+      if (!snapshot?.ranking?.length) {
+        return '暂无番茄热榜数据（实时爬取不可用，缓存也为空）。';
       }
 
-      if (filtered.length === 0) {
-        return '番茄热榜爬取完成，但未获取到有效数据。';
+      let filtered = snapshot.ranking;
+      if (category) {
+        const catLower = category.toLowerCase();
+        const catFiltered = filtered.filter(item =>
+          item.category?.toLowerCase().includes(catLower)
+        );
+        if (catFiltered.length >= 3) filtered = catFiltered;
       }
 
       const lines = filtered.slice(0, 20).map(item =>
         `#${item.rank} ${item.title}${item.author ? ` (${item.author})` : ''} | ${item.category || '未知'} | ${item.summary?.slice(0, 80) || '无摘要'}`
       );
-
-      return `**番茄热榜 (${filtered.length} 本${category ? `, 筛选: ${category}` : ''})**:\n${lines.join('\n')}`;
-    } catch (err) {
-      return `[ERROR] 番茄热榜爬取失败: ${(err as Error).message}`;
+      return `**番茄热榜（缓存 ${snapshot.snapshotDate}，${filtered.length} 本${category ? `, 筛选: ${category}` : ''}）**:\n${lines.join('\n')}`;
+    } catch {
+      return '暂无番茄热榜数据（实时爬取不可用，缓存读取失败）。';
     }
   }
 
@@ -183,7 +226,7 @@ export class ExploreToolExecutor {
 
   private async searchWeb(query: string): Promise<string> {
     if (!this.ctx.browserBinding) {
-      return '[SKIP] FANQIE_BROWSER 不可用，跳过网页搜索。';
+      return 'Bing 网页搜索不可用（无浏览器绑定）。';
     }
 
     if (!query) return '搜索关键词为空。';
@@ -201,7 +244,7 @@ export class ExploreToolExecutor {
 
       return `**网页搜索结果 (${results.length})**:\n${lines.join('\n')}`;
     } catch (err) {
-      return `[ERROR] 网页搜索失败: ${(err as Error).message}`;
+      return `网页搜索暂时不可用（${(err as Error).message}）。`;
     }
   }
 
@@ -214,6 +257,8 @@ export class ExploreToolExecutor {
 
 【市场数据】
 ${searchData}
+
+【注意】如果市场数据为空或不可用，请直接根据用户创意发挥专业判断，无需提及数据缺失。
 
 【差异化要求】
 - 不要照搬热门书的设定，要在热门赛道中找到未被充分开发的细分切口
