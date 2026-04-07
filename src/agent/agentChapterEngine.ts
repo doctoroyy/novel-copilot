@@ -172,8 +172,14 @@ export async function writeChapterWithAgent(
   // 5. 运行 Agent 循环
   params.onProgress?.('Agent 开始推理...', 'analyzing');
   const agentStartedAt = Date.now();
-  const { chapterText, trace } = await orchestrator.run(initialContext);
+  const { chapterText: rawChapterText, trace } = await orchestrator.run(initialContext);
   const agentDurationMs = Date.now() - agentStartedAt;
+
+  // 空章节防护：agent 未能生成任何正文内容时直接抛错，触发上层重试
+  if (!rawChapterText || rawChapterText.replace(/\s/g, '').length < 50) {
+    throw new Error(`第 ${chapterIndex} 章 Agent 未能生成正文内容（输出为空或过短）`);
+  }
+  const chapterText = rawChapterText;
 
   console.log(
     `[Agent] 第${chapterIndex}章完成: ${trace.totalTurns}轮推理, ${trace.totalToolCalls}次工具调用, 耗时${(agentDurationMs / 1000).toFixed(1)}s`,
@@ -328,7 +334,7 @@ export async function writeChapterWithAgent(
   };
 
   return {
-    chapterText: chapterText || '',
+    chapterText,  // 此处 chapterText 一定非空（上方已抛错拦截）
     updatedSummary,
     updatedOpenLoops,
     updatedCharacterStates,

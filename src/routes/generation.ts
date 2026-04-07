@@ -1947,6 +1947,10 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       // 持久化到 generation_perf_logs
       const dbSaveStartedAt = Date.now();
+      // 二次防护：禁止将空章节写入数据库
+      if (!chapterText || chapterText.replace(/\s/g, '').length < 50) {
+        throw new Error(`第 ${chapterIndex} 章内容为空，拒绝写入数据库`);
+      }
       await env.DB.prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
           `).bind(project.id, chapterIndex, chapterText).run();
