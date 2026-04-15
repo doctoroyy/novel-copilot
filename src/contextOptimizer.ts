@@ -426,6 +426,8 @@ export function buildOptimizedContext(params: {
   totalChapters: number;
   chapterOutlineCharacters?: string[];
   outlineContext?: OutlineChapterContext | null;
+  contextMode?: 'full' | 'balanced' | 'focused';
+  targetContextTokens?: number;
   /** @deprecated 不再使用预算系统，保留参数兼容性 */
   budget?: ContextBudget;
 }): string {
@@ -440,7 +442,10 @@ export function buildOptimizedContext(params: {
     narrativeGuide,
     chapterIndex,
     totalChapters,
+    chapterOutlineCharacters,
     outlineContext,
+    contextMode = 'balanced',
+    targetContextTokens,
   } = params;
 
   const parts: string[] = [];
@@ -450,79 +455,172 @@ export function buildOptimizedContext(params: {
 - 当前章节: 第${chapterIndex}/${totalChapters}章
 - 是否终章: ${chapterIndex === totalChapters ? '是' : '否'}`);
 
-  // Story Bible — 全量，不压缩
+  if (contextMode === 'full') {
+    // Story Bible — 全量，不压缩
+    if (bible) {
+      parts.push(`【核心设定】\n${bible}`);
+    }
+
+    // 当前卷大纲上下文（全量）
+    if (outlineContext) {
+      parts.push(formatOutlineContext(outlineContext, chapterIndex));
+    }
+
+    // 人物状态 — 全量输出，不按评分截断
+    if (characterStates && Object.keys(characterStates.snapshots).length > 0) {
+      const snapshots = Object.values(characterStates.snapshots);
+      const charParts: string[] = ['【人物状态】'];
+      for (const s of snapshots) {
+        charParts.push(formatCompactSnapshot(s));
+      }
+      if (charParts.length > 1) {
+        parts.push(charParts.join('\n'));
+      }
+    }
+
+    // 剧情图谱 — 全量输出，不按预算截断
+    if (plotGraph && plotGraph.nodes.length > 0) {
+      const plotParts: string[] = [];
+
+      const urgentForeshadowing = plotGraph.pendingForeshadowing.filter(
+        (p) => p.urgency === 'critical' || p.urgency === 'high'
+      );
+      if (urgentForeshadowing.length > 0) {
+        plotParts.push(formatUrgentForeshadowing(urgentForeshadowing));
+      }
+
+      const mainPlots = plotGraph.activeMainPlots
+        .map((id) => plotGraph.nodes.find((n) => n.id === id))
+        .filter(Boolean) as PlotNode[];
+      if (mainPlots.length > 0) {
+        plotParts.push(formatActivePlots(mainPlots, '主线'));
+      }
+
+      const activeNodes = plotGraph.nodes
+        .filter((n) => n.status === 'active')
+        .sort((a, b) => b.introducedAt - a.introducedAt);
+      if (activeNodes.length > 0) {
+        plotParts.push(`【活跃事件】\n${activeNodes.map((e) => `• 第${e.introducedAt}章: ${e.content}`).join('\n')}`);
+      }
+
+      const milestones = plotGraph.nodes
+        .filter((n) => n.importance >= 8 && chapterIndex - n.introducedAt >= 15)
+        .sort((a, b) => b.importance - a.importance);
+      if (milestones.length > 0) {
+        plotParts.push(`【关键历史里程碑】\n${milestones.map((m) => `• 第${m.introducedAt}章: ${m.content}`).join('\n')}`);
+      }
+
+      if (plotParts.length > 0) {
+        parts.push(plotParts.join('\n\n'));
+      }
+    }
+
+    // 时间线上下文
+    if (timeline && timeline.events.length > 0) {
+      const characterNameMap = getCharacterNameMap(characters, characterStates);
+      const timelineContext = buildTimelineContext(timeline, chapterIndex, characterNameMap);
+      if (timelineContext) {
+        parts.push(timelineContext);
+      }
+    }
+
+    // 叙事指导
+    if (narrativeGuide) {
+      parts.push(`【本章叙事要求】
+- 节奏: ${narrativeGuide.pacingTarget}/10 (${narrativeGuide.pacingType})
+- 基调: ${narrativeGuide.emotionalTone}
+- 字数: ${narrativeGuide.wordCountRange[0]}-${narrativeGuide.wordCountRange[1]}
+${narrativeGuide.prohibitions.length > 0 ? `- 禁止: ${narrativeGuide.prohibitions.join('; ')}` : ''}`);
+    }
+
+    // 滚动摘要 — 全量，仅做 normalize，不压缩
+    const normalizedSummary = normalizeRollingSummary(rollingSummary || '');
+    if (normalizedSummary) {
+      parts.push(`【剧情摘要】\n${normalizedSummary}`);
+    }
+
+    // 近章原文：全量保留
+    const lastChapterParts: string[] = [];
+    if (lastChapters.length >= 2) {
+      lastChapterParts.push(`【前一章原文】\n${lastChapters[lastChapters.length - 2]}`);
+    }
+    if (lastChapters.length >= 1) {
+      lastChapterParts.push(`【上一章原文】\n${lastChapters[lastChapters.length - 1]}`);
+    }
+    const optLastChapters = lastChapterParts.join('\n\n');
+    if (optLastChapters) {
+      parts.push(optLastChapters);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  const tunedTotalTokens = Math.max(
+    contextMode === 'focused' ? 5000 : 9000,
+    Math.floor(targetContextTokens || (contextMode === 'focused' ? 8000 : 13000)),
+  );
+  const budgetBase: ContextBudget = {
+    totalTokens: tunedTotalTokens,
+    allocation: { ...DEFAULT_BUDGET.allocation },
+  };
+  const activeBudget = narrativeGuide
+    ? adjustBudgetForPacing(budgetBase, narrativeGuide.pacingType)
+    : budgetBase;
+
+  const bibleTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.bible);
+  const characterTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.characterState);
+  const plotTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.plotContext);
+  const timelineTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.timeline);
+  const summaryTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.rollingSummary);
+  const chaptersTokens = Math.floor(activeBudget.totalTokens * activeBudget.allocation.lastChapters);
+
   if (bible) {
-    parts.push(`【核心设定】\n${bible}`);
+    const optimizedBible = compressBible(bible, bibleTokens);
+    if (optimizedBible) {
+      parts.push(`【核心设定】\n${optimizedBible}`);
+    }
   }
 
-  // 当前卷大纲上下文（全量）
   if (outlineContext) {
-    parts.push(formatOutlineContext(outlineContext, chapterIndex));
+    const outlineRaw = formatOutlineContext(outlineContext, chapterIndex);
+    const outlineLimit = contextMode === 'focused' ? 2800 : 4200;
+    const outlineText = outlineRaw.length > outlineLimit
+      ? `${outlineRaw.slice(0, outlineLimit)}\n...`
+      : outlineRaw;
+    parts.push(outlineText);
   }
 
-  // 人物状态 — 全量输出，不按评分截断
   if (characterStates && Object.keys(characterStates.snapshots).length > 0) {
-    const snapshots = Object.values(characterStates.snapshots);
-    const charParts: string[] = ['【人物状态】'];
-    for (const s of snapshots) {
-      charParts.push(formatCompactSnapshot(s));
-    }
-    if (charParts.length > 1) {
-      parts.push(charParts.join('\n'));
-    }
-  }
-
-  // 剧情图谱 — 全量输出，不按预算截断
-  if (plotGraph && plotGraph.nodes.length > 0) {
-    const plotParts: string[] = [];
-
-    // 紧急伏笔
-    const urgentForeshadowing = plotGraph.pendingForeshadowing.filter(
-      (p) => p.urgency === 'critical' || p.urgency === 'high'
+    const optimizedCharacters = optimizeCharacterContext(
+      characterStates,
+      chapterIndex,
+      chapterOutlineCharacters,
+      characterTokens,
     );
-    if (urgentForeshadowing.length > 0) {
-      plotParts.push(formatUrgentForeshadowing(urgentForeshadowing));
-    }
-
-    // 活跃主线
-    const mainPlots = plotGraph.activeMainPlots
-      .map((id) => plotGraph.nodes.find((n) => n.id === id))
-      .filter(Boolean) as PlotNode[];
-    if (mainPlots.length > 0) {
-      plotParts.push(formatActivePlots(mainPlots, '主线'));
-    }
-
-    // 活跃事件
-    const activeNodes = plotGraph.nodes
-      .filter((n) => n.status === 'active')
-      .sort((a, b) => b.introducedAt - a.introducedAt);
-    if (activeNodes.length > 0) {
-      plotParts.push(`【活跃事件】\n${activeNodes.map((e) => `• 第${e.introducedAt}章: ${e.content}`).join('\n')}`);
-    }
-
-    // 关键历史里程碑
-    const milestones = plotGraph.nodes
-      .filter((n) => n.importance >= 8 && chapterIndex - n.introducedAt >= 15)
-      .sort((a, b) => b.importance - a.importance);
-    if (milestones.length > 0) {
-      plotParts.push(`【关键历史里程碑】\n${milestones.map((m) => `• 第${m.introducedAt}章: ${m.content}`).join('\n')}`);
-    }
-
-    if (plotParts.length > 0) {
-      parts.push(plotParts.join('\n\n'));
+    if (optimizedCharacters) {
+      parts.push(optimizedCharacters);
     }
   }
 
-  // 时间线上下文
+  if (plotGraph && plotGraph.nodes.length > 0) {
+    const optimizedPlot = optimizePlotContext(plotGraph, chapterIndex, plotTokens);
+    if (optimizedPlot) {
+      parts.push(optimizedPlot);
+    }
+  }
+
   if (timeline && timeline.events.length > 0) {
     const characterNameMap = getCharacterNameMap(characters, characterStates);
     const timelineContext = buildTimelineContext(timeline, chapterIndex, characterNameMap);
     if (timelineContext) {
-      parts.push(timelineContext);
+      const timelineLimitChars = timelineTokens * 2;
+      const trimmedTimeline = timelineContext.length > timelineLimitChars
+        ? `${timelineContext.slice(0, timelineLimitChars)}\n...`
+        : timelineContext;
+      parts.push(trimmedTimeline);
     }
   }
 
-  // 叙事指导
   if (narrativeGuide) {
     parts.push(`【本章叙事要求】
 - 节奏: ${narrativeGuide.pacingTarget}/10 (${narrativeGuide.pacingType})
@@ -531,23 +629,14 @@ export function buildOptimizedContext(params: {
 ${narrativeGuide.prohibitions.length > 0 ? `- 禁止: ${narrativeGuide.prohibitions.join('; ')}` : ''}`);
   }
 
-  // 滚动摘要 — 全量，仅做 normalize，不压缩
-  const normalizedSummary = normalizeRollingSummary(rollingSummary || '');
-  if (normalizedSummary) {
-    parts.push(`【剧情摘要】\n${normalizedSummary}`);
+  const optimizedSummary = optimizeRollingSummary(rollingSummary || '', chapterIndex, summaryTokens);
+  if (optimizedSummary) {
+    parts.push(`【剧情摘要】\n${optimizedSummary}`);
   }
 
-  // 近章原文：全量保留
-  const lastChapterParts: string[] = [];
-  if (lastChapters.length >= 2) {
-    lastChapterParts.push(`【前一章原文】\n${lastChapters[lastChapters.length - 2]}`);
-  }
-  if (lastChapters.length >= 1) {
-    lastChapterParts.push(`【上一章原文】\n${lastChapters[lastChapters.length - 1]}`);
-  }
-  const optLastChapters = lastChapterParts.join('\n\n');
-  if (optLastChapters) {
-    parts.push(optLastChapters);
+  const optimizedLastChapters = optimizeLastChapters(lastChapters, chaptersTokens);
+  if (optimizedLastChapters) {
+    parts.push(optimizedLastChapters);
   }
 
   return parts.join('\n\n');

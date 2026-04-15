@@ -20,6 +20,7 @@ import {
 } from '../services/aiClient.js';
 import { normalizeGeneratedChapterText, cleanChapterTitle } from '../utils/chapterText.js';
 import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
+import { extractAgentJSON } from './orchestratorUtils.js';
 
 /** Agent 单轮输出 Schema */
 const AgentTurnSchema = z.object({
@@ -79,10 +80,17 @@ export class ChapterAgentOrchestrator {
     this.initialWriteContext = initialContext;
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
-      // 预算检查
+      // 预算检查：预算耗尽或仅剩1次且已有草稿 → 直接用草稿结束
       if (this.aiCallCount >= this.config.maxAICalls) {
         this.config.onProgress?.('budget_exceeded', '推理预算已用完，输出当前最佳结果');
         break;
+      }
+      if (this.state.currentDraft && this.aiCallCount >= this.config.maxAICalls - 1) {
+        this.config.onProgress?.('budget_exceeded', '预算即将耗尽，提交当前草稿');
+        trace.totalTurns = trace.turns.length;
+        trace.totalDurationMs = Date.now() - startedAt;
+        trace.totalToolCalls = this.countTotalToolCalls(trace);
+        return { chapterText: this.state.currentDraft, trace };
       }
 
       this.state.turnCount = turn;
@@ -237,43 +245,21 @@ export class ChapterAgentOrchestrator {
   }
 
   private parseAgentResponse(raw: string): AgentTurn {
-    // 尝试从 response 中提取 JSON
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      // 如果没找到 JSON，将整个输出作为 thought
+    const extracted = extractAgentJSON(raw);
+    if (!extracted) {
       return { thought: raw.slice(0, 200) };
     }
 
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const validated = AgentTurnSchema.safeParse(parsed);
-
-      if (validated.success) {
-        return {
-          thought: validated.data.thought,
-          toolCalls: validated.data.tool_calls?.map(tc => ({
-            tool: tc.tool,
-            args: tc.args,
-          })),
-          finalOutput: validated.data.final_output,
-          metadata: validated.data.confidence != null ? {
-            confidence: validated.data.confidence,
-            phase: validated.data.phase || 'unknown',
-          } : undefined,
-        };
-      }
-
-      // Schema 校验失败但 JSON 解析成功，尽量提取信息
-      return {
-        thought: parsed.thought || 'Schema validation failed',
-        toolCalls: Array.isArray(parsed.tool_calls)
-          ? parsed.tool_calls.map((tc: any) => ({ tool: tc.tool, args: tc.args || {} }))
-          : undefined,
-        finalOutput: parsed.final_output,
-      };
-    } catch {
-      return { thought: raw.slice(0, 200) };
-    }
+    return {
+      thought: extracted.thought,
+      toolCalls: Array.isArray(extracted.tool_calls)
+        ? extracted.tool_calls.map(tc => ({ tool: tc.tool, args: tc.args || {} }))
+        : undefined,
+      finalOutput: extracted.final_output,
+      metadata: extracted.confidence != null
+        ? { confidence: extracted.confidence, phase: extracted.phase || 'unknown' }
+        : undefined,
+    };
   }
 
   private buildTurnPrompt(): string {
@@ -289,7 +275,15 @@ export class ChapterAgentOrchestrator {
   private buildAgentSystemPrompt(): string {
     const ctx = this.toolExecutor['ctx'];
     const minChapterWords = ctx.minChapterWords || 2500;
-    const toolDescriptions = TOOL_DEFINITIONS
+    const isLeanBudget = this.config.maxAICalls <= 4;
+
+    // For lean budgets, only list essential tools
+    const toolsToList = isLeanBudget
+      ? TOOL_DEFINITIONS.filter(t =>
+          ['write_chapter', 'soft_validate', 'finish', 'query_plot_graph', 'check_foreshadowing_opportunities'].includes(t.name))
+      : TOOL_DEFINITIONS;
+
+    const toolDescriptions = toolsToList
       .map(t => {
         const params = Object.entries(t.parameters)
           .map(([k, v]) => `${k}(${v.type}${v.required ? ',必填' : ''}): ${v.description}`)
@@ -298,53 +292,42 @@ export class ChapterAgentOrchestrator {
       })
       .join('\n');
 
+    if (isLeanBudget) {
+      return `你是小说章节创作 Agent。预算紧凑，直奔主题。
+
+工作流：查阅关键伏笔 → write_chapter 生成正文 → soft_validate 校验 → finish 提交。
+字数要求：正文 >= ${minChapterWords} 字。
+可用工具：
+${toolDescriptions}
+
+输出严格 JSON：
+{"thought":"推理","tool_calls":[{"tool":"名","args":{}}],"confidence":0.9,"phase":"writing"}
+最多调 ${this.config.maxToolCallsPerTurn} 个工具/轮。confidence >= 0.8 时用 finish 提交。`;
+    }
+
     return `你是一个专业的小说章节创作 Agent。你通过多轮推理和工具调用来创作高质量的章节。
 
-## 你的工作流程（效率优先）
+## 工作流程（效率优先）
+1. 查阅核心信息流并构思场景序列
+2. 调用 write_chapter 生成正文
+3. soft_validate 检查字数和格式
+4. 达标即 finish 提交，除非有严重缺陷才 evaluate_draft 或 rewrite_section
 
-1. **调研与设计阶段**: 查阅核心信息流并在心里构思场景序列。
-2. **写作阶段**: 明确场景计划后，立即调用 write_chapter 生成正文。
-3. **校验阶段**: 调用 soft_validate 检查字数和格式（不消耗 AI 预算）。
-4. **提交阶段**: 只要生成文本达标且无重大逻辑硬伤，立即使用 finish 提交全文。除非发现严重质量缺陷，否则不要调用 evaluate_draft 或 rewrite_section，避免无意义的反复修改。
-
-## 核心创作原则
-
-- **打破预期**: 使用 query_reader_expectations 了解读者预测，然后有意识地打破部分预期
-- **冲突升级**: 使用 analyze_conflict_density 确保冲突密度足够，每章至少有一个微冲突
-- **伏笔管理**: 使用 check_foreshadowing_opportunities 及时回收伏笔，合理植入新伏笔
-- **每次胜利都有代价**: 主角获得的每样东西都要付出相应代价
-- **效率意识**: 数据查询工具不消耗 AI 预算，优先使用；AI 工具消耗预算，合理使用
+## 核心原则
+- 打破读者预期，冲突升级，伏笔管理
+- 每次胜利都有代价
+- 数据查询工具不消耗 AI 预算，优先用；AI 工具消耗预算，精用
 
 ## 字数要求
-本章正文（不含标题行）最少 ${minChapterWords} 字。这是硬性要求，字数不足的章节不合格。
-write_chapter 生成后请检查字数，不足时用 rewrite_section 扩充。
+正文 >= ${minChapterWords} 字。不足时用 rewrite_section 扩充。
 
 ## 可用工具
-
 ${toolDescriptions}
 
 ## 输出格式
-
-每轮你必须输出严格的 JSON（不要有其他文字）：
-{
-  "thought": "你的推理过程（100字以内）",
-  "tool_calls": [{"tool": "工具名", "args": {...}}],
-  "confidence": 0.0-1.0,
-  "phase": "research|design|writing|evaluation|final"
-}
-
-或者当你准备提交最终结果时：
-{
-  "thought": "提交原因",
-  "tool_calls": [{"tool": "finish", "args": {"chapter_text": "完整章节文本..."}}],
-  "confidence": 0.85,
-  "phase": "final"
-}
-
-注意：
-- tool_calls 和 final_output 不能同时存在
-- 可以一次调多个工具（最多${this.config.maxToolCallsPerTurn}个）
-- 当你对章节质量满意（confidence >= 0.8）时，用 finish 工具提交最终文本`;
+每轮输出严格 JSON：
+{"thought":"推理(100字内)","tool_calls":[{"tool":"名","args":{}}],"confidence":0.0-1.0,"phase":"research|design|writing|evaluation|final"}
+最多 ${this.config.maxToolCallsPerTurn} 个工具/轮。confidence >= 0.8 用 finish 提交。`;
   }
 
   /** 执行实际写作 — 系统 prompt 与老 pipeline buildEnhancedSystemPrompt 完全对齐 */
