@@ -43,6 +43,10 @@ import { buildChapterMemoryDigest } from '../utils/chapterMemoryDigest.js';
 import { formatStoryContractForPrompt } from '../utils/storyContract.js';
 import { generateTextWithRetry, generateTextWithFallback, type FallbackConfig } from '../services/aiClient.js';
 import { getSupportPassMaxTokens, DEFAULT_CHAPTER_MEMORY_DIGEST_MAX_CHARS } from '../utils/aiModelHelpers.js';
+import { deriveAgentExecutionPlan, shouldUseFastPath } from './adaptivePolicy.js';
+import { buildConsistencyGuardrails } from '../context/consistencyGuardrails.js';
+import { normalizeGeneratedChapterText, cleanChapterTitle } from '../utils/chapterText.js';
+import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
 
 function isSameAiConfig(a: AIConfig, b: AIConfig): boolean {
   return a.provider === b.provider && a.model === b.model;
@@ -78,6 +82,30 @@ export async function writeChapterWithAgent(
     skipSummaryUpdate = false,
     skipStateUpdate = false,
   } = params;
+
+  const bridgeMarkers = ['【本卷目标】', '【本卷核心冲突】', '【卷切换桥接上下文】', '【衔接要求】', '【上卷结局】'];
+  const hasBridgeGoalHint = bridgeMarkers.some((marker) => params.chapterGoalHint?.includes(marker));
+  const previousChapterLength = params.lastChapters.length > 0
+    ? params.lastChapters[params.lastChapters.length - 1].replace(/\s/g, '').length
+    : 0;
+
+  const executionPlan = deriveAgentExecutionPlan(
+    {
+      chapterIndex,
+      totalChapters,
+      openLoopsCount: params.openLoops.length,
+      hasNarrativeArc: Boolean(narrativeArc),
+      hasEnhancedOutline: Boolean(enhancedOutline),
+      timelineEventCount: timeline?.events.length || 0,
+      previousChapterLength,
+      hasBridgeGoalHint,
+    },
+    { minChapterWords: params.minChapterWords },
+  );
+  params.onProgress?.(
+    `已应用自适应策略：复杂度 ${executionPlan.complexity.level} (${executionPlan.complexity.score})，上下文 ${executionPlan.context.mode}`,
+    'planning',
+  );
 
   // 1. 生成叙事指导（复用现有逻辑）
   params.onProgress?.('正在设计叙事节奏...', 'planning');
@@ -119,10 +147,10 @@ export async function writeChapterWithAgent(
   // 3. 创建 ToolExecutor 和 Orchestrator
   const toolExecutor = new ToolExecutor(toolContext, aiConfig, { tracer, phase: 'other' });
   const agentConfig: AgentConfig = {
-    maxTurns: params.agentMaxTurns ?? 4,
-    maxToolCallsPerTurn: 2,
+    maxTurns: params.agentMaxTurns ?? executionPlan.agent.maxTurns,
+    maxToolCallsPerTurn: executionPlan.agent.maxToolCallsPerTurn,
     enableReaderSimulation: true,
-    maxAICalls: params.agentMaxAICalls ?? 6,
+    maxAICalls: params.agentMaxAICalls ?? executionPlan.agent.maxAICalls,
     onProgress: params.onProgress
       ? (phase, detail) => {
           const statusMap: Record<string, 'analyzing' | 'planning' | 'generating' | 'reviewing'> = {
@@ -161,29 +189,82 @@ export async function writeChapterWithAgent(
     totalChapters,
     chapterOutlineCharacters: enhancedOutline?.scenes.flatMap(s => s.characters),
     outlineContext: params.outlineContext,
+    contextMode: executionPlan.context.mode,
+    targetContextTokens: executionPlan.context.targetTokens,
   });
   const contextStats = getContextStats(optimizedContext);
   const contextBuildDurationMs = Date.now() - contextBuildStartedAt;
 
+  // 注入一致性护栏
+  const lastChapterEnding = params.lastChapters.length > 0
+    ? params.lastChapters[params.lastChapters.length - 1].slice(-300)
+    : '';
+  const guardrails = buildConsistencyGuardrails({
+    characterStates,
+    plotGraph,
+    timeline,
+    lastChapterEnding,
+    chapterIndex,
+  });
+
   // 构建目标信息
   const goalSection = buildGoalSection(params);
-  const initialContext = `${optimizedContext}\n\n【本章写作目标】\n${goalSection}`;
+  const initialContext = [
+    optimizedContext,
+    guardrails,
+    `【本章写作目标】\n${goalSection}`,
+  ].filter(Boolean).join('\n\n');
 
-  // 5. 运行 Agent 循环
-  params.onProgress?.('Agent 开始推理...', 'analyzing');
-  const agentStartedAt = Date.now();
-  const { chapterText: rawChapterText, trace } = await orchestrator.run(initialContext);
-  const agentDurationMs = Date.now() - agentStartedAt;
+  // 5. 判断是否走 fast-path（单次生成，跳过 ReAct agent 循环）
+  const hasCriticalForeshadowing = plotGraph?.pendingForeshadowing.some(
+    f => f.urgency === 'critical' && chapterIndex >= f.suggestedResolutionRange[0],
+  ) ?? false;
+  const useFastPath = shouldUseFastPath({
+    complexityLevel: executionPlan.complexity.level,
+    hasPlotGraph: Boolean(plotGraph && plotGraph.nodes.length > 0),
+    hasPendingCriticalForeshadowing: hasCriticalForeshadowing,
+    agentMaxTurnsOverride: params.agentMaxTurns,
+  });
+
+  let rawChapterText: string;
+  let trace: { turns: any[]; totalTurns: number; totalDurationMs: number; totalToolCalls: number };
+  let agentDurationMs: number;
+
+  if (useFastPath) {
+    // ============ FAST PATH: 单次 LLM 调用，跳过 ReAct 循环 ============
+    params.onProgress?.('Fast-path 直接生成...', 'generating');
+    const fastStartedAt = Date.now();
+    rawChapterText = await executeFastPathGeneration({
+      aiConfig,
+      fallbackConfigs,
+      initialContext,
+      params,
+      narrativeGuide,
+      tracer,
+    });
+    agentDurationMs = Date.now() - fastStartedAt;
+    trace = { turns: [], totalTurns: 0, totalDurationMs: agentDurationMs, totalToolCalls: 0 };
+    console.log(
+      `[FastPath] 第${chapterIndex}章完成: 单次生成, 耗时${(agentDurationMs / 1000).toFixed(1)}s`,
+    );
+  } else {
+    // ============ AGENT PATH: 完整 ReAct 循环 ============
+    params.onProgress?.('Agent 开始推理...', 'analyzing');
+    const agentStartedAt = Date.now();
+    const agentResult = await orchestrator.run(initialContext);
+    rawChapterText = agentResult.chapterText;
+    trace = agentResult.trace;
+    agentDurationMs = Date.now() - agentStartedAt;
+    console.log(
+      `[Agent] 第${chapterIndex}章完成: ${trace.totalTurns}轮推理, ${trace.totalToolCalls}次工具调用, 耗时${(agentDurationMs / 1000).toFixed(1)}s`,
+    );
+  }
 
   // 空章节防护：agent 未能生成任何正文内容时直接抛错，触发上层重试
   if (!rawChapterText || rawChapterText.replace(/\s/g, '').length < 50) {
     throw new Error(`第 ${chapterIndex} 章 Agent 未能生成正文内容（输出为空或过短）`);
   }
   const chapterText = rawChapterText;
-
-  console.log(
-    `[Agent] 第${chapterIndex}章完成: ${trace.totalTurns}轮推理, ${trace.totalToolCalls}次工具调用, 耗时${(agentDurationMs / 1000).toFixed(1)}s`,
-  );
 
   // 6. 后处理（与现有 pipeline 相同）
   let updatedSummary = params.rollingSummary;
@@ -201,7 +282,10 @@ export async function writeChapterWithAgent(
   if (chapterText) {
     params.onProgress?.('正在并行更新摘要和上下文...', 'updating_summary');
 
-    // Task A: 摘要更新
+    // Fast-path 模式下跳过高成本 AI 分析（plot graph, timeline）以加速
+    const skipExpensiveStateUpdates = useFastPath && skipStateUpdate !== false;
+
+    // Task A: 摘要更新（始终执行）
     const summaryTask = (async () => {
       if (skipSummaryUpdate) return;
       const summaryStartedAt = Date.now();
@@ -245,9 +329,9 @@ export async function writeChapterWithAgent(
       }
     })();
 
-    // Task C: 剧情图谱更新
+    // Task C: 剧情图谱更新（fast-path 可跳过）
     const plotGraphTask = (async () => {
-      if (skipStateUpdate || !plotGraph) return;
+      if (skipStateUpdate || !plotGraph || skipExpensiveStateUpdates) return;
       try {
         const plotStartedAt = Date.now();
         const plotChanges = await analyzeChapterForPlotChanges(
@@ -263,7 +347,7 @@ export async function writeChapterWithAgent(
       }
     })();
 
-    // Task D: 时间线更新
+    // Task D: 时间线更新（fast-path 可跳过 AI 分析）
     const timelineTask = (async () => {
       if (skipStateUpdate) return;
       const characterNameMap = getCharacterNameMap(characters, characterStates);
@@ -273,6 +357,7 @@ export async function writeChapterWithAgent(
           eventDuplicationWarnings = duplicationCheck.warnings;
         }
       }
+      if (skipExpensiveStateUpdates) return;
       try {
         const timelineStartedAt = Date.now();
         const currentTimeline = timeline || createEmptyTimelineState();
@@ -351,6 +436,92 @@ export async function writeChapterWithAgent(
     totalDurationMs,
     diagnostics,
   };
+}
+
+// ========== Fast-path 单次生成 ==========
+
+async function executeFastPathGeneration(opts: {
+  aiConfig: AIConfig;
+  fallbackConfigs?: AIConfig[];
+  initialContext: string;
+  params: EnhancedWriteChapterParams;
+  narrativeGuide?: NarrativeGuide;
+  tracer: AICallTracer;
+}): Promise<string> {
+  const { aiConfig, fallbackConfigs, initialContext, params, narrativeGuide, tracer } = opts;
+  const { chapterIndex, totalChapters, enhancedOutline } = params;
+  const isFinal = chapterIndex === totalChapters;
+  const minChapterWords = params.minChapterWords || 2500;
+  const recommendedMaxWords = Math.max(minChapterWords + 1000, Math.round(minChapterWords * 1.5));
+
+  const chapterTitleRaw = enhancedOutline?.title;
+  const chapterTitle = cleanChapterTitle(chapterTitleRaw || '');
+  const titleText = chapterTitle
+    ? `第${chapterIndex}章 ${chapterTitle}`
+    : `第${chapterIndex}章 [你需要起一个创意标题]`;
+
+  let pacingInstructions = '';
+  if (narrativeGuide) {
+    const pacingDescriptions: Record<string, string> = {
+      action: '动作/战斗章节，短句快节奏',
+      climax: '高潮章节，冲突到顶，转折有力',
+      tension: '紧张铺垫，暗示与伏笔',
+      revelation: '揭示章节，有节奏释放关键信息',
+      emotional: '情感章节，内心描写和关系发展',
+      transition: '过渡章节，调整节奏，埋种子',
+    };
+    pacingInstructions = `节奏: ${narrativeGuide.pacingType}(${narrativeGuide.pacingTarget}/10) — ${pacingDescriptions[narrativeGuide.pacingType] || ''}`;
+  }
+
+  const styleSection = buildChapterPromptStyleSection(
+    params.chapterPromptProfile,
+    params.chapterPromptCustom,
+  );
+
+  const defaultCoreRules = `你是商业网文连载写作助手，核心目标是"好读、顺畅、让人想继续看"。
+- 小白文/大白话风格，口语化、接地气
+- 正文单句不超25字，对话不超30字
+- 对话像真人说话，每段都推进事件
+- 完成"目标→阻碍→行动→新问题"推进链
+- 开头直入场景，非终章结尾留悬念
+- 单章1个主危机+1个副事件，其他只埋钩子`;
+
+  const coreRules = params.customSystemPrompt?.trim() || defaultCoreRules;
+
+  const system = `${coreRules}
+${pacingInstructions}
+风格: ${styleSection.profileLabel} — ${styleSection.profileDescription}
+${styleSection.styleBlock}
+═══ 硬性规则 ═══
+- is_final_chapter=${isFinal} → ${isFinal ? '可以收束主线' : '严禁完结/终章/尾声'}
+- 正文 ${minChapterWords}~${recommendedMaxWords} 字
+- 结尾用事件/冲突收尾，不总结
+- 第一行: ${titleText}
+- 不输出 JSON/代码块/元说明`;
+
+  const prompt = `${initialContext}\n\n本章正文至少 ${minChapterWords} 字，请写出完整内容：`;
+
+  const callOptions: AICallOptions = {
+    tracer,
+    phase: 'drafting',
+    timeoutMs: 5 * 60_000,
+  };
+
+  let raw: string;
+  if (fallbackConfigs?.length) {
+    raw = await generateTextWithFallback(
+      buildFallbackConfig(aiConfig, fallbackConfigs),
+      { system, prompt, temperature: 0.7 },
+      2,
+      callOptions,
+    );
+  } else {
+    raw = await generateTextWithRetry(aiConfig, {
+      system, prompt, temperature: 0.7,
+    }, 3, callOptions);
+  }
+
+  return normalizeGeneratedChapterText(raw, chapterIndex);
 }
 
 // ========== 辅助函数 ==========
