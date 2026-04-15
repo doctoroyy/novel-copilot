@@ -311,6 +311,7 @@ export type OutlineStreamEvent = {
 export type ModelRegistry = {
   id: string;
   provider: string;
+  provider_name?: string;
   model_name: string;
   display_name: string;
   api_key?: string;

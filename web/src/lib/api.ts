@@ -2041,6 +2041,7 @@ export interface AdminProvider {
 export interface AdminModel {
   id: string;
   provider_id: string;
+  provider_name?: string;
   model_name: string;
   display_name: string;
   credit_multiplier: number;

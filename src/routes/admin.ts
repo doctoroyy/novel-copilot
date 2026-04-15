@@ -582,7 +582,7 @@ adminRoutes.patch('/provider-registry/:id/toggle', async (c) => {
 adminRoutes.get('/model-registry', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(`
-      SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
+      SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id, p.name as provider_name
       FROM model_registry m
       JOIN provider_registry p ON m.provider_id = p.id
       ORDER BY m.is_default DESC, p.id, m.model_name
@@ -592,6 +592,7 @@ adminRoutes.get('/model-registry', async (c) => {
     const masked = (results || []).map((m: any) => ({
       ...m,
       provider: m.provider_id, // Backward compatibility for UI
+      provider_name: m.provider_name || m.provider_id,
       api_key_encrypted: m.provider_api_key
         ? `${m.provider_api_key.slice(0, 8)}...${m.provider_api_key.slice(-4)}`
         : null,
