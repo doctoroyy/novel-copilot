@@ -265,7 +265,7 @@ export function AdminScreen() {
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.cardSubtitle}>{m.provider} / {m.model_name}</Text>
+          <Text style={styles.cardSubtitle}>{m.provider_name || m.provider} / {m.model_name}</Text>
           <Text style={styles.cardDetail}>倍率: {m.credit_multiplier}x</Text>
         </View>
       ))}

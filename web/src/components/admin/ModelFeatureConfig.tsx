@@ -20,6 +20,7 @@ interface FeatureMapping {
 interface Model {
   id: string;
   provider: string;
+  provider_name?: string;
   model_name: string;
   display_name: string;
   is_active: number;
@@ -231,7 +232,7 @@ export function ModelFeatureConfig() {
                         {models.filter(m => m.is_active).map(model => (
                           <SelectItem key={model.id} value={model.id}>
                             <span className="font-medium">{model.display_name}</span>
-                            <span className="ml-2 text-xs text-muted-foreground">({model.provider})</span>
+                            <span className="ml-2 text-xs text-muted-foreground">({model.provider_name || model.provider})</span>
                           </SelectItem>
                         ))}
                       </SelectContent>
