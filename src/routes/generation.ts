@@ -281,6 +281,69 @@ function normalizeMilestones(milestones: any[]): string[] {
   });
 }
 
+function canonicalizeChapterTitle(title: string): string {
+  return String(title || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/["'“”‘’`~!@#$%^&*()+=[\]{}|\\:;,.<>/?，。！？、：；（）【】《》「」『』·•—_-]/g, '');
+}
+
+function ensureUniqueChapterTitlesInOutline(outline: any): any {
+  if (!outline || !Array.isArray(outline.volumes)) return outline;
+
+  const usedTitleKeys = new Set<string>();
+  const duplicateCounter = new Map<string, number>();
+
+  const nextUniqueTitle = (rawTitle: string, chapterIndex: number): string => {
+    const baseTitle = String(rawTitle || '').trim() || `第${chapterIndex}章`;
+    const baseKey = canonicalizeChapterTitle(baseTitle) || `chapter-${chapterIndex}`;
+
+    let candidate = baseTitle;
+    let candidateKey = canonicalizeChapterTitle(candidate) || baseKey;
+    if (!usedTitleKeys.has(candidateKey)) {
+      usedTitleKeys.add(candidateKey);
+      duplicateCounter.set(baseKey, 1);
+      return candidate;
+    }
+
+    let suffix = Math.max(2, (duplicateCounter.get(baseKey) || 1) + 1);
+    while (true) {
+      candidate = `${baseTitle}（${suffix}）`;
+      candidateKey = canonicalizeChapterTitle(candidate) || `${baseKey}-${suffix}`;
+      if (!usedTitleKeys.has(candidateKey)) {
+        usedTitleKeys.add(candidateKey);
+        duplicateCounter.set(baseKey, suffix);
+        return candidate;
+      }
+      suffix += 1;
+    }
+  };
+
+  const normalizedVolumes = outline.volumes.map((vol: any) => {
+    if (!vol || !Array.isArray(vol.chapters)) return vol;
+
+    const normalizedChapters = vol.chapters.map((ch: any, i: number) => {
+      const chapterIndex = Number(ch?.index) || i + 1;
+      const uniqueTitle = nextUniqueTitle(String(ch?.title || ''), chapterIndex);
+      return {
+        ...ch,
+        title: uniqueTitle,
+      };
+    });
+
+    return {
+      ...vol,
+      chapters: normalizedChapters,
+    };
+  });
+
+  return {
+    ...outline,
+    volumes: normalizedVolumes,
+  };
+}
+
 // Validate outline for coverage and quality
 function validateOutline(outline: any, targetChapters: number): { valid: boolean; issues: string[] } {
   const issues: string[] = [];
@@ -288,11 +351,20 @@ function validateOutline(outline: any, targetChapters: number): { valid: boolean
   // Check total chapter coverage
   let totalChaptersInOutline = 0;
   const allIndices = new Set<number>();
+  const allTitleKeys = new Set<string>();
 
   for (const vol of outline.volumes || []) {
     for (const ch of vol.chapters || []) {
       totalChaptersInOutline++;
       allIndices.add(ch.index);
+
+      const titleKey = canonicalizeChapterTitle(String(ch.title || ''));
+      if (titleKey) {
+        if (allTitleKeys.has(titleKey)) {
+          issues.push(`第${ch.index}章标题重复: ${ch.title}`);
+        }
+        allTitleKeys.add(titleKey);
+      }
 
       // Check for placeholder titles
       if (!ch.title || ch.title.match(/^第?\d+章?$/) || ch.title.includes('待补充')) {
@@ -679,7 +751,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
       const normalizedVolume = normalizeVolume(vol, i, chapters);
       volumes.push(normalizedVolume);
 
-      const snapshotOutline = buildOutlineSnapshot(volumes);
+      const snapshotOutline = ensureUniqueChapterTitlesInOutline(buildOutlineSnapshot(volumes));
       await env.DB.prepare(`
         INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
       `).bind(project.id, JSON.stringify(snapshotOutline)).run();
@@ -692,7 +764,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
       );
     }
 
-    const outline = buildOutlineSnapshot(volumes);
+    const outline = ensureUniqueChapterTitlesInOutline(buildOutlineSnapshot(volumes));
 
     await updateTaskMessage(env.DB, taskId, '正在验证并保存大纲...', 90);
 
@@ -831,11 +903,11 @@ async function runAppendVolumesMode(params: {
     filledVolumes.push(normalizedVolume);
 
     // 增量保存：将新卷追加到大纲中
-    const updatedOutline = {
+    const updatedOutline = ensureUniqueChapterTitlesInOutline({
       ...existingOutline,
       totalChapters: existingOutline.totalChapters + filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0),
       volumes: [...existingVolumes, ...filledVolumes],
-    };
+    });
     await env.DB.prepare(`
       UPDATE outlines SET outline_json = ? WHERE project_id = ?
     `).bind(JSON.stringify(updatedOutline), project.id).run();
@@ -851,11 +923,11 @@ async function runAppendVolumesMode(params: {
   const addedChapters = filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0);
   const newTotalChapters = (existingOutline.totalChapters || 0) + addedChapters;
 
-  const finalOutline = {
+  const finalOutline = ensureUniqueChapterTitlesInOutline({
     ...existingOutline,
     totalChapters: newTotalChapters,
     volumes: [...existingVolumes, ...filledVolumes],
-  };
+  });
 
   await env.DB.prepare(`
     UPDATE outlines SET outline_json = ? WHERE project_id = ?
@@ -951,10 +1023,10 @@ async function runRefineOutlineMode(params: {
     });
 
     volumes[volumeIndex] = normalizeVolume({ ...volume, chapters }, volumeIndex, chapters);
-    outline = {
+    outline = ensureUniqueChapterTitlesInOutline({
       ...outline,
       volumes: [...volumes],
-    };
+    });
 
     await env.DB.prepare(`
       UPDATE outlines SET outline_json = ? WHERE project_id = ?
