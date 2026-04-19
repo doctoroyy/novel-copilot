@@ -9,6 +9,7 @@ import {
   type AIConfig,
   type AICallOptions,
 } from './services/aiClient.js';
+import { analyzeWritingStyle } from './qc/writingStyleHeuristics.js';
 
 /**
  * 提前完结关键词模式
@@ -158,7 +159,7 @@ export function quickEndingHeuristic(chapterText: string): {
  */
 export function quickChapterFormatHeuristic(
   chapterText: string,
-  options?: { minBodyChars?: number }
+  options?: { minBodyChars?: number; isOpeningChapter?: boolean; protagonistAliases?: string[] }
 ): {
   hit: boolean;
   reasons: string[];
@@ -198,6 +199,16 @@ export function quickChapterFormatHeuristic(
     blockingReasons.push(`正文明显过短（仅 ${body.length} 字，目标至少 ${minBodyChars} 字）`);
   } else if (body.length + tolerance < minBodyChars) {
     reviewReasons.push(`正文偏短（仅 ${body.length} 字，目标至少 ${minBodyChars} 字）`);
+  }
+
+  // 文风启发式：设定倾泻 / 话剧腔 / 无钩子结尾 / 长句比
+  if (body && body.length >= 500) {
+    const styleResult = analyzeWritingStyle(body, {
+      isOpeningChapter: options?.isOpeningChapter,
+      protagonistAliases: options?.protagonistAliases,
+    });
+    blockingReasons.push(...styleResult.blockingReasons);
+    reviewReasons.push(...styleResult.reviewReasons);
   }
 
   return buildQuickQCResult(blockingReasons, reviewReasons);

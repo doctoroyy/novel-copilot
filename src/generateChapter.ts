@@ -284,7 +284,11 @@ export async function writeOneChapter(params: WriteChapterParams): Promise<Write
     reasons: string[];
     guidance?: string;
   }> => {
-    const formatQc = quickChapterFormatHeuristic(chapterText, { minBodyChars: normalizedMinChapterWords });
+    const formatQc = quickChapterFormatHeuristic(chapterText, {
+      minBodyChars: normalizedMinChapterWords,
+      isOpeningChapter: chapterIndex <= 3,
+      protagonistAliases: params.characters?.protagonists?.map((p) => p.name).filter(Boolean),
+    });
     const endingQc = isFinal
       ? { hit: false, reasons: [] as string[], blockingReasons: [] as string[], reviewReasons: [] as string[] }
       : quickEndingHeuristic(chapterText);

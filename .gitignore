@@ -7,3 +7,4 @@ projects/*/chapters/*.md
 !projects/demo-book/
 .wrangler
 .history/
+tmp/

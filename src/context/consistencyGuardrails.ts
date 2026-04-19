@@ -73,6 +73,14 @@ export function buildConsistencyGuardrails(input: ConsistencyInput): string {
     }
   }
 
+  // 4. Last chapter ending anchor — direct excerpt so the model can't drift
+  const tail = (input.lastChapterEnding || '').trim();
+  if (tail) {
+    const excerpt = tail.slice(-200);
+    items.push(`[上章结尾锚点] ${excerpt}`);
+    items.push('[衔接自检] 本章第1段必须从这个结尾状态/位置/情绪继续，不得跳转或复原');
+  }
+
   if (items.length === 0) return '';
 
   return `【一致性护栏 — 以下事实不可矛盾】\n${items.map((it, i) => `${i + 1}. ${it}`).join('\n')}`;

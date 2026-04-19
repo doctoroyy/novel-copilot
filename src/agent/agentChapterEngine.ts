@@ -47,6 +47,7 @@ import { deriveAgentExecutionPlan, shouldUseFastPath } from './adaptivePolicy.js
 import { buildConsistencyGuardrails } from '../context/consistencyGuardrails.js';
 import { normalizeGeneratedChapterText, cleanChapterTitle } from '../utils/chapterText.js';
 import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
+import { buildCoreWritingRules, type NarrativeType } from '../writingRules.js';
 
 function isSameAiConfig(a: AIConfig, b: AIConfig): boolean {
   return a.provider === b.provider && a.model === b.model;
@@ -478,17 +479,13 @@ async function executeFastPathGeneration(opts: {
     params.chapterPromptCustom,
   );
 
-  const isOpeningChapter = chapterIndex <= 3;
-  const defaultCoreRules = `你是商业网文连载写作助手。唯一使命：让读者"读了就停不下来"。
-- 小白文/大白话，口语化、接地气，句长≤25字（对话≤30字）
-- 对话像真人说话，每句有信息量，禁止空话
-- 每章必含：冲突(≥1个)+章末钩子+爽点(主角有进展)+微转折
-- 完成"目标→阻碍→行动→新问题"推进链
-- 主角必须是推动者，禁止旁观和被动
-- 至少维持1个信息差（制造期待感或紧张感）
-- 开头直入场景，章末用事件/悬念收尾
-- 单章1主危机+1副事件，其他只埋钩子
-${isOpeningChapter ? '- 【黄金三章】500字内必出冲突，设定融入行动，出场≤5人，展示核心卖点' : ''}`;
+  const defaultCoreRules = buildCoreWritingRules({
+    chapterIndex,
+    totalChapters,
+    isFinalChapter: isFinal,
+    narrativeType: narrativeGuide?.pacingType as NarrativeType | undefined,
+    pacingTarget: narrativeGuide?.pacingTarget,
+  });
 
   const coreRules = params.customSystemPrompt?.trim() || defaultCoreRules;
 
