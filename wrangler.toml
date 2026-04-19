@@ -54,3 +54,11 @@ binding = "FANQIE_BROWSER"
 # Daily template refresh (UTC 00:20 => Asia/Shanghai 08:20)
 [triggers]
 crons = ["20 0 * * *"]
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
