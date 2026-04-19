@@ -20,6 +20,7 @@ import {
 } from '../services/aiClient.js';
 import { normalizeGeneratedChapterText, cleanChapterTitle } from '../utils/chapterText.js';
 import { buildChapterPromptStyleSection } from '../chapterPromptProfiles.js';
+import { buildCoreWritingRules, type NarrativeType } from '../writingRules.js';
 import { extractAgentJSON } from './orchestratorUtils.js';
 
 /** Agent 单轮输出 Schema */
@@ -370,43 +371,15 @@ ${toolDescriptions}
     );
 
     const isOpeningChapter = chapterIndex <= 3;
-    const goldenThreeRules = isOpeningChapter ? `
-【黄金三章特殊规则（当前是第${chapterIndex}章）】
-- 500字内必须出现冲突或异常事件，禁止日常描写开头
-- 所有设定融入行动和对话中，禁止大段设定介绍
-- 必须展示主角的行动力和独特性格
-${chapterIndex <= 1 ? '- 第一章必须建立核心卖点：让读者知道本书"爽在哪里"' : ''}
-${chapterIndex === 3 ? '- 第三章必须完成首个完整的爽点循环（压抑→积蓄→爆发释放）' : ''}
-- 出场角色严格控制在5个以内` : '';
+    const goldenThreeRules = '';
 
-    const defaultCoreRules = `你是商业网文连载写作助手。你的唯一使命是让读者"读了就停不下来"。
-
-【文风铁律】
-- 小白文/大白话，极度口语化、接地气，段落留白要有网文呼吸感
-- 严禁文艺腔：禁止堆砌形容词、华丽比喻、长定语。描写点到即止
-- 句长：正文单句 ≤ 25 字，对话 ≤ 30 字。超出必须断句
-- 对话像真人说话，每句对话必须有信息量或情绪推力，禁止空话寒暄
-- 每个段落必须有功能：推进事件、制造摩擦、释放信息或改变关系
-
-【CHST 章节四要素 — 每章至少满足3个】
-C-冲突：每章至少1个明确冲突（人vs人 / 人vs环境 / 人vs自我）
-H-钩子：章末最后200-300字必须有钩子（危机悬停/信息炸弹/反转/抉择困境/时限压力）
-S-爽点：主角必须在本章至少做到以下之一——展示能力、获得进展、赢得冲突、揭露信息、推进关系
-T-转折：每章至少1个微转折（小意外/新发现/局势变化），让读者感到"没想到"
-
-【追读引擎规则】
-- 每章必须完成"目标→阻碍→行动→新结果/新问题"的推进链
-- 主角必须是推动剧情的主体，禁止沦为旁观者或被动接受者
-- 信息差运用：至少维持1个角色间信息差（主角知道对手不知道→期待感；读者知道角色不知道→紧张感）
-- 每解决一个问题立刻抛出新问题，永远不让读者彻底满足
-- 爽点设计：压抑（铺垫困境）→ 积蓄（暗示主角有办法）→ 爆发（超预期释放），爆发要干脆利落
-- 开头直入场景，禁止回顾式开场。承接上章钩子，1-2句建立紧张感
-- 章节衔接自然，不机械复述上章内容
-- 主动核对上下文与时间线，避免重复已发生情节
-- 单章只保留1个主危机+1个副事件，其他冲突只埋钩子
-- 若上一章刚经历重大事件，本章必须先处理余波与角色反应再切新线
-- 除非大纲明确要求，禁止突然引入超出当前主线级别的敌人或能力
-${goldenThreeRules}`;
+    const defaultCoreRules = buildCoreWritingRules({
+      chapterIndex,
+      totalChapters: ctx.totalChapters,
+      isFinalChapter: isFinal,
+      narrativeType: narrativeGuide?.pacingType as NarrativeType | undefined,
+      pacingTarget: narrativeGuide?.pacingTarget,
+    });
 
     const coreRules = ctx.customSystemPrompt ? ctx.customSystemPrompt.trim() : defaultCoreRules;
 
