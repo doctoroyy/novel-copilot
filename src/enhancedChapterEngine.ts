@@ -85,6 +85,8 @@ const PlanSchema = z.object({
     purpose: z.string().min(2),
     conflict: z.string().min(2),
     newInfo: z.string().min(2),
+    stakes: z.string().optional(),
+    choice: z.string().optional(),
   })).min(2).max(6),
   continuityChecks: z.array(z.string()).max(8),
   avoidRepeats: z.array(z.string()).max(8),
@@ -578,7 +580,7 @@ ${lastChapterSnippet}
 
 function formatChapterPlan(plan: ChapterPlan): string {
   const sceneLines = plan.scenePlan.map((scene, index) =>
-    `场景${index + 1}: 目的=${scene.purpose}｜冲突=${scene.conflict}｜新信息=${scene.newInfo}`
+    `场景${index + 1}: 目的=${scene.purpose}｜冲突=${scene.conflict}｜代价=${scene.stakes || '本场景必须体现风险'}｜选择=${scene.choice || '主角做出推动剧情的选择'}｜新信息=${scene.newInfo}`
   );
 
   const continuity = plan.continuityChecks.length
@@ -611,12 +613,17 @@ async function generateChapterPlan(
 输出格式：
 {
   "scenePlan": [
-    {"purpose": "场景目的", "conflict": "主要冲突", "newInfo": "本场景引入的新信息"},
+    {"purpose": "场景目的", "conflict": "主要冲突", "stakes": "失败代价/情绪代价", "choice": "主角主动选择", "newInfo": "本场景引入的新信息"},
     ...
   ],
   "continuityChecks": ["需要核对的连续性点1", "点2", ...],
   "avoidRepeats": ["需要避免重复的情节/信息1", "2", ...]
 }
+
+计划要求：
+- 每个场景必须有目标、阻碍、行动、结果，避免散点式桥段
+- 至少一个场景让主角做选择并承担代价
+- 每个新信息必须改变局面或角色关系，不能只是设定解释
 `.trim();
 
   const prompt = `
@@ -671,6 +678,7 @@ async function runSelfReview(
 
 判断标准：
 - 选择 "rewrite" 仅限于以下严重问题：情节与上下文**明确矛盾**、大段落**逐字重复**、角色行为严重失控
+- 也要检查商业质量硬伤：没有明确冲突/代价、主角整章旁观、场景没有因果推进、非最终章收束、章末没有追读钩子
 - 以下问题**不应触发重写**：轻微节奏不均、措辞可优化、细节略有瑕疵、对话风格偏差
 - 如果问题只是"可以更好"而非"必须修复"，请选择 "keep"
 - 重写代价很高（需要重新生成全文），请谨慎判断
