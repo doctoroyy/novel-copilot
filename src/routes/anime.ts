@@ -2,6 +2,13 @@ import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { getAIConfigFromHeaders, getAIConfigFromRegistry, generateText, type AIConfig } from '../services/aiClient.js';
 import { consumeCredit } from '../services/creditService.js';
+import {
+    buildAnimeStoryboardRepairPrompt,
+    evaluateAnimeStoryboard,
+    extractJsonArray,
+    normalizeAnimeStoryboard,
+    type NormalizedAnimeShot,
+} from '../evaluation/generationQuality.js';
 
 
 
@@ -9,8 +16,16 @@ import { consumeCredit } from '../services/creditService.js';
 interface StoryboardShot {
   shot_id: number;
   description: string;
+  visual_description?: string;
+  action?: string;
+  action_motion?: string;
+  narration_text?: string;
+  camera?: string;
+  composition?: string;
+  lighting?: string;
   duration: number;
   dialogue?: string;
+  speaker?: string;
 }
 
 interface AnimeProject {
@@ -615,6 +630,10 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         const voiceProvider = getVoiceProvider(aiConfig.apiKey);
         
         const { generateVideoWithVeo } = await import('../services/veoClient.js');
+        const veoConfig = await getVeoAIConfig(c.env.DB, aiConfig);
+        if (!veoConfig) {
+            return c.json({ success: false, error: '缺少 Gemini/Veo 可用 API Key，请在 provider registry 配置 gemini provider' }, 400);
+        }
 
         // Look up characters (duplicate logic, should refactor helper)
         const characters = await c.env.DB.prepare(`
@@ -664,16 +683,9 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
                 // Consume Credit for Video
                 await consumeCredit(c.env.DB, userId, 'generate_video', `生成Shot ${shotId}视频`);
 
-                // Sanitize prompt
-                const promptParts = [
-                    'Cinematic Chinese Manhua Animation',
-                    shot.description || shot.visual_description,
-                    shot.action || shot.action_motion,
-                    'No text, no subtitles, high quality'
-                ].filter(p => !!p);
-                const shotPrompt = promptParts.join('. ');
+                const shotPrompt = buildVeoShotPrompt(shot);
 
-                const videoTempUrl = await generateVideoWithVeo(shotPrompt, charImageUrls, aiConfig);
+                const videoTempUrl = await generateVideoWithVeo(shotPrompt, charImageUrls, veoConfig);
                 const videoRes = await fetch(videoTempUrl);
                 if (!videoRes.ok) throw new Error(`Download failed: ${videoRes.statusText}`);
                 const videoBuffer = await videoRes.arrayBuffer();
@@ -845,6 +857,10 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
             const { getVoiceProvider } = await import('../services/voiceService.js');
             const voiceProvider = getVoiceProvider(aiConfig?.apiKey);
+            const veoConfig = await getVeoAIConfig(c.env.DB, aiConfig);
+            if (!veoConfig) {
+                throw new Error('缺少 Gemini/Veo 可用 API Key，请在 provider registry 配置 gemini provider');
+            }
 
             // Process all shots (resume logic will skip completed ones)
             const shotsToProcess = storyboard; 
@@ -915,19 +931,12 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
                 if (!shot.video_key) {
                     try {
                         // Specific prompt for this shot - Sanitize inputs
-                        const promptParts = [
-                            'Cinematic Chinese Manhua Animation',
-                            shot.description || shot.visual_description,
-                            shot.action || shot.action_motion,
-                            'No text, no subtitles, high quality'
-                        ].filter(p => !!p); // Remove null/undefined/empty
-                        
-                        const shotPrompt = promptParts.join('. ');
+                        const shotPrompt = buildVeoShotPrompt(shot);
                         
                         const videoTempUrl = await generateVideoWithVeo(
                             shotPrompt, 
                             charImageUrls, 
-                            { ...aiConfig }
+                            veoConfig
                         );
 
                         // Download and Upload to R2
@@ -1074,7 +1083,130 @@ ${novelText.slice(0, 50000)} ... (已截断)
   });
 }
 
-async function generateScript(novelChunk: string, episodeNum: number, aiConfig: AIConfig): Promise<string> {
+function toStoryboardJson(raw: string): NormalizedAnimeShot[] {
+    const shots = normalizeAnimeStoryboard(extractJsonArray(raw));
+    if (shots.length === 0) {
+        throw new Error('Script generation failed to produce valid storyboard JSON');
+    }
+    return shots;
+}
+
+async function coerceStoryboardJson(raw: string, sourceText: string, aiConfig: AIConfig): Promise<NormalizedAnimeShot[]> {
+    try {
+        return toStoryboardJson(raw);
+    } catch {
+        const fixed = await generateText(aiConfig, {
+            system: '你是严格的 JSON 修复器和动态漫分镜整理助手。只输出 JSON 数组，不输出 Markdown。',
+            prompt: `上一次模型输出不是可解析 JSON。请基于原始小说和模型输出，整理成严格分镜 JSON 数组。
+
+硬性格式：
+[
+  {
+    "shot_id": 1,
+    "visual_description": "English visual prompt with pure visual symbols and no captions",
+    "action_motion": "English motion and camera action",
+    "camera": "English camera movement",
+    "composition": "English shot size and framing",
+    "lighting": "English lighting and color",
+    "narration_text": "中文短旁白或对白",
+    "speaker": "",
+    "duration": 5
+  }
+]
+
+硬性要求：10-20个镜头，总时长90-120秒，每镜头3-8秒，禁止字幕/文字/logo/UI。
+视觉要求：保持角色锚点一致；不要切到无铺垫的室内屏幕/抽象界面；用物件、光影和角色反应表现信息。除非原文明确角色正在操作设备，禁止 screen/interface/monitor。
+
+原始小说：
+${sourceText.slice(0, 4000)}
+
+模型输出：
+${raw.slice(0, 8000)}
+
+请只输出 JSON 数组：`,
+            temperature: 0.2,
+            maxTokens: 6000,
+        });
+        return toStoryboardJson(fixed);
+    }
+}
+
+function buildVeoShotPrompt(shot: any): string {
+    return [
+        'Cinematic Chinese manhua animation, ultra-realistic concept art, high detail, coherent character identity',
+        shot.visual_description || shot.description,
+        shot.action_motion || shot.action,
+        shot.camera ? `Camera: ${shot.camera}` : '',
+        shot.composition ? `Composition: ${shot.composition}` : '',
+        shot.lighting ? `Lighting: ${shot.lighting}` : '',
+        'Smooth natural motion, stable subject consistency, no flicker, no text, no subtitles, no UI, no logo',
+    ].filter(Boolean).join('. ');
+}
+
+function isVeoCompatibleConfig(config: AIConfig | null | undefined): config is AIConfig {
+    if (!config?.apiKey) return false;
+    return config.provider === 'gemini' || /googleapis\.com|generativelanguage/i.test(config.baseUrl || '');
+}
+
+async function getVeoAIConfig(db: D1Database, preferred?: AIConfig | null): Promise<AIConfig | null> {
+    if (isVeoCompatibleConfig(preferred)) {
+        return { ...preferred, model: 'veo-3.1-fast-generate-preview' };
+    }
+
+    const row = await db.prepare(`
+        SELECT p.id as provider_id, p.api_key_encrypted as api_key, p.base_url as base_url
+        FROM provider_registry p
+        LEFT JOIN model_registry m ON m.provider_id = p.id AND m.is_active = 1
+        WHERE p.id = 'gemini'
+          AND p.api_key_encrypted IS NOT NULL
+          AND COALESCE(p.enabled, 1) = 1
+        ORDER BY m.is_default DESC, m.updated_at DESC
+        LIMIT 1
+    `).first() as { provider_id?: string; api_key?: string; base_url?: string } | null;
+
+    if (!row?.api_key) return null;
+    return {
+        provider: 'gemini',
+        model: 'veo-3.1-fast-generate-preview',
+        apiKey: row.api_key,
+        baseUrl: row.base_url || undefined,
+    };
+}
+
+async function repairStoryboardUntilUsable(
+    initialShots: NormalizedAnimeShot[],
+    novelChunk: string,
+    aiConfig: AIConfig,
+    maxAttempts = 2
+): Promise<NormalizedAnimeShot[]> {
+    let shots = initialShots;
+    for (let attempt = 0; attempt <= maxAttempts; attempt++) {
+        const report = evaluateAnimeStoryboard(shots);
+        console.log(`[AnimeQuality] storyboard score=${report.overallScore}, rec=${report.recommendation}, attempt=${attempt}`);
+        if (report.overallScore >= 78 && report.gateFailures.length === 0) {
+            return report.normalizedShots;
+        }
+        if (attempt === maxAttempts) {
+            return report.normalizedShots;
+        }
+
+        const repairPrompt = buildAnimeStoryboardRepairPrompt({
+            novelChunk,
+            storyboard: report.normalizedShots,
+            report,
+        });
+        const repaired = await generateText(aiConfig, {
+            system: '你是动态漫分镜质检与修复专家。只输出严格 JSON 数组。',
+            prompt: repairPrompt,
+            temperature: 0.35,
+            maxTokens: 6000,
+        });
+        shots = toStoryboardJson(repaired);
+    }
+    return shots;
+}
+
+export async function generateScript(novelChunk: string, episodeNum: number, aiConfig: AIConfig): Promise<string> {
     // User's detailed prompt for high-quality dynamic manhua script
     const SYSTEM_INSTRUCTION_SCRIPTWRITER = `
 你是一位顶级“动态漫”导演。你的目标是创作具有极强视觉张力、类似于 B 站/抖音爆款悬疑漫剧的作品。
@@ -1089,26 +1221,39 @@ async function generateScript(novelChunk: string, episodeNum: number, aiConfig: 
 
 视觉规范：
 1. **风格定位**：极致写实国漫风格 (Ultra-Realistic Manhua Concept Art)。光影必须深邃，具有强烈的电影质感（Cinematic Lighting）。
-2. **动作指令 (Motion)**：每个分镜必须包含具体的动态。例如：“角色缓慢转头看向镜头”、“背景火光跳动”、“雨水划过玻璃”、“瞳孔微颤”。
+2. **动作指令 (Motion)**：每个分镜必须包含具体的动态，至少覆盖主体动作 + 运镜/环境动态两类。
 3. **镜头语言**：
    - 使用 **Extreme Close-up (特写)** 表现情绪。
    - 使用 **Tracking Shot (推镜头)** 增强代入感。
-4. **纯净画面**：严禁出现任何文字、气泡、UI。
-5. **角色标签**：为主角设定独特的视觉记忆点（如：左眼下的泪痣、被冷汗浸湿的碎发、标志性的红色耳坠）。
+4. **纯净画面**：严禁出现任何文字、气泡、UI、字幕、logo。
+5. **角色一致性**：先为主角设定 2 个稳定视觉锚点（发型/外套/伤痕/随身物件等），后续所有出现主角的镜头必须重复这些锚点；禁止每个镜头临时新增泪痣、耳坠、发色等互相冲突的特征。
+6. **信息可视化**：禁止用屏幕文字、票面文字、字幕、UI 来表达信息；需要表达“没有记录/编号/错误”时，用空白档案槽、红色状态灯、角色反应、腐蚀刻痕等纯视觉元素。除非原文明确角色正在操作设备，禁止切到 screen/interface/monitor。
+7. **视频模型适配**：visual_description、action_motion、camera、composition、lighting 必须使用英文；narration_text 使用中文短句，便于 TTS。
+8. **改编忠实度**：禁止新增原文没有的对白或内心独白；旁白只改写原文信息，不擅自加“快走”“该死”等情绪台词。
+9. **时空连续**：镜头必须发生在同一连续场景，除非明确写出 flashback / subjective memory transition；禁止突然切到档案室、抽象界面、声波可视化等脱离当前场景的镜头。
+10. **道具连续**：关键道具（船票、武器、电话）状态必须连续；如果掉落、转手、收起，必须用镜头表现动作原因和结果。
 
 输出内容：
 - **Shot ID**: 镜头编号
-- **Visual**: 画面主体及环境描述 (Visual Description, English)
-- **Action**: 专门针对视频生成的动作描述词 (Action Motion, English) (e.g., slow tilt, subtle eye movement, hair flowing in wind)
-- **Narration**: 富有张力的悬疑旁白 (Chinese)
+- **Visual**: 画面主体及环境描述 (visual_description, English)
+- **Action**: 专门针对视频生成的动作描述词 (action_motion, English) (e.g., slow tilt, subtle eye movement, hair flowing in wind)
+- **Camera**: 运镜方式 (camera, English)
+- **Composition**: 景别与构图 (composition, English)
+- **Lighting**: 光影色彩 (lighting, English)
+- **Narration**: 富有张力的悬疑旁白或对白 (narration_text, Chinese)
+- **Speaker**: 说话角色名，没有则为空字符串
 
 请以 JSON 格式输出数组，结构如下：
 [
   {
     "shot_id": 1,
-    "visual_description": "...",
-    "action_motion": "...",
-    "narration_text": "...",
+    "visual_description": "Extreme close-up of the protagonist's trembling eyes, sweat on the brow, dark corridor background, ultra-realistic Chinese manhua concept art.",
+    "action_motion": "The pupil contracts, a bead of sweat slowly slides down, the background light flickers.",
+    "camera": "slow push-in, handheld micro shake",
+    "composition": "extreme close-up, shallow depth of field",
+    "lighting": "cold blue rim light, high contrast shadows",
+    "narration_text": "不对，门外有人。",
+    "speaker": "",
     "duration": 5
   }
 ]
@@ -1123,11 +1268,16 @@ ${novelChunk.slice(0, 4000)}
 
 请直接输出 JSON，不要包含 Markdown 标记。`;
 
-    return await generateText(aiConfig, {
+    const raw = await generateText(aiConfig, {
         system: SYSTEM_INSTRUCTION_SCRIPTWRITER,
         prompt,
-        temperature: 0.7
+        temperature: 0.65,
+        maxTokens: 6000
     });
+
+    const shots = await coerceStoryboardJson(raw, novelChunk, aiConfig);
+    const repaired = await repairStoryboardUntilUsable(shots, novelChunk, aiConfig);
+    return JSON.stringify(repaired);
 }
 
 
@@ -1209,7 +1359,7 @@ ${novelChunk.slice(0, 4000)}
 }
 
 // 2. Generate Storyboard JSON (Chinese, from Script)
-async function generateStoryboardFromScript(script: string, aiConfig: AIConfig): Promise<StoryboardShot[]> {
+export async function generateStoryboardFromScript(script: string, aiConfig: AIConfig): Promise<StoryboardShot[]> {
     const SYSTEM_INSTRUCTION = `
 你是一位顶级动漫分镜师。你的任务是将文字剧本转化为包含【详细视觉指令】的分镜脚本。
 
@@ -1221,23 +1371,32 @@ async function generateStoryboardFromScript(script: string, aiConfig: AIConfig):
 - 超出限制的输出将被拒绝！
 
 要求：
-1. **全中文输出**。包括画面描述和动作指令，必须是中文。
+1. visual_description / action_motion / camera / composition / lighting 使用英文，便于视频模型执行；narration_text 使用中文。
 2. **风格**：极致写实国漫风格，电影质感光影。
 3. **输出 JSON 数组**。
 4. 字段说明：
    - shot_id: 镜头编号 (数字)
-   - visual_description: 画面详细描述 (中文)，包含环境、光影、人物外观。
-   - action_motion: 镜头的动作/运镜指令 (中文)，例如"推镜头"、"慢动作"、"发丝飘动"。
-   - narration_text: 对应的对白或旁白 (中文)。
+   - visual_description: 画面详细描述 (English)，包含环境、光影、人物外观。
+   - action_motion: 镜头的动作/运镜指令 (English)，例如 slow push-in, subtle eye movement, rain sliding on glass。
+   - camera: 运镜方式 (English)
+   - composition: 景别与构图 (English)
+   - lighting: 光影色彩 (English)
+   - narration_text: 对应的对白或旁白 (中文)，短句，适合 TTS。
+   - speaker: 说话角色名，没有则为空字符串。
    - duration: 预估时长 (秒，数字，4-8秒）。
+5. 纯净画面：严禁字幕、文字、logo、UI、气泡。
 
 格式示例（注意只有 15 个镜头，总时长约 100 秒）：
 [
   {
     "shot_id": 1,
-    "visual_description": "特写镜头。主角的眼睛猛地睁开，瞳孔收缩。冷汗顺着额头流下。",
-    "action_motion": "瞳孔颤抖，摄影机轻微晃动模拟头痛感。",
+    "visual_description": "Extreme close-up of the protagonist's eyes snapping open, sweat on the forehead, dark bedroom background, ultra-realistic Chinese manhua concept art.",
+    "action_motion": "The pupil trembles, the camera shakes slightly, moonlight flickers across the face.",
+    "camera": "slow push-in, handheld micro shake",
+    "composition": "extreme close-up, shallow depth of field",
+    "lighting": "cold moonlight, high contrast shadows",
     "narration_text": "头好痛...",
+    "speaker": "",
     "duration": 5
   }
 ]
@@ -1263,8 +1422,24 @@ ${script.slice(0, 6000)}
     try {
         const jsonText = raw.replace(/```json\s*|```\s*/g, '').trim();
         const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) throw new Error('No JSON array found');
-        return JSON.parse(jsonMatch[0]);
+        const shots = jsonMatch
+            ? normalizeAnimeStoryboard(JSON.parse(jsonMatch[0]))
+            : await coerceStoryboardJson(raw, script, aiConfig);
+        const repaired = await repairStoryboardUntilUsable(shots, script, aiConfig);
+        return repaired.map((shot) => ({
+            shot_id: shot.shot_id,
+            description: shot.visual_description,
+            visual_description: shot.visual_description,
+            action: shot.action_motion,
+            action_motion: shot.action_motion,
+            narration_text: shot.narration_text,
+            dialogue: shot.narration_text,
+            camera: shot.camera,
+            composition: shot.composition,
+            lighting: shot.lighting,
+            speaker: shot.speaker,
+            duration: shot.duration,
+        }));
     } catch (e) {
         console.error('Failed to parse storyboard JSON', e);
         throw new Error('Storyboard generation failed to produce valid JSON');
@@ -1362,6 +1537,10 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
         const voiceProvider = getVoiceProvider(aiConfig.apiKey);
         
         const { generateVideoWithVeo } = await import('../services/veoClient.js');
+        const veoConfig = await getVeoAIConfig(c.env.DB, aiConfig);
+        if (!veoConfig) {
+            return c.json({ success: false, error: '缺少 Gemini/Veo 可用 API Key，请在 provider registry 配置 gemini provider' }, 400);
+        }
 
         let hasError = false;
 
@@ -1404,8 +1583,8 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
             // Video
             if (!shot.video_key && shot.status !== 'error') {
                 try {
-                    const prompt = `Cinematic Chinese Manhua Animation. ${shot.visual_description || shot.description}. ${shot.action_motion || shot.action}. No text, no subtitles.`;
-                    const videoUrl = await generateVideoWithVeo(prompt, charImageUrls, aiConfig);
+                    const prompt = buildVeoShotPrompt(shot);
+                    const videoUrl = await generateVideoWithVeo(prompt, charImageUrls, veoConfig);
                     const res = await fetch(videoUrl);
                     if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
                     const buf = await res.arrayBuffer();

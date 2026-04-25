@@ -19,6 +19,8 @@
     "db:migrate:local": "wrangler d1 migrations apply novel-copilot-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply novel-copilot-db --remote",
     "typecheck": "tsc --noEmit",
+    "quality:sync-providers": "tsx src/syncProviderRegistry.ts",
+    "quality:harness": "tsx src/generationQualityHarness.ts",
     "batch": "tsx src/runBatch.ts",
     "benchmark:chapter": "node --import tsx src/benchmarkGeneration.ts",
     "server": "wrangler dev --local"
