@@ -37,6 +37,10 @@ interface ChapterEditorProps {
   onSaved?: (chapterIndex: number) => void;
 }
 
+type EditorShellStyle = CSSProperties & {
+  '--editor-shell-height': string;
+};
+
 function toEditorHtml(content: string): string {
   if (!content.trim()) return '<p></p>';
   return content
@@ -108,7 +112,7 @@ export function ChapterEditor({
     content: toEditorHtml(initialContent),
     editorProps: {
       attributes: {
-        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none p-4 pb-32',
+        class: 'prose prose-sm dark:prose-invert max-w-none focus:outline-none p-6 pb-36 lg:p-10 lg:pb-44',
       },
     },
     onUpdate: ({ editor }) => {
@@ -331,22 +335,30 @@ export function ChapterEditor({
   const safeViewportHeight = viewportHeight > 0 ? viewportHeight : null;
   const shellStyle = {
     height: safeViewportHeight ? `${safeViewportHeight}px` : '100dvh',
-    ['--editor-shell-height' as any]: safeViewportHeight ? `${safeViewportHeight}px` : '100dvh',
-  } as CSSProperties;
+    '--editor-shell-height': safeViewportHeight ? `${safeViewportHeight}px` : '100dvh',
+  } satisfies EditorShellStyle;
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 bg-background flex flex-col" style={shellStyle}>
+    <div className="fixed inset-x-0 top-0 z-50 flex flex-col bg-muted/30 text-foreground" style={shellStyle}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-card shadow-sm shrink-0">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={handleClose}>
+      <div className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            className="shrink-0"
+            aria-label="返回章节列表"
+            title="返回章节列表"
+          >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div>
-             <h2 className="text-lg font-medium">
+          <div className="min-w-0">
+            <p className="hidden text-xs font-medium uppercase text-muted-foreground sm:block">章节编辑器</p>
+            <h2 className="truncate text-base font-semibold sm:text-lg">
               {savedChapterIndex !== undefined ? `第 ${savedChapterIndex} 章` : '新建章节'}
             </h2>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
               <span>{wordCount} 字</span>
               {hasChanges ? (
                 <span className="text-yellow-600">● 未保存</span>
@@ -363,9 +375,9 @@ export function ChapterEditor({
           </div>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           {saveSuccess && (
-            <span className="flex items-center gap-1 text-sm text-green-600 animate-in fade-in slide-in-from-bottom-1">
+            <span className="hidden items-center gap-1 text-sm text-green-600 animate-in fade-in slide-in-from-bottom-1 md:flex">
               <CheckCircle className="h-4 w-4" />
               已自动保存
             </span>
@@ -385,17 +397,20 @@ export function ChapterEditor({
             variant={isChatOpen ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setIsChatOpen(!isChatOpen)}
-            className="flex items-center gap-1"
+            className="flex items-center gap-1 px-2 sm:px-3"
+            aria-label={isChatOpen ? '关闭 AI 助手' : '打开 AI 助手'}
+            title={isChatOpen ? '关闭 AI 助手' : '打开 AI 助手'}
           >
             <MessageSquare className="h-4 w-4" />
-            AI 助手
+            <span className="hidden sm:inline">AI 助手</span>
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowConsistencyDialog(true)}
-            className="flex items-center gap-1"
+            className="flex items-center gap-1 px-2 sm:px-3"
+            aria-label="一致性检查"
             title="一致性检查"
           >
             <AlertTriangle className="h-4 w-4" />
@@ -406,26 +421,29 @@ export function ChapterEditor({
             disabled={isSaving || !hasChanges}
             size="sm"
             variant="outline"
+            className="px-2 sm:px-3"
+            aria-label="保存章节"
+            title="保存章节"
           >
             {isSaving ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              <Loader2 className="h-4 w-4 animate-spin sm:mr-1" />
             ) : (
-              <Save className="h-4 w-4 mr-1" />
+              <Save className="h-4 w-4 sm:mr-1" />
             )}
-            保存
+            <span className="hidden sm:inline">保存</span>
           </Button>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex flex-1 overflow-hidden">
         {/* Editor */}
-        <div className="flex-1 overflow-auto bg-background/50">
-          <div className="max-w-4xl mx-auto py-8 px-4 relative h-full">
+        <div className="flex-1 overflow-auto bg-[linear-gradient(to_bottom,var(--background),var(--muted))]">
+          <div className="relative mx-auto h-full max-w-[860px] px-3 py-4 sm:px-6 lg:py-8">
             {/* Selection Bubble Menu */}
             {showBubbleMenu && bubbleMenuPosition && editor.state.selection.from !== editor.state.selection.to && (
               <div 
-                className="fixed bg-popover border rounded-lg shadow-lg p-1 z-50"
+                className="fixed z-50 rounded-lg border bg-popover p-1 shadow-lg"
                 style={{
                   top: `${bubbleMenuPosition.top}px`,
                   left: `${bubbleMenuPosition.left}px`,
@@ -444,13 +462,15 @@ export function ChapterEditor({
               </div>
             )}
 
-            <EditorContent editor={editor} />
+            <div className="min-h-full rounded-lg border border-border/70 bg-card shadow-sm">
+              <EditorContent editor={editor} />
+            </div>
           </div>
         </div>
 
         {/* Chat Sidebar */}
         {isChatOpen && (
-          <div className="w-80 shrink-0 border-l h-full">
+          <div className="absolute inset-y-16 right-0 z-40 w-full shrink-0 border-l bg-background shadow-xl sm:relative sm:inset-auto sm:h-full sm:w-80 sm:shadow-none">
             <ChapterChatSidebar 
               projectName={projectName}
               chapterIndex={savedChapterIndex}
@@ -553,6 +573,7 @@ export function ChapterEditor({
           line-height: 1.8;
           font-size: 1rem;
           min-height: calc(var(--editor-shell-height, 100dvh) - 220px);
+          color: var(--foreground);
         }
         
         .ProseMirror p {

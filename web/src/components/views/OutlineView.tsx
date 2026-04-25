@@ -23,6 +23,14 @@ interface OutlineViewProps {
   onRefresh?: () => void;
 }
 
+function getMilestoneText(milestone: unknown): string {
+  if (typeof milestone === 'string') return milestone.trim();
+  if (!milestone || typeof milestone !== 'object' || Array.isArray(milestone)) return '';
+  const record = milestone as Record<string, unknown>;
+  const text = record.milestone ?? record.description;
+  return typeof text === 'string' ? text.trim() : '';
+}
+
 export function OutlineView({ project, onRefresh }: OutlineViewProps) {
   const [isRefining, setIsRefining] = useState(false);
   const [refiningVolIdx, setRefiningVolIdx] = useState<number | null>(null);
@@ -170,7 +178,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
       const chapterCount = vol.chapters.length;
       vol.startChapter = nextStart;
       vol.endChapter = nextStart + chapterCount - 1;
-      vol.chapters = vol.chapters.map((ch: any, idx: number) => ({
+      vol.chapters = vol.chapters.map((ch, idx) => ({
         ...ch,
         index: nextStart + idx,
       }));
@@ -263,10 +271,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
 
   const milestoneItems = (outline.milestones || []).map((milestone, index) => ({
     index,
-    text:
-      typeof milestone === 'string'
-        ? milestone.trim()
-        : ((milestone as any).milestone || (milestone as any).description || '').trim(),
+    text: getMilestoneText(milestone),
   }));
   const displayMilestones = isEditing ? milestoneItems : milestoneItems.filter((item) => item.text);
   const shouldShowMilestones = isEditing || milestonesExpanded;
@@ -308,6 +313,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
         <CardContent>
           {isEditing ? (
             <Textarea 
+              id="outline-main-goal"
+              name="outline-main-goal"
               value={outline.mainGoal} 
               onChange={(e) => setEditedOutline(prev => prev ? ({ ...prev, mainGoal: e.target.value }) : null)}
               className="min-h-[100px]"
@@ -362,6 +369,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                   {isEditing ? (
                     <div className="flex-1 flex gap-2">
                       <Input
+                        id={`outline-milestone-${milestone.index}`}
+                        name={`outline-milestone-${milestone.index}`}
                         value={milestone.text}
                         onChange={(e) => updateMilestone(milestone.index, e.target.value)}
                         className="h-8 text-xs lg:text-sm"
@@ -370,6 +379,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                        aria-label={`删除第 ${milestone.index + 1} 条里程碑`}
+                        title={`删除第 ${milestone.index + 1} 条里程碑`}
                         onClick={() => removeMilestone(milestone.index)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -461,6 +472,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                       <Badge variant="outline" className="text-xs shrink-0">第 {volIndex + 1} 卷</Badge>
                       {isEditing ? (
                         <Input 
+                          id={`outline-volume-${volIndex}-title`}
+                          name={`outline-volume-${volIndex}-title`}
                           value={vol.title} 
                           onChange={(e) => updateVolume(volIndex, 'title', e.target.value)} 
                           className="h-7 text-sm font-bold"
@@ -475,6 +488,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
                         title={outline.volumes.length <= 1 ? '至少保留一卷' : '删除本卷'}
+                        aria-label={outline.volumes.length <= 1 ? '至少保留一卷' : `删除${vol.title}`}
                         disabled={outline.volumes.length <= 1}
                         onClick={() => {
                           if (confirm(`确定要从大纲中删除「${vol.title}」吗？后续卷的章节编号将自动重新计算。`)) {
@@ -494,6 +508,7 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                           size="icon"
                           className="h-6 w-6 lg:h-8 lg:w-8"
                           title="重新生成本卷章节"
+                          aria-label={`重新生成${vol.title}章节`}
                           onClick={() => handleRefineVolume(volIndex)}
                           disabled={isBusy}
                         >
@@ -509,6 +524,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                       <span className="text-xs text-primary font-medium mb-1 block">目标</span>
                       {isEditing ? (
                          <Textarea 
+                          id={`outline-volume-${volIndex}-goal`}
+                          name={`outline-volume-${volIndex}-goal`}
                           value={vol.goal} 
                           onChange={(e) => updateVolume(volIndex, 'goal', e.target.value)}
                           className="text-xs min-h-[60px]"
@@ -523,6 +540,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                           <span className="text-xs text-muted-foreground mb-1 block">冲突</span>
                           {isEditing ? (
                              <Input 
+                              id={`outline-volume-${volIndex}-conflict`}
+                              name={`outline-volume-${volIndex}-conflict`}
                               value={vol.conflict} 
                               onChange={(e) => updateVolume(volIndex, 'conflict', e.target.value)}
                               className="text-xs h-7"
@@ -535,6 +554,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                           <span className="text-xs text-muted-foreground mb-1 block">高潮</span>
                            {isEditing ? (
                              <Input 
+                              id={`outline-volume-${volIndex}-climax`}
+                              name={`outline-volume-${volIndex}-climax`}
                               value={vol.climax} 
                               onChange={(e) => updateVolume(volIndex, 'climax', e.target.value)}
                               className="text-xs h-7"
@@ -558,6 +579,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                              <Badge variant="outline" className="text-[10px] h-5 px-1 bg-background/50">第{ch.index}章</Badge>
                              {isEditing ? (
                                <Input 
+                                id={`outline-volume-${volIndex}-chapter-${chIdx}-title`}
+                                name={`outline-volume-${volIndex}-chapter-${chIdx}-title`}
                                 value={ch.title} 
                                 onChange={(e) => updateChapter(volIndex, chIdx, 'title', e.target.value)} 
                                 className="h-6 text-xs flex-1"
@@ -569,6 +592,8 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
                           </div>
                           {isEditing ? (
                              <Textarea 
+                                id={`outline-volume-${volIndex}-chapter-${chIdx}-goal`}
+                                name={`outline-volume-${volIndex}-chapter-${chIdx}-goal`}
                                 value={ch.goal} 
                                 onChange={(e) => updateChapter(volIndex, chIdx, 'goal', e.target.value)} 
                                 className="text-xs min-h-[40px] mt-1"
@@ -600,8 +625,10 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label className="text-sm">新增卷数</Label>
+            <Label htmlFor="outline-add-volume-count" className="text-sm">新增卷数</Label>
             <Input
+              id="outline-add-volume-count"
+              name="outline-add-volume-count"
               type="number"
               min={1}
               max={20}
@@ -611,8 +638,10 @@ export function OutlineView({ project, onRefresh }: OutlineViewProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-sm">每卷章节数</Label>
+            <Label htmlFor="outline-add-chapters-per-volume" className="text-sm">每卷章节数</Label>
             <Input
+              id="outline-add-chapters-per-volume"
+              name="outline-add-chapters-per-volume"
               type="number"
               min={1}
               max={200}

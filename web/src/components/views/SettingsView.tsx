@@ -1,18 +1,22 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useEffect, useMemo, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Save, BookMarked, Users, Map, FileText, PenLine } from 'lucide-react';
-import { updateProject, type ProjectDetail } from '@/lib/api';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { BookMarked, CheckCircle2, FileText, Loader2, Map, PenLine, Save, Users } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { updateProject, type ProjectDetail } from '@/lib/api';
 import { useToast } from '@/components/ui/use-toast';
 
 interface SettingsViewProps {
   project: ProjectDetail;
   onRefresh?: () => void;
 }
+
+type TextTab = 'bible' | 'background' | 'roles';
 
 const DEFAULT_CHAPTER_PROMPT_PROFILE = 'web_novel_light';
 
@@ -34,6 +38,36 @@ const CHAPTER_PROMPT_PROFILE_OPTIONS = [
   },
 ] as const;
 
+const TEXT_TAB_META: Record<TextTab, {
+  icon: typeof FileText;
+  label: string;
+  title: string;
+  description: string;
+  placeholder: string;
+}> = {
+  bible: {
+    icon: FileText,
+    label: '核心设定',
+    title: 'Story Bible',
+    description: '主题、主线、卖点、关键设定与不可违背的规则。',
+    placeholder: '输入小说核心设定、大纲摘要、主题思想、关键爽点和限制条件...',
+  },
+  background: {
+    icon: Map,
+    label: '世界观',
+    title: '世界观与背景',
+    description: '地理、历史、组织、技术或特殊体系。',
+    placeholder: '描述世界的运作规则、势力分布、城市/地域、历史背景...',
+  },
+  roles: {
+    icon: Users,
+    label: '角色',
+    title: '角色设定',
+    description: '主要角色的动机、能力、关系和变化方向。',
+    placeholder: '列出主要角色档案、关系、冲突点、成长路线...',
+  },
+};
+
 function normalizeChapterPromptProfile(value: string | undefined): string {
   if (!value) return DEFAULT_CHAPTER_PROMPT_PROFILE;
   return CHAPTER_PROMPT_PROFILE_OPTIONS.some((option) => option.id === value)
@@ -41,9 +75,17 @@ function normalizeChapterPromptProfile(value: string | undefined): string {
     : DEFAULT_CHAPTER_PROMPT_PROFILE;
 }
 
+function countReadableChars(value: string): number {
+  return value.replace(/\s/g, '').length;
+}
+
+function markdownPreview(value: string): string {
+  return value.trim() || '*暂无内容*';
+}
+
 export function SettingsView({ project, onRefresh }: SettingsViewProps) {
   const { toast } = useToast();
-  
+
   const [bible, setBible] = useState(project.bible || '');
   const [background, setBackground] = useState(project.background || '');
   const [roleSettings, setRoleSettings] = useState(project.role_settings || '');
@@ -52,11 +94,9 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
   );
   const [chapterPromptCustom, setChapterPromptCustom] = useState(project.chapter_prompt_custom || '');
   const [customSystemPrompt, setCustomSystemPrompt] = useState(project.custom_system_prompt || '');
-
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState('bible');
+  const [activeTab, setActiveTab] = useState<TextTab | 'chapter-prompt'>('bible');
 
-  // Update local state when project prop changes (e.g. after refresh)
   useEffect(() => {
     setBible(project.bible || '');
     setBackground(project.background || '');
@@ -65,6 +105,27 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     setChapterPromptCustom(project.chapter_prompt_custom || '');
     setCustomSystemPrompt(project.custom_system_prompt || '');
   }, [project]);
+
+  const dirty = useMemo(() => {
+    return bible !== (project.bible || '')
+      || background !== (project.background || '')
+      || roleSettings !== (project.role_settings || '')
+      || chapterPromptProfile !== normalizeChapterPromptProfile(project.chapter_prompt_profile)
+      || chapterPromptCustom !== (project.chapter_prompt_custom || '')
+      || customSystemPrompt !== (project.custom_system_prompt || '');
+  }, [background, bible, chapterPromptCustom, chapterPromptProfile, customSystemPrompt, project, roleSettings]);
+
+  const activeTextValue = activeTab === 'bible'
+    ? bible
+    : activeTab === 'background'
+      ? background
+      : activeTab === 'roles'
+        ? roleSettings
+        : '';
+
+  const activePromptOption = CHAPTER_PROMPT_PROFILE_OPTIONS.find(
+    (option) => option.id === chapterPromptProfile
+  ) || CHAPTER_PROMPT_PROFILE_OPTIONS[0];
 
   const handleSave = async () => {
     try {
@@ -77,17 +138,17 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
         chapter_prompt_custom: chapterPromptCustom,
         custom_system_prompt: customSystemPrompt,
       });
-      
+
       toast({
-        title: "保存成功",
-        description: "项目设定已更新",
+        title: '保存成功',
+        description: '项目设定已更新',
       });
-      
-      if (onRefresh) onRefresh();
+
+      onRefresh?.();
     } catch (error) {
       toast({
-        variant: "destructive",
-        title: "保存失败",
+        variant: 'destructive',
+        title: '保存失败',
         description: (error as Error).message,
       });
     } finally {
@@ -95,139 +156,106 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
     }
   };
 
+  const renderTextTab = (tab: TextTab, value: string, onChange: (value: string) => void) => {
+    const meta = TEXT_TAB_META[tab];
+    return (
+      <TabsContent value={tab} className="min-h-0 flex-1 overflow-hidden">
+        <div className="grid h-full min-h-[620px] gap-4 lg:grid-cols-2">
+          <section className="flex min-h-0 flex-col rounded-lg border bg-background shadow-sm">
+            <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+              <div>
+                <Label htmlFor={`project-${tab}`} className="text-sm font-semibold">{meta.title}</Label>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{meta.description}</p>
+              </div>
+              <Badge variant="secondary" className="rounded-md">{countReadableChars(value)} 字</Badge>
+            </div>
+            <Textarea
+              id={`project-${tab}`}
+              name={`project-${tab}`}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              className="min-h-[520px] flex-1 resize-none rounded-none border-0 p-4 font-mono text-sm leading-7 focus-visible:ring-0 lg:min-h-0"
+              placeholder={meta.placeholder}
+            />
+          </section>
+
+          <aside className="hidden min-h-0 flex-col rounded-lg border bg-muted/25 shadow-sm lg:flex">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <span className="text-sm font-semibold">实时预览</span>
+              <Badge variant="outline" className="rounded-md">Markdown</Badge>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-5">
+              <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-7 prose-p:text-foreground/90 prose-li:text-foreground/90">
+                <ReactMarkdown>{markdownPreview(value)}</ReactMarkdown>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </TabsContent>
+    );
+  };
+
   return (
-    <div className="h-full min-h-0 flex flex-col p-4 lg:p-6">
-      <div className="mb-4 flex shrink-0 items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <BookMarked className="h-6 w-6 text-primary" />
-            知识库与设定
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            管理小说的核心设定，这些信息将被 AI 用于保持故事一致性。
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(to_bottom,var(--background),hsl(var(--muted)/0.35))] p-4 lg:p-6">
+      <div className="mb-4 flex shrink-0 flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+            <BookMarked className="h-4 w-4 text-primary" />
+            项目设定
+          </div>
+          <h2 className="truncate text-2xl font-semibold tracking-normal">知识库与生成规则</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            这些内容会进入生成、续写、质检和写作助手的上下文。
           </p>
         </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-          保存更改
-        </Button>
+        <div className="flex items-center gap-2">
+          <Badge variant={dirty ? 'default' : 'secondary'} className="h-9 rounded-md px-3">
+            {dirty ? '有未保存修改' : '已同步'}
+          </Badge>
+          <Button onClick={handleSave} disabled={saving || !dirty} className="h-9">
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            保存
+          </Button>
+        </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <div className="grid min-h-0 flex-1 gap-4">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TextTab | 'chapter-prompt')} className="flex min-h-0 flex-col">
           <div className="mb-4 overflow-x-auto pb-1">
             <TabsList className="inline-flex min-w-max justify-start">
-              <TabsTrigger value="bible" className="flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Story Bible (核心)
-              </TabsTrigger>
-              <TabsTrigger value="background" className="flex items-center gap-2">
-                <Map className="h-4 w-4" />
-                世界观与背景
-              </TabsTrigger>
-              <TabsTrigger value="roles" className="flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                角色设定
-              </TabsTrigger>
+              {(Object.keys(TEXT_TAB_META) as TextTab[]).map((tab) => {
+                const meta = TEXT_TAB_META[tab];
+                const Icon = meta.icon;
+                return (
+                  <TabsTrigger key={tab} value={tab} className="flex items-center gap-2">
+                    <Icon className="h-4 w-4" />
+                    {meta.label}
+                  </TabsTrigger>
+                );
+              })}
               <TabsTrigger value="chapter-prompt" className="flex items-center gap-2">
                 <PenLine className="h-4 w-4" />
-                正文提示词
+                正文规则
               </TabsTrigger>
             </TabsList>
           </div>
 
-          <TabsContent value="bible" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-              <Card className="h-full flex flex-col">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">编辑内容</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 p-0">
-                  <Textarea
-                    value={bible}
-                    onChange={(e) => setBible(e.target.value)}
-                    className="h-full border-0 focus-visible:ring-0 resize-none p-4 rounded-b-lg font-mono text-sm leading-relaxed"
-                    placeholder="在这里输入小说的核心设定、大纲摘要、主题思想等..."
-                  />
-                </CardContent>
-              </Card>
-              <Card className="h-full hidden lg:flex flex-col bg-muted/30">
-                 <CardHeader className="py-3">
-                  <CardTitle className="text-base">预览</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{bible || '*暂无内容*'}</ReactMarkdown>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
+          {renderTextTab('bible', bible, setBible)}
+          {renderTextTab('background', background, setBackground)}
+          {renderTextTab('roles', roleSettings, setRoleSettings)}
 
-          <TabsContent value="background" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-              <Card className="h-full flex flex-col">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">世界观设定</CardTitle>
-                  <CardDescription>地理、历史、魔法/科技体系、势力分布等</CardDescription>
-                </CardHeader>
-                <CardContent className="flex-1 p-0">
-                  <Textarea
-                    value={background}
-                    onChange={(e) => setBackground(e.target.value)}
-                    className="h-full border-0 focus-visible:ring-0 resize-none p-4 rounded-b-lg font-mono text-sm leading-relaxed"
-                    placeholder="描述这个世界的运作规则..."
-                  />
-                </CardContent>
-              </Card>
-              <Card className="h-full hidden lg:flex flex-col bg-muted/30">
-                 <CardHeader className="py-3">
-                  <CardTitle className="text-base">预览</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{background || '*暂无内容*'}</ReactMarkdown>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="roles" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-              <Card className="h-full flex flex-col">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">角色设定</CardTitle>
-                  <CardDescription>主要角色的性格、外貌、能力、人际关系等</CardDescription>
-                </CardHeader>
-                <CardContent className="flex-1 p-0">
-                  <Textarea
-                    value={roleSettings}
-                    onChange={(e) => setRoleSettings(e.target.value)}
-                    className="h-full border-0 focus-visible:ring-0 resize-none p-4 rounded-b-lg font-mono text-sm leading-relaxed"
-                    placeholder="列出主要角色的详细档案..."
-                  />
-                </CardContent>
-              </Card>
-              <Card className="h-full hidden lg:flex flex-col bg-muted/30">
-                 <CardHeader className="py-3">
-                  <CardTitle className="text-base">预览</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{roleSettings || '*暂无内容*'}</ReactMarkdown>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="chapter-prompt" className="flex-1 min-h-0 mt-0 overflow-hidden">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-              <Card className="h-full flex flex-col">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">正文生成模板</CardTitle>
-                  <CardDescription>控制生成正文的文风与节奏，可叠加自定义补充提示词</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
+          <TabsContent value="chapter-prompt" className="min-h-0 flex-1 overflow-auto">
+            <div className="grid min-h-[620px] gap-4 lg:grid-cols-2">
+              <section className="rounded-lg border bg-background shadow-sm">
+                <div className="border-b px-4 py-3">
+                  <h3 className="text-sm font-semibold">正文生成模板</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">控制正文的文风、节奏和系统提示词。</p>
+                </div>
+                <div className="space-y-5 p-4">
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">模板</p>
+                    <Label htmlFor="chapter-prompt-profile">模板</Label>
                     <Select value={chapterPromptProfile} onValueChange={setChapterPromptProfile}>
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger id="chapter-prompt-profile" className="w-full">
                         <SelectValue placeholder="选择正文模板" />
                       </SelectTrigger>
                       <SelectContent>
@@ -238,56 +266,88 @@ export function SettingsView({ project, onRefresh }: SettingsViewProps) {
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.description || ''}
-                    </p>
+                    <p className="text-xs leading-5 text-muted-foreground">{activePromptOption.description}</p>
                   </div>
 
-                  <div className="space-y-4 flex-1 min-h-[260px] flex flex-col">
-                    <div className="space-y-2 flex-1 flex flex-col">
-                      <p className="text-sm font-medium">自定义核心提示词 (System Prompt)</p>
-                      <Textarea
-                        value={customSystemPrompt}
-                        onChange={(e) => setCustomSystemPrompt(e.target.value)}
-                        className="flex-1 resize-none font-mono text-sm leading-relaxed"
-                        placeholder="留空则使用默认小白文规则。填写后将完全覆盖系统的写作基础规则（保留格式约束），实现千文千面。"
-                      />
-                    </div>
-                    <div className="space-y-2 flex-1 flex flex-col">
-                      <p className="text-sm font-medium">自定义补充提示词（可选附加说明）</p>
-                      <Textarea
-                        value={chapterPromptCustom}
-                        onChange={(e) => setChapterPromptCustom(e.target.value)}
-                        className="flex-1 resize-none font-mono text-sm leading-relaxed"
-                        placeholder="例如：减少形容词密度，多写人物动作和决策，不要机械承接上一章最后一句。"
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-system-prompt">自定义核心提示词</Label>
+                    <Textarea
+                      id="custom-system-prompt"
+                      name="custom-system-prompt"
+                      value={customSystemPrompt}
+                      onChange={(event) => setCustomSystemPrompt(event.target.value)}
+                      className="min-h-[220px] resize-y font-mono text-sm leading-7"
+                      placeholder="留空则使用系统默认规则。填写后会覆盖基础写作规则。"
+                    />
                   </div>
-                </CardContent>
-              </Card>
 
-              <Card className="h-full hidden lg:flex flex-col bg-muted/30">
-                <CardHeader className="py-3">
-                  <CardTitle className="text-base">当前生效设置</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{[
-                    `**模板**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.label || '轻快网文（默认）'}`,
-                    '',
-                    `**模板说明**: ${CHAPTER_PROMPT_PROFILE_OPTIONS.find((option) => option.id === chapterPromptProfile)?.description || ''}`,
-                    '',
-                    '**自定义核心提示词**:',
-                    customSystemPrompt || '*未设置（使用系统默认）*',
-                    '',
-                    '**自定义补充提示词**:',
-                    chapterPromptCustom || '*未设置*',
-                  ].join('\n')}
-                  </ReactMarkdown>
-                </CardContent>
-              </Card>
+                  <div className="space-y-2">
+                    <Label htmlFor="chapter-prompt-custom">补充提示词</Label>
+                    <Textarea
+                      id="chapter-prompt-custom"
+                      name="chapter-prompt-custom"
+                      value={chapterPromptCustom}
+                      onChange={(event) => setChapterPromptCustom(event.target.value)}
+                      className="min-h-[160px] resize-y font-mono text-sm leading-7"
+                      placeholder="例如：减少形容词密度，多写人物动作和决策。"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <aside className="hidden min-h-0 flex-col rounded-lg border bg-muted/25 shadow-sm lg:flex">
+                <div className="flex items-center justify-between border-b px-4 py-3">
+                  <span className="text-sm font-semibold">当前生效设置</span>
+                  <Badge variant="outline" className="rounded-md">{activePromptOption.label}</Badge>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto p-5">
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-7">
+                    <ReactMarkdown>{[
+                      `**模板**: ${activePromptOption.label}`,
+                      '',
+                      `**模板说明**: ${activePromptOption.description}`,
+                      '',
+                      '**自定义核心提示词**:',
+                      customSystemPrompt || '*未设置（使用系统默认）*',
+                      '',
+                      '**补充提示词**:',
+                      chapterPromptCustom || '*未设置*',
+                    ].join('\n')}</ReactMarkdown>
+                  </div>
+                </div>
+              </aside>
             </div>
           </TabsContent>
         </Tabs>
+
+        <aside className="hidden">
+          <Card className="shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <CheckCircle2 className="h-4 w-4 text-primary" />
+                记忆覆盖
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">核心设定</span>
+                <span className="font-medium">{countReadableChars(bible)} 字</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">世界观</span>
+                <span className="font-medium">{countReadableChars(background)} 字</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">角色</span>
+                <span className="font-medium">{countReadableChars(roleSettings)} 字</span>
+              </div>
+              <div className="rounded-md bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
+                当前页：{activeTab === 'chapter-prompt' ? '正文规则' : TEXT_TAB_META[activeTab].title}
+                {activeTab !== 'chapter-prompt' ? `，${countReadableChars(activeTextValue)} 字` : ''}
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
       </div>
     </div>
   );
