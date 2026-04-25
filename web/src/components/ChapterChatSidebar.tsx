@@ -79,13 +79,20 @@ export function ChapterChatSidebar({
   };
 
   return (
-    <div className="flex flex-col h-full border-l bg-card w-80 shadow-xl">
+    <div className="flex h-full w-full flex-col bg-card shadow-xl sm:w-80 sm:border-l">
       <div className="p-4 border-b flex justify-between items-center bg-muted/30">
         <h3 className="font-medium flex items-center gap-2">
           <Bot className="h-5 w-5 text-primary" />
           写作助手
         </h3>
-        <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="h-8 w-8"
+          aria-label="关闭写作助手"
+          title="关闭写作助手"
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -143,13 +150,21 @@ export function ChapterChatSidebar({
           className="flex gap-2"
         >
           <Input
+            id="chapter-chat-input"
+            name="chapter-chat-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="输入你的问题..."
             disabled={isLoading}
             className="flex-1"
           />
-          <Button type="submit" size="icon" disabled={isLoading || !input.trim()}>
+          <Button
+            type="submit"
+            size="icon"
+            disabled={isLoading || !input.trim()}
+            aria-label="发送消息"
+            title="发送消息"
+          >
             <Send className="h-4 w-4" />
           </Button>
         </form>

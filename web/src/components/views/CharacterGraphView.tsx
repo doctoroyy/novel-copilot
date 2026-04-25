@@ -1,45 +1,85 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import ForceGraph2D from 'react-force-graph-2d';
-import { Button } from '@/components/ui/button';
-import { fetchCharacters, generateCharacters, type ProjectDetail } from '@/lib/api';
-import type { CharacterRelationGraph, CharacterProfile } from '@/types/characters';
-import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, Network, RefreshCw, Sparkles, X } from 'lucide-react';
+import { fetchCharacters, generateCharacters, type ProjectDetail } from '@/lib/api';
+import { useAIConfig, getAIConfigHeaders } from '@/hooks/useAIConfig';
+import type { CharacterProfile, CharacterRelationGraph, Relationship } from '@/types/characters';
+import { Loader2, Network, RefreshCw, Sparkles, UserRound, UsersRound, X } from 'lucide-react';
 
 interface CharacterGraphViewProps {
   project: ProjectDetail;
 }
 
+type GraphNode = CharacterProfile & {
+  group: 'protagonist' | 'main';
+  val: number;
+  color: string;
+};
+
+type GraphLink = Relationship & {
+  source: string;
+  target: string;
+  value: number;
+};
+
+type GraphEndpoint = string | number | NodeObject<GraphNode> | undefined;
+
 const NODE_R = 8;
+
+function endpointId(endpoint: GraphEndpoint): string | null {
+  if (endpoint === undefined) return null;
+  if (typeof endpoint === 'string' || typeof endpoint === 'number') return String(endpoint);
+  return endpoint.id === undefined ? null : String(endpoint.id);
+}
+
+function characterCount(data: CharacterRelationGraph | null): number {
+  if (!data) return 0;
+  return data.protagonists.length + data.mainCharacters.length;
+}
+
+function latestEventLabel(data: CharacterRelationGraph | null): string {
+  const latest = data?.relationshipEvents?.at(-1);
+  if (!latest) return '暂无事件';
+  return `第 ${latest.chapter} 章`;
+}
 
 export function CharacterGraphView({ project }: CharacterGraphViewProps) {
   const [data, setData] = useState<CharacterRelationGraph | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<CharacterProfile | null>(null);
-  const [hoverNode, setHoverNode] = useState<CharacterProfile | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
+  const graphShellRef = useRef<HTMLElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<any>(null);
+  const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const { config: aiConfig } = useAIConfig();
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [dimensions, setDimensions] = useState({ width: 360, height: 560 });
 
-  // Update dimensions on resize
   useEffect(() => {
     const updateDims = () => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight
-        });
-      }
+      const shell = graphShellRef.current;
+      if (!shell) return;
+      const measuredWidth = shell.getBoundingClientRect().width || shell.clientWidth || window.innerWidth;
+      const measuredHeight = shell.getBoundingClientRect().height || shell.clientHeight || 560;
+      setDimensions({
+        width: Math.max(320, Math.floor(measuredWidth)),
+        height: Math.max(520, Math.floor(measuredHeight)),
+      });
     };
-    
-    window.addEventListener('resize', updateDims);
+
+    const observer = new ResizeObserver(updateDims);
+    if (graphShellRef.current) observer.observe(graphShellRef.current);
     updateDims();
-    
-    return () => window.removeEventListener('resize', updateDims);
+    const firstFrame = window.requestAnimationFrame(updateDims);
+    const delayed = window.setTimeout(updateDims, 250);
+
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(firstFrame);
+      window.clearTimeout(delayed);
+    };
   }, []);
 
   const loadData = useCallback(async () => {
@@ -67,6 +107,8 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
       setError(null);
       const crg = await generateCharacters(project.id, getAIConfigHeaders(aiConfig));
       setData(crg);
+      setSelectedNode(null);
+      setHoverNode(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -75,149 +117,144 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
   };
 
   const graphData = useMemo(() => {
-    if (!data) return { nodes: [], links: [] };
+    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
 
-    // Calculate node value/size based on importance
-    const nodes = [
-      ...data.protagonists.map(c => ({ 
-        ...c, 
-        group: 'protagonist', 
+    const nodes: GraphNode[] = [
+      ...data.protagonists.map((character) => ({
+        ...character,
+        group: 'protagonist' as const,
         val: 30,
-        color: '#f59e0b' // Amber
+        color: '#f97316',
       })),
-      ...data.mainCharacters.map(c => ({ 
-        ...c, 
-        group: 'main', 
+      ...data.mainCharacters.map((character) => ({
+        ...character,
+        group: 'main' as const,
         val: 20,
-        color: '#3b82f6' // Blue
+        color: '#0f766e',
       })),
     ];
 
-    // Create lookup maps for robust matching (ID and Name)
-    const nodeById = new Map(nodes.map(n => [n.id, n]));
-    const nodeByName = new Map(nodes.map(n => [n.name, n]));
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const nodeByName = new Map(nodes.map((node) => [node.name, node]));
 
     const resolveNodeId = (ref: string): string | null => {
       if (nodeById.has(ref)) return ref;
-      if (nodeByName.has(ref)) return nodeByName.get(ref)!.id;
-      // Try fuzzy match or case-insensitive match if needed, but let's start with exact name match
-      // Also handle potential case differences
+      const named = nodeByName.get(ref);
+      if (named) return named.id;
       const lowerRef = ref.toLowerCase();
-      for (const node of nodes) {
-          if (node.id.toLowerCase() === lowerRef) return node.id;
-          if (node.name.toLowerCase() === lowerRef) return node.id;
-      }
-      return null;
+      const matched = nodes.find((node) => node.id.toLowerCase() === lowerRef || node.name.toLowerCase() === lowerRef);
+      return matched?.id || null;
     };
 
-    const links = data.relationships
-      .map(r => {
-        const sourceId = resolveNodeId(r.from);
-        const targetId = resolveNodeId(r.to);
-        return { ...r, source: sourceId, target: targetId, value: r.bondStrength };
-      })
-      .filter(r => r.source && r.target) // Filter out links where endpoints couldn't be resolved
-      .map(r => ({
-        ...r,
-        source: r.source!, // TS assertion since we filtered
-        target: r.target!
-      }));
+    const links = data.relationships.flatMap((relationship) => {
+      const source = resolveNodeId(relationship.from);
+      const target = resolveNodeId(relationship.to);
+      if (!source || !target) return [];
+      return [{
+        ...relationship,
+        source,
+        target,
+        value: relationship.bondStrength,
+      }];
+    });
 
     return { nodes, links };
   }, [data]);
 
-  // Highlight logic - updated to handle both string IDs and object references safely
-  const highlightLinks = useMemo(() => {
-    const activeNode = hoverNode || selectedNode;
-    if (!activeNode) return new Set();
-    
-    const links = new Set();
-    graphData.links.forEach(link => {
-      // Safe access: d3 might have converted source/target to objects, or they might still be strings
-      const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+  useEffect(() => {
+    if (graphData.nodes.length === 0) return;
+    const timer = window.setTimeout(() => {
+      graphRef.current?.zoomToFit(600, dimensions.width < 520 ? 48 : 72);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [dimensions.width, graphData.nodes.length]);
 
-      if (sourceId === activeNode.id || targetId === activeNode.id) {
-        links.add(link);
-      }
+  const activeNode = hoverNode || selectedNode;
+
+  const highlightLinkIds = useMemo(() => {
+    if (!activeNode) return new Set<string>();
+    return new Set(
+      graphData.links
+        .filter((link) => endpointId(link.source) === activeNode.id || endpointId(link.target) === activeNode.id)
+        .map((link) => link.id)
+    );
+  }, [activeNode, graphData.links]);
+
+  const highlightNodeIds = useMemo(() => {
+    if (!activeNode) return new Set<string>();
+    const nodeIds = new Set<string>([activeNode.id]);
+    graphData.links.forEach((link) => {
+      const source = endpointId(link.source);
+      const target = endpointId(link.target);
+      if (source === activeNode.id && target) nodeIds.add(target);
+      if (target === activeNode.id && source) nodeIds.add(source);
     });
-    return links;
-  }, [hoverNode, selectedNode, graphData]);
+    return nodeIds;
+  }, [activeNode, graphData.links]);
 
-  const highlightNodes = useMemo(() => {
-    const activeNode = hoverNode || selectedNode;
-    if (!activeNode) return new Set();
-
-    const nodes = new Set();
-    nodes.add(activeNode.id);
-    graphData.links.forEach(link => {
-      const sourceId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const targetId = typeof link.target === 'object' ? (link.target as any).id : link.target;
-
-      if (sourceId === activeNode.id && targetId) nodes.add(targetId);
-      if (targetId === activeNode.id && sourceId) nodes.add(sourceId);
-    });
-    return nodes;
-  }, [hoverNode, selectedNode, graphData]);
-
-  // Custom Node Rendering
-  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    const isHover = highlightNodes.has(node.id);
-    const isSelected = selectedNode?.id === node.id;
-    const isDimmed = (hoverNode || selectedNode) && !isHover;
-    
-    const label = node.name;
-    const fontSize = 12 / globalScale;
+  const paintNode = useCallback((node: NodeObject<GraphNode>, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const nodeId = endpointId(node);
+    const isHover = nodeId ? highlightNodeIds.has(nodeId) : false;
+    const isSelected = selectedNode?.id === nodeId;
+    const isDimmed = Boolean(activeNode && !isHover);
     const radius = isSelected ? 8 : 6;
-    
-    // Dimming effect
-    ctx.globalAlpha = isDimmed ? 0.2 : 1;
+    const fontSize = 12 / globalScale;
+    const label = node.name;
 
-    // Outer Glow
+    ctx.globalAlpha = isDimmed ? 0.18 : 1;
     if (isHover || isSelected) {
       ctx.beginPath();
-      ctx.arc(node.x, node.y, radius * 1.5, 0, 2 * Math.PI, false);
+      ctx.arc(node.x || 0, node.y || 0, radius * 2.2, 0, 2 * Math.PI, false);
       ctx.fillStyle = node.color;
-      ctx.globalAlpha = isDimmed ? 0.1 : 0.4;
+      ctx.globalAlpha = isDimmed ? 0.1 : 0.22;
       ctx.fill();
     }
 
-    // Main Circle
+    ctx.globalAlpha = isDimmed ? 0.28 : 1;
     ctx.beginPath();
-    ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
+    ctx.arc(node.x || 0, node.y || 0, radius, 0, 2 * Math.PI, false);
     ctx.fillStyle = node.color;
-    ctx.globalAlpha = isDimmed ? 0.2 : 1;
     ctx.fill();
-
-    // Inner Border
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5 / globalScale;
     ctx.stroke();
 
-    // Label Background
-    const textWidth = ctx.measureText(label).width;
-    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    if (isHover || isSelected) {
-      ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y + radius + 2, bckgDimensions[0], bckgDimensions[1]);
-    }
-
-    // Label Text
-    ctx.font = `${fontSize}px Sans-Serif`;
+    ctx.font = `${fontSize}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = isHover || isSelected ? '#fff' : 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText(label, node.x, node.y + radius + 2 + bckgDimensions[1] / 2);
+    const textWidth = ctx.measureText(label).width;
+    const labelWidth = textWidth + fontSize * 0.9;
+    const labelHeight = fontSize * 1.55;
+    const labelX = (node.x || 0) - labelWidth / 2;
+    const labelY = (node.y || 0) + radius + 5;
 
-    node.__bckgDimensions = bckgDimensions; // to re-use in nodePointerAreaPaint
-  }, [highlightNodes, selectedNode, hoverNode]);
+    ctx.globalAlpha = isDimmed ? 0.2 : 0.92;
+    ctx.fillStyle = '#fff7ed';
+    ctx.fillRect(labelX, labelY, labelWidth, labelHeight);
+    ctx.strokeStyle = 'rgba(249, 115, 22, 0.18)';
+    ctx.strokeRect(labelX, labelY, labelWidth, labelHeight);
+
+    ctx.globalAlpha = isDimmed ? 0.35 : 1;
+    ctx.fillStyle = '#18181b';
+    ctx.fillText(label, node.x || 0, labelY + labelHeight / 2);
+    ctx.globalAlpha = 1;
+  }, [activeNode, highlightNodeIds, selectedNode]);
+
+  const handleSelectNode = (node: GraphNode & { x?: number; y?: number }) => {
+    setSelectedNode(node);
+    graphRef.current?.centerAt(node.x, node.y, 700);
+    graphRef.current?.zoom(3, 900);
+  };
+
+  const totalCharacters = characterCount(data);
+  const relationCount = data?.relationships.length || 0;
 
   if (loading && !data) {
     return (
-      <div className="flex items-center justify-center h-full bg-slate-950">
-        <div className="text-center space-y-4">
-            <Loader2 className="h-10 w-10 mx-auto animate-spin text-blue-400" />
-            <p className="text-slate-400 animate-pulse">正在编织命运之网...</p>
+      <div className="grid h-full place-items-center bg-[linear-gradient(to_bottom,var(--background),hsl(var(--muted)/0.35))]">
+        <div className="text-center">
+          <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">正在读取人物关系...</p>
         </div>
       </div>
     );
@@ -225,191 +262,202 @@ export function CharacterGraphView({ project }: CharacterGraphViewProps) {
 
   if (!data) {
     return (
-      <div className="flex flex-col items-center justify-center h-full space-y-6 bg-slate-950 text-slate-100 text-center">
-        <div className="relative">
-            <div className="absolute inset-0 bg-blue-500 blur-3xl opacity-20 animate-pulse"></div>
-            <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-3xl border border-blue-500/20 bg-slate-900/70">
-              <Network className="h-12 w-12 text-blue-300" />
-            </div>
+      <div className="grid h-full place-items-center bg-[linear-gradient(to_bottom,var(--background),hsl(var(--muted)/0.35))] p-4 lg:p-6">
+        <div className="w-full max-w-xl rounded-lg border bg-background p-8 text-center shadow-sm">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-lg bg-primary/10">
+            <Network className="h-8 w-8 text-primary" />
+          </div>
+          <h2 className="text-2xl font-semibold tracking-normal">暂无人物关系图谱</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            生成图谱后，可以在这里查看主角、配角、阵营关系和角色弧光。
+          </p>
+          <Button onClick={handleGenerate} disabled={loading} className="mt-6">
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+            生成图谱
+          </Button>
+          {error && <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         </div>
-        <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
-            暂无人物关系图谱
-        </h2>
-        <p className="text-slate-400 max-w-md text-center text-lg">
-            让 AI 深度分析您的设定集，构建一张盘根错节的人物关系网，让故事脉络清晰可见。
-        </p>
-        <Button onClick={handleGenerate} disabled={loading} size="lg" className="gradient-bg text-lg px-8 py-6 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/40 transition-all">
-          {loading ? (
-            <>
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              生成中...
-            </>
-          ) : (
-            <>
-              <Sparkles className="mr-2 h-5 w-5" />
-              立即生成图谱
-            </>
-          )}
-        </Button>
-        {error && <p className="text-destructive bg-destructive/10 px-4 py-2 rounded">{error}</p>}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full relative overflow-hidden bg-slate-950">
-      {/* Graph Area */}
-      <div className="flex-1 relative" ref={containerRef}>
+    <div className="flex h-full min-h-0 flex-col overflow-auto bg-[linear-gradient(to_bottom,var(--background),hsl(var(--muted)/0.35))] p-4 lg:p-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4">
+        <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+              <Network className="h-4 w-4 text-primary" />
+              角色网络
+            </div>
+            <h2 className="truncate text-2xl font-semibold tracking-normal">人物关系</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              点击节点查看角色档案，拖动画布检查人物之间的关系强弱和冲突来源。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="h-9 rounded-md px-3">{totalCharacters} 人物</Badge>
+            <Badge variant="secondary" className="h-9 rounded-md px-3">{relationCount} 关系</Badge>
+            <Badge variant="outline" className="h-9 rounded-md px-3">最新事件：{latestEventLabel(data)}</Badge>
+            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={loading} className="h-9">
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              重新生成
+            </Button>
+          </div>
+        </div>
+
         {error && (
-          <div className="absolute top-4 right-4 z-20 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive max-w-sm">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
         )}
-        <ForceGraph2D
-          ref={graphRef}
-          width={dimensions.width}
-          height={dimensions.height}
-          graphData={graphData}
-          // Physics
-          cooldownTicks={100}
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          // Rendering
-          nodeCanvasObject={paintNode}
-          nodeRelSize={NODE_R}
-          // Link Rendering
-          linkColor={(link: any) => highlightLinks.has(link) ? '#fff' : 'rgba(255,255,255,0.15)'}
-          linkWidth={(link: any) => highlightLinks.has(link) ? 2 : 1}
-          linkDirectionalParticles={(link: any) => highlightLinks.has(link) ? 4 : 0}
-          linkDirectionalParticleWidth={2}
-          linkDirectionalParticleSpeed={0.005}
-          linkCurvature={0.2} // Curved links for multiple relationships
-          // Interaction
-          onNodeClick={(node) => {
-            setSelectedNode(node as CharacterProfile);
-            // Center camera on node
-            graphRef.current?.centerAt(node.x, node.y, 1000);
-            graphRef.current?.zoom(4, 2000);
-          }}
-          onNodeHover={(node) => setHoverNode(node as CharacterProfile || null)}
-          onBackgroundClick={() => setSelectedNode(null)}
-          backgroundColor="#020617"
-        />
-        
-        {/* Controls Overlay */}
-        <div className="absolute top-4 left-4 flex flex-col gap-2 pointer-events-none">
-            <div className="flex gap-2 pointer-events-auto">
-                <Badge className="bg-amber-500/80 hover:bg-amber-500 border-none backdrop-blur shadow-lg shadow-amber-500/20 px-3 py-1">主角</Badge>
-                <Badge className="bg-blue-500/80 hover:bg-blue-500 border-none backdrop-blur shadow-lg shadow-blue-500/20 px-3 py-1">重要配角</Badge>
-            </div>
-            <div className="text-xs text-slate-500 mt-1 pl-1">
-                按住左键拖拽 • 滚轮缩放 • 点击节点查看详情
-            </div>
-        </div>
 
-        {/* Action Buttons */}
-        <div className="absolute bottom-6 left-6 pointer-events-auto">
-             <Button variant="outline" size="sm" onClick={handleGenerate} className="bg-background/50 backdrop-blur border-slate-700 hover:bg-slate-800 text-slate-300">
-                <RefreshCw className="mr-2 h-4 w-4" />
-                重新生成
-             </Button>
-        </div>
-      </div>
+        <div className="grid min-h-[640px] flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <section ref={graphShellRef} className="relative min-h-[520px] overflow-hidden rounded-lg border bg-background shadow-sm">
+            <div className="absolute left-4 top-4 z-10 flex flex-wrap gap-2">
+              <Badge className="rounded-md bg-orange-500 text-white hover:bg-orange-500">
+                <UserRound className="mr-1 h-3 w-3" />
+                主角
+              </Badge>
+              <Badge className="rounded-md bg-teal-700 text-white hover:bg-teal-700">
+                <UsersRound className="mr-1 h-3 w-3" />
+                重要配角
+              </Badge>
+            </div>
+            <div ref={containerRef} className="h-full min-h-[520px]">
+              <ForceGraph2D
+                ref={graphRef}
+                width={dimensions.width}
+                height={dimensions.height}
+                graphData={graphData}
+                cooldownTicks={100}
+                d3AlphaDecay={0.02}
+                d3VelocityDecay={0.3}
+                onEngineStop={() => graphRef.current?.zoomToFit(500, dimensions.width < 520 ? 48 : 72)}
+                nodeCanvasObject={paintNode}
+                nodeRelSize={NODE_R}
+                linkColor={(link: LinkObject<GraphNode, GraphLink>) => (
+                  highlightLinkIds.has(String(link.id)) ? '#f97316' : 'rgba(24, 24, 27, 0.18)'
+                )}
+                linkWidth={(link: LinkObject<GraphNode, GraphLink>) => (highlightLinkIds.has(String(link.id)) ? 2 : 1)}
+                linkDirectionalParticles={(link: LinkObject<GraphNode, GraphLink>) => (highlightLinkIds.has(String(link.id)) ? 3 : 0)}
+                linkDirectionalParticleWidth={2}
+                linkDirectionalParticleSpeed={0.006}
+                linkCurvature={0.18}
+                onNodeClick={(node) => handleSelectNode(node as GraphNode & { x?: number; y?: number })}
+                onNodeHover={(node) => setHoverNode(node ? (node as GraphNode) : null)}
+                onBackgroundClick={() => setSelectedNode(null)}
+                backgroundColor="#fffaf5"
+              />
+            </div>
+            <div className="absolute bottom-4 left-4 right-4 rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
+              拖拽移动视图，滚轮缩放，点击节点打开角色档案。
+            </div>
+          </section>
 
-      {/* Sidebar Details - Glassmorphism Style */}
-      <div className={`
-        w-96 border-l border-slate-800 bg-slate-900/80 backdrop-blur-xl
-        absolute right-0 inset-y-0 shadow-2xl transition-transform duration-300 ease-in-out z-10
-        ${selectedNode ? 'translate-x-0' : 'translate-x-full'}
-      `}>
-        {selectedNode && (
-            <div className="h-full flex flex-col">
-                <div className="p-6 border-b border-slate-800">
-                    <div className="flex justify-between items-start mb-2">
-                        <div>
-                            <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
-                                {selectedNode.name}
-                            </h2>
-                            <p className="text-sm text-slate-400 mt-1">{selectedNode.basic?.identity || '角色'}</p>
-                        </div>
-                        <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white">
-                            <X className="h-4 w-4" />
-                        </Button>
-                    </div>
-                     <div className="flex flex-wrap gap-2 mt-3">
-                        {selectedNode.personality?.traits?.map(t => (
-                            <Badge key={t} variant="outline" className="border-slate-700 text-slate-300 bg-slate-800/50">
-                                {t}
-                            </Badge>
-                        )) || <Badge variant="outline" className="text-xs">无特质</Badge>}
-                    </div>
+          <aside className="min-h-0 rounded-lg border bg-background shadow-sm">
+            {selectedNode ? (
+              <div className="flex h-full min-h-[520px] flex-col">
+                <div className="flex items-start justify-between gap-3 border-b p-4">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-xl font-semibold">{selectedNode.name}</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">{selectedNode.basic?.identity || '角色'}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSelectedNode(null)}
+                    aria-label="关闭角色详情"
+                    title="关闭角色详情"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
-                
-                <ScrollArea className="flex-1">
-                    <div className="p-6 space-y-6">
-                        {/* 基础信息 */}
-                        <div className="space-y-3">
-                            <h3 className="text-xs uppercase tracking-wider text-slate-500 font-semibold">基础资料</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                    <div className="text-slate-500 text-xs mb-1">年龄</div>
-                                    <div className="text-slate-200">{selectedNode.basic?.age || '未知'}</div>
-                                </div>
-                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                    <div className="text-slate-500 text-xs mb-1">初登场</div>
-                                    <div className="text-slate-200">第 {selectedNode.debutChapter || 1} 章</div>
-                                </div>
-                            </div>
-                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                <div className="text-slate-500 text-xs mb-1">外貌特征</div>
-                                <div className="text-slate-200 text-sm leading-relaxed">{selectedNode.basic?.appearance || '暂无描述'}</div>
-                            </div>
-                        </div>
-
-                        {/* 内心世界 */}
-                        <div className="space-y-3">
-                            <h3 className="text-xs uppercase tracking-wider text-slate-500 font-semibold">内心世界</h3>
-                            <div className="space-y-2">
-                                <div className="flex gap-3 text-sm">
-                                    <span className="text-rose-400 shrink-0 w-16">欲望</span>
-                                    <span className="text-slate-300">{selectedNode.personality?.desires?.join('、') || '无'}</span>
-                                </div>
-                                <div className="flex gap-3 text-sm">
-                                    <span className="text-indigo-400 shrink-0 w-16">恐惧</span>
-                                    <span className="text-slate-300">{selectedNode.personality?.fears?.join('、') || '无'}</span>
-                                </div>
-                                <div className="flex gap-3 text-sm">
-                                    <span className="text-amber-400 shrink-0 w-16">缺陷</span>
-                                    <span className="text-slate-300">{selectedNode.personality?.flaws?.join('、') || '无'}</span>
-                                </div>
-                            </div>
-                        </div>
-
-                         {/* 角色弧光 */}
-                        <div className="space-y-3">
-                            <h3 className="text-xs uppercase tracking-wider text-slate-500 font-semibold">角色弧光</h3>
-                            <div className="relative pl-4 border-l-2 border-slate-800 space-y-6">
-                                <div className="relative">
-                                    <div className="absolute -left-[21px] top-1.5 w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-slate-900"></div>
-                                    <div className="text-xs text-emerald-500 font-bold mb-1">起点</div>
-                                    <p className="text-sm text-slate-300">{selectedNode.arc?.start || '未知'}</p>
-                                </div>
-                                <div className="relative">
-                                    <div className="absolute -left-[21px] top-1.5 w-3 h-3 rounded-full bg-amber-500 ring-4 ring-slate-900"></div>
-                                    <div className="text-xs text-amber-500 font-bold mb-1">中点 (转变)</div>
-                                    <p className="text-sm text-slate-300">{selectedNode.arc?.middle || '未知'}</p>
-                                </div>
-                                <div className="relative">
-                                    <div className="absolute -left-[21px] top-1.5 w-3 h-3 rounded-full bg-purple-500 ring-4 ring-slate-900"></div>
-                                    <div className="text-xs text-purple-500 font-bold mb-1">终点</div>
-                                    <p className="text-sm text-slate-300">{selectedNode.arc?.end || '未知'}</p>
-                                </div>
-                            </div>
-                        </div>
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="space-y-5 p-4">
+                    <div className="flex flex-wrap gap-2">
+                      {selectedNode.personality?.traits?.length ? (
+                        selectedNode.personality.traits.map((trait) => (
+                          <Badge key={trait} variant="secondary" className="rounded-md">{trait}</Badge>
+                        ))
+                      ) : (
+                        <Badge variant="outline" className="rounded-md">无特质</Badge>
+                      )}
                     </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-md border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">年龄</p>
+                        <p className="mt-1 text-sm font-medium">{selectedNode.basic?.age || '未知'}</p>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">初登场</p>
+                        <p className="mt-1 text-sm font-medium">第 {selectedNode.debutChapter || 1} 章</p>
+                      </div>
+                    </div>
+
+                    <section>
+                      <h4 className="text-sm font-semibold">外貌特征</h4>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{selectedNode.basic?.appearance || '暂无描述'}</p>
+                    </section>
+
+                    <section>
+                      <h4 className="text-sm font-semibold">内心驱动</h4>
+                      <div className="mt-2 space-y-2 text-sm">
+                        <p><span className="text-muted-foreground">欲望：</span>{selectedNode.personality?.desires?.join('、') || '无'}</p>
+                        <p><span className="text-muted-foreground">恐惧：</span>{selectedNode.personality?.fears?.join('、') || '无'}</p>
+                        <p><span className="text-muted-foreground">缺陷：</span>{selectedNode.personality?.flaws?.join('、') || '无'}</p>
+                      </div>
+                    </section>
+
+                    <section>
+                      <h4 className="text-sm font-semibold">角色弧光</h4>
+                      <div className="mt-3 space-y-3 border-l-2 border-primary/20 pl-4">
+                        <div>
+                          <p className="text-xs font-medium text-primary">起点</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{selectedNode.arc?.start || '未知'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-primary">中点</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{selectedNode.arc?.middle || '未知'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-primary">终点</p>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{selectedNode.arc?.end || '未知'}</p>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
                 </ScrollArea>
-          </div>
-        )}
+              </div>
+            ) : (
+              <div className="flex h-full min-h-[520px] flex-col">
+                <div className="border-b p-4">
+                  <h3 className="text-base font-semibold">角色列表</h3>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    点击图谱节点或从列表选择人物。
+                  </p>
+                </div>
+                <div className="space-y-2 p-4">
+                  {graphData.nodes.map((node) => (
+                    <Button
+                      key={node.id}
+                      variant="outline"
+                      className="h-auto w-full justify-start px-3 py-3 text-left"
+                      onClick={() => handleSelectNode(node)}
+                    >
+                      <span className="mr-3 h-3 w-3 rounded-full" style={{ backgroundColor: node.color }} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{node.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{node.basic?.identity || '角色'}</span>
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
       </div>
     </div>
   );

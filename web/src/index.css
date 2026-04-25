@@ -462,6 +462,14 @@
     box-shadow: 0 10px 15px -3px var(--gradient-shadow-hover);
   }
 
+  .progress-gradient {
+    background-image: linear-gradient(to right, var(--gradient-from), var(--gradient-via), var(--gradient-to));
+  }
+
+  .glow-sm {
+    box-shadow: 0 8px 24px -18px var(--gradient-from);
+  }
+
   .grid-pattern {
     /* Grid pattern only, no mask */
   }

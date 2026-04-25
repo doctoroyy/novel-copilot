@@ -1,9 +1,22 @@
 import { useMemo, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Trash2, Copy, Check, X, ChevronRight, Loader2, BookOpen, Edit, Sparkles, RefreshCw } from 'lucide-react';
+import {
+  BookOpen,
+  Check,
+  ChevronRight,
+  Copy,
+  Edit,
+  FileText,
+  Layers3,
+  Loader2,
+  PenLine,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -16,10 +29,7 @@ import type { ProjectDetail } from '@/lib/api';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { ChapterEditor } from '@/components/ChapterEditor';
 
-// Cross-platform clipboard copy with fallback for mobile browsers
-// The fallback is needed because clipboard API may fail when called after async operations
 async function copyToClipboard(text: string): Promise<boolean> {
-  // Try modern clipboard API first
   if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
     try {
       await navigator.clipboard.writeText(text);
@@ -29,27 +39,19 @@ async function copyToClipboard(text: string): Promise<boolean> {
     }
   }
 
-  // Fallback: create a temporary textarea and use execCommand
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
-
-    // Position off-screen and make invisible
     textArea.style.position = 'fixed';
     textArea.style.top = '-9999px';
     textArea.style.left = '-9999px';
     textArea.style.opacity = '0';
-
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-
-    // For iOS Safari
     textArea.setSelectionRange(0, text.length);
-
     const successful = document.execCommand('copy');
     document.body.removeChild(textArea);
-
     return successful;
   } catch (err) {
     console.error('Fallback copy failed:', err);
@@ -69,6 +71,22 @@ interface ChapterListViewProps {
   isProjectGenerating?: boolean;
 }
 
+type ChapterRow = {
+  index: number;
+  title?: string | null;
+};
+
+type BoardGroup = {
+  id: string;
+  title: string;
+  subtitle: string;
+  volumeIndex?: number;
+  startChapter?: number;
+  endChapter?: number;
+  goal?: string;
+  chapters: ChapterRow[];
+};
+
 export function ChapterListView({
   project,
   onViewChapter,
@@ -83,7 +101,7 @@ export function ChapterListView({
   const { activeTasks } = useGeneration();
   const [viewingChapter, setViewingChapter] = useState<{ index: number; content: string; title?: string } | null>(null);
   const [editingChapter, setEditingChapter] = useState<{ index?: number; content: string } | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingChapter, setLoadingChapter] = useState<number | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copyingChapter, setCopyingChapter] = useState<number | null>(null);
   const [copiedChapter, setCopiedChapter] = useState<number | null>(null);
@@ -91,8 +109,6 @@ export function ChapterListView({
   const [deletingChapter, setDeletingChapter] = useState<number | null>(null);
   const [chapterToDelete, setChapterToDelete] = useState<number | null>(null);
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
-
-  // Selection mode for batch delete
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -109,23 +125,33 @@ export function ChapterListView({
         .sort((a, b) => a - b),
     [project.chapters]
   );
+
+  const titleByChapter = useMemo(() => {
+    const map = new Map<number, string>();
+    project.outline?.volumes.forEach((volume) => {
+      volume.chapters?.forEach((chapter) => map.set(chapter.index, chapter.title));
+    });
+    return map;
+  }, [project.outline]);
+
   const nextChapterIndex = project.state.nextChapterIndex;
   const generatedChapters = Math.max(0, nextChapterIndex - 1);
   const remainingChapters = Math.max(0, project.state.totalChapters - generatedChapters);
+  const progress = project.state.totalChapters > 0
+    ? Math.min(100, Math.max(0, (generatedChapters / project.state.totalChapters) * 100))
+    : 0;
 
-  // Check if any active task is generating our project
   const currentProjectTasks = activeTasks.filter(
     (t) => t.projectName === project.name || t.projectName === project.id
   );
-  const isGeneratingTaskActive = currentProjectTasks.some(t => t.status === 'generating' || t.status === 'preparing' || t.status === 'saving');
+  const isGeneratingTaskActive = currentProjectTasks.some(
+    t => t.status === 'generating' || t.status === 'preparing' || t.status === 'saving'
+  );
 
-  // Check if specific chapters are currently being generated in background
   const getIsChapterGenerating = (index: number) => {
     return generatingChapter === index || currentProjectTasks.some(t => {
       if (t.type !== 'chapters') return false;
-      // If it's a single chapter task
       if (t.title.includes(`第 ${index} 章`)) return true;
-      // If it's a batch task, we check if current progress matches (approximate)
       return t.current === index || (t.startChapter && index >= t.startChapter && index < (t.startChapter + (t.total || 0)));
     });
   };
@@ -133,29 +159,75 @@ export function ChapterListView({
   const canGenerateNext = Boolean(project.outline) && remainingChapters > 0 && !isProjectGenerating && !isGeneratingTaskActive;
   const isGeneratingNextChapter = isProjectGenerating || isGeneratingTaskActive || generatingChapter === nextChapterIndex;
 
-  const getChapterTitle = (chapterIndex: number) => {
-    if (!project.outline) return null;
-    for (const vol of project.outline.volumes) {
-      const ch = vol.chapters?.find(c => c.index === chapterIndex);
-      if (ch) return ch.title;
+  const groups = useMemo<BoardGroup[]>(() => {
+    if (!project.outline) {
+      return [{
+        id: 'all',
+        title: '全部章节',
+        subtitle: `${chapterIndices.length} 章`,
+        chapters: chapterIndices.map((index) => ({ index, title: titleByChapter.get(index) })),
+      }];
     }
-    return null;
+
+    const volumeGroups: BoardGroup[] = project.outline.volumes.map((volume, volumeIndex) => ({
+      id: `volume-${volumeIndex}`,
+      title: volume.title,
+      subtitle: `第 ${volume.startChapter}-${volume.endChapter} 章`,
+      volumeIndex,
+      startChapter: volume.startChapter,
+      endChapter: volume.endChapter,
+      goal: volume.goal,
+      chapters: chapterIndices
+        .filter(idx => idx >= volume.startChapter && idx <= volume.endChapter)
+        .map((index) => ({ index, title: titleByChapter.get(index) })),
+    }));
+
+    const covered = new Set(volumeGroups.flatMap((volume) => volume.chapters.map((chapter) => chapter.index)));
+    const uncategorized = chapterIndices.filter((index) => !covered.has(index));
+    if (uncategorized.length > 0) {
+      volumeGroups.push({
+        id: 'uncategorized',
+        title: '未归档章节',
+        subtitle: `${uncategorized.length} 章`,
+        chapters: uncategorized.map((index) => ({ index, title: titleByChapter.get(index) })),
+      });
+    }
+
+    return volumeGroups;
+  }, [chapterIndices, project.outline, titleByChapter]);
+
+  const [activeGroupId, setActiveGroupId] = useState<string>('all');
+  const activeGroup = groups.find((group) => group.id === activeGroupId) || groups[0];
+  const visibleGroups = activeGroup ? [activeGroup] : groups;
+
+  const toggleSelection = (index: number) => {
+    setSelectedChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   };
+
+  const selectAll = () => setSelectedChapters(new Set(chapterIndices));
+  const clearSelection = () => setSelectedChapters(new Set());
+
+  const getChapterTitle = (chapterIndex: number) => titleByChapter.get(chapterIndex) || null;
 
   const handleView = async (index: number) => {
     setActionError(null);
-    setLoading(true);
+    setLoadingChapter(index);
     try {
       const content = await onViewChapter(index);
       setViewingChapter({
         index,
         content,
-        title: getChapterTitle(index) || undefined
+        title: getChapterTitle(index) || undefined,
       });
     } catch (err) {
       setActionError(`加载章节失败：${(err as Error).message}`);
     } finally {
-      setLoading(false);
+      setLoadingChapter(null);
     }
   };
 
@@ -168,8 +240,7 @@ export function ChapterListView({
     }
   };
 
-  const handleQuickCopy = async (index: number, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent opening the dialog
+  const handleQuickCopy = async (index: number) => {
     setCopyingChapter(index);
     setCopyError(null);
     setActionError(null);
@@ -190,11 +261,6 @@ export function ChapterListView({
     }
   };
 
-  const handleDelete = async (index: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setChapterToDelete(index);
-  };
-
   const confirmDelete = async () => {
     if (chapterToDelete === null || !onDeleteChapter) return;
     setActionError(null);
@@ -207,73 +273,6 @@ export function ChapterListView({
       setDeletingChapter(null);
       setChapterToDelete(null);
     }
-  };
-
-  const handleGenerateNext = async () => {
-    if (!project.outline) {
-      setActionError('请先生成大纲后再生成章节');
-      return;
-    }
-    if (remainingChapters <= 0) {
-      setActionError('已达到目标章节数，无需继续生成');
-      return;
-    }
-
-    const nextIndex = nextChapterIndex;
-    setActionError(null);
-    setGeneratingChapter(nextIndex);
-    try {
-      if (onGenerateNextChapter) {
-        await onGenerateNextChapter();
-      } else {
-        console.warn('onGenerateNextChapter not provided');
-      }
-    } catch (err) {
-      console.error('Generation failed:', err);
-      setActionError(`生成提交失败：${(err as Error).message}`);
-    } finally {
-      setGeneratingChapter(null);
-    }
-  };
-
-  const handleRegenerate = async (index: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`确定要重新生成第 ${index} 章吗？现有内容将被覆盖。`)) return;
-
-    setActionError(null);
-    setGeneratingChapter(index);
-    try {
-      if (onRegenerateChapter) {
-        await onRegenerateChapter(index);
-      } else {
-        console.warn('onRegenerateChapter not provided');
-      }
-    } catch (err) {
-      console.error('Regeneration failed:', err);
-      setActionError(`重写提交失败：${(err as Error).message}`);
-    } finally {
-      setGeneratingChapter(null);
-    }
-  };
-
-  // Selection handlers for batch delete
-  const toggleSelection = (index: number, e?: React.SyntheticEvent) => {
-    e?.stopPropagation();
-    const newSelected = new Set(selectedChapters);
-    if (newSelected.has(index)) {
-      newSelected.delete(index);
-    } else {
-      newSelected.add(index);
-    }
-    setSelectedChapters(newSelected);
-  };
-
-  const selectAll = () => {
-    setSelectedChapters(new Set(chapterIndices));
-  };
-
-  const clearSelection = () => {
-    setSelectedChapters(new Set());
   };
 
   const confirmBatchDelete = async () => {
@@ -306,405 +305,263 @@ export function ChapterListView({
     }
   };
 
-  // Group chapters by volume
-  const volumeGroups = project.outline?.volumes.map(vol => ({
-    ...vol,
-    chapters: chapterIndices
-      .filter(idx => idx >= vol.startChapter && idx <= vol.endChapter)
-  })) || [];
-  const coveredChapterIndices = new Set(volumeGroups.flatMap((vol) => vol.chapters));
-  const uncategorizedChapters = chapterIndices.filter((index) => !coveredChapterIndices.has(index));
+  const handleGenerateNext = async () => {
+    if (!project.outline) {
+      setActionError('请先生成大纲后再生成章节');
+      return;
+    }
+    if (remainingChapters <= 0) {
+      setActionError('已达到目标章节数，无需继续生成');
+      return;
+    }
+
+    const nextIndex = nextChapterIndex;
+    setActionError(null);
+    setGeneratingChapter(nextIndex);
+    try {
+      await onGenerateNextChapter?.();
+    } catch (err) {
+      setActionError(`生成提交失败：${(err as Error).message}`);
+    } finally {
+      setGeneratingChapter(null);
+    }
+  };
+
+  const handleRegenerate = async (index: number) => {
+    if (!confirm(`确定要重新生成第 ${index} 章吗？现有内容将被覆盖。`)) return;
+    setActionError(null);
+    setGeneratingChapter(index);
+    try {
+      await onRegenerateChapter?.(index);
+    } catch (err) {
+      setActionError(`重写提交失败：${(err as Error).message}`);
+    } finally {
+      setGeneratingChapter(null);
+    }
+  };
+
+  const renderChapterRow = (chapter: ChapterRow) => {
+    const isSelected = selectedChapters.has(chapter.index);
+    const isBusy = getIsChapterGenerating(chapter.index);
+    const isLoading = loadingChapter === chapter.index;
+
+    return (
+      <div
+        key={chapter.index}
+        className={`grid gap-3 rounded-lg border p-3 transition-colors lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${
+          isSelected ? 'border-primary/60 bg-primary/10' : 'border-border/70 bg-card hover:bg-muted/25'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (selectionMode) toggleSelection(chapter.index);
+            else void handleView(chapter.index);
+          }}
+          className="min-w-0 text-left"
+        >
+          <div className="flex items-center gap-3">
+            {selectionMode && (
+              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/50'}`}>
+                {isSelected && <Check className="h-3.5 w-3.5" />}
+              </span>
+            )}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-sm font-semibold tabular-nums">
+              {chapter.index}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">第 {chapter.index} 章{chapter.title ? `：${chapter.title}` : ''}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isLoading ? '正在加载内容...' : selectionMode ? (isSelected ? '已选中' : '点击选择') : '点击查看正文'}
+              </p>
+            </div>
+          </div>
+        </button>
+
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Button variant="outline" size="sm" onClick={() => void handleQuickCopy(chapter.index)} disabled={copyingChapter === chapter.index}>
+            {copyingChapter === chapter.index ? <Loader2 className="h-4 w-4 animate-spin" /> : copiedChapter === chapter.index ? <Check className="h-4 w-4" /> : copyError === chapter.index ? <X className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            <span className="hidden sm:inline">{copiedChapter === chapter.index ? '已复制' : copyError === chapter.index ? '失败' : '复制'}</span>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void handleRegenerate(chapter.index)} disabled={isBusy}>
+            {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span className="hidden sm:inline">重写</span>
+          </Button>
+          {onDeleteChapter && (
+            <Button variant="ghost" size="sm" onClick={() => setChapterToDelete(chapter.index)} disabled={deletingChapter === chapter.index} className="text-muted-foreground hover:text-destructive">
+              {deletingChapter === chapter.index ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => void handleView(chapter.index)}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="p-4 lg:p-6">
-      <Card className="glass-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-base lg:text-lg">已生成章节</CardTitle>
-              <Badge variant="secondary" className="text-xs">{project.chapters.length} 章</Badge>
+    <div className="mx-auto max-w-7xl space-y-4 p-4 lg:space-y-5 lg:p-6">
+      <section className="rounded-lg border border-border/80 bg-card">
+        <div className="border-b border-border/70 p-4 lg:p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-semibold">章节生产板</h2>
+                <Badge variant="secondary">{chapterIndices.length} 章</Badge>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                已生成 {generatedChapters} / {project.state.totalChapters} 章，下一章为第 {nextChapterIndex} 章。
+              </p>
             </div>
-            {onBatchDeleteChapters && project.chapters.length > 0 && (
-              <div className="flex items-center gap-2">
-                {selectionMode ? (
-                  <>
-                    <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs h-7">
-                      全选
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={clearSelection} className="text-xs h-7">
-                      清除
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => setShowBatchDeleteConfirm(true)}
-                      disabled={selectedChapters.size === 0}
-                      className="text-xs h-7"
-                    >
-                      删除选中 ({selectedChapters.size})
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => { setSelectionMode(false); clearSelection(); }} className="text-xs h-7">
-                      取消
-                    </Button>
-                  </>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="text-xs h-7 flex items-center gap-1">
-                    <Trash2 className="h-3.5 w-3.5" />
-                    批量删除
+
+            <div className="flex flex-wrap items-center gap-2">
+              {selectionMode ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={selectAll}>全选</Button>
+                  <Button variant="outline" size="sm" onClick={clearSelection}>清除</Button>
+                  <Button variant="destructive" size="sm" onClick={() => setShowBatchDeleteConfirm(true)} disabled={selectedChapters.size === 0}>
+                    删除选中 ({selectedChapters.size})
                   </Button>
-                )}
-              </div>
-            )}
-            {actionError && (
-              <div className="w-full bg-destructive/10 border border-destructive/30 text-destructive text-xs px-3 py-2 rounded-md">
-                {actionError}
-              </div>
-            )}
-            <Button
-              size="sm"
-              className="text-xs h-7 ml-auto"
-              onClick={() => setEditingChapter({ content: '' })}
-            >
-              <Edit className="h-3.5 w-3.5 mr-1" />
-              新建章节
-            </Button>
-            <Button
-              size="sm"
-              className="text-xs h-7 ml-2"
-              onClick={handleGenerateNext}
-              disabled={!canGenerateNext}
-            >
-              {isGeneratingNextChapter ? (
-                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  <Button variant="ghost" size="sm" onClick={() => { setSelectionMode(false); clearSelection(); }}>退出选择</Button>
+                </>
               ) : (
-                <Sparkles className="h-3.5 w-3.5 mr-1" />
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setEditingChapter({ content: '' })}>
+                    <Edit className="h-4 w-4" />
+                    新建章节
+                  </Button>
+                  <Button size="sm" onClick={handleGenerateNext} disabled={!canGenerateNext}>
+                    {isGeneratingNextChapter ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    生成下一章
+                  </Button>
+                  {onBatchDeleteChapters && chapterIndices.length > 0 && (
+                    <Button variant="ghost" size="sm" onClick={() => setSelectionMode(true)}>
+                      <Trash2 className="h-4 w-4" />
+                      批量删除
+                    </Button>
+                  )}
+                </>
               )}
-              生成下一章
-            </Button>
+            </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[calc(100vh-240px)] lg:h-[calc(100vh-280px)]">
-            {project.outline ? (
-              // Grouped by volume
-              <div className="space-y-4 lg:space-y-6">
-                {volumeGroups.map((vol, volIndex) => (
-                  vol.chapters.length > 0 && (
-                    <div key={volIndex}>
-                      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
-                        <span className="text-xs lg:text-sm font-medium truncate">{vol.title}</span>
-                        <Badge variant="outline" className="text-xs shrink-0">
-                          {vol.chapters.length} 章
-                        </Badge>
-                        {onDeleteVolume && vol.chapters.length > 0 && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 ml-auto text-muted-foreground hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setVolumeToDelete({
-                                index: volIndex,
-                                title: vol.title,
-                                fromChapter: vol.startChapter,
-                              });
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
+
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full progress-gradient transition-all duration-500" style={{ width: `${progress}%` }} />
+          </div>
+
+          {actionError && (
+            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {actionError}
+            </div>
+          )}
+        </div>
+
+        <div className="grid min-h-[calc(100vh-250px)] lg:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="border-b border-border/70 bg-muted/10 p-4 lg:border-b-0 lg:border-r lg:p-5">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+              <Layers3 className="h-4 w-4 text-primary" />
+              卷导航
+            </div>
+            <div className="space-y-2">
+              {groups.map((group) => {
+                const total = group.startChapter && group.endChapter ? Math.max(1, group.endChapter - group.startChapter + 1) : group.chapters.length || 1;
+                const done = group.chapters.length;
+                const groupProgress = Math.round((done / total) * 100);
+                const isActive = activeGroup?.id === group.id;
+
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => setActiveGroupId(group.id)}
+                    className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                      isActive ? 'border-primary/50 bg-primary/10' : 'border-border/70 bg-background hover:bg-muted/40'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{group.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{group.subtitle}</p>
                       </div>
-                      <div className="grid gap-2">
-                        {vol.chapters.map((chapterIndex) => {
-                          const title = getChapterTitle(chapterIndex);
-                          return (
-                            <div
-                              key={chapterIndex}
-                              role="button"
-                              tabIndex={loading && !selectionMode ? -1 : 0}
-                              aria-pressed={selectionMode ? selectedChapters.has(chapterIndex) : undefined}
-                              onClick={() => {
-                                if (loading && !selectionMode) return;
-                                if (selectionMode) {
-                                  toggleSelection(chapterIndex);
-                                  return;
-                                }
-                                void handleView(chapterIndex);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.target !== e.currentTarget) return;
-                                if (e.key !== 'Enter' && e.key !== ' ') return;
-                                e.preventDefault();
-                                if (selectionMode) {
-                                  toggleSelection(chapterIndex);
-                                  return;
-                                }
-                                if (loading) return;
-                                void handleView(chapterIndex);
-                              }}
-                              className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
-                            >
-                              <div className="flex-1 min-w-0 flex items-center gap-2">
-                                {selectionMode && (
-                                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(chapterIndex) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                                    {selectedChapters.has(chapterIndex) && <Check className="h-3 w-3" />}
-                                  </div>
-                                )}
-                                <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
-                                {title && (
-                                  <span className="ml-2 text-xs lg:text-sm text-muted-foreground truncate">
-                                    {title}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {selectionMode ? (
-                                  <span className="text-xs text-muted-foreground">
-                                    {selectedChapters.has(chapterIndex) ? '已选中' : '点击选择'}
-                                  </span>
-                                ) : (
-                                  <>
-                                    <button
-                                      onClick={(e) => handleQuickCopy(chapterIndex, e)}
-                                      disabled={copyingChapter === chapterIndex}
-                                      className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                                      title="复制章节内容"
-                                    >
-                                      {copyingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === chapterIndex ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === chapterIndex ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
-                                    </button>
-                                    <button
-                                      onClick={(e) => handleRegenerate(chapterIndex, e)}
-                                      disabled={getIsChapterGenerating(chapterIndex)}
-                                      className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                                      title="重新生成"
-                                    >
-                                      {getIsChapterGenerating(chapterIndex) ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
-                                      重写
-                                    </button>
-                                    {onDeleteChapter && (
-                                      <button
-                                        onClick={(e) => handleDelete(chapterIndex, e)}
-                                        disabled={deletingChapter === chapterIndex}
-                                        className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                                        title="删除章节"
-                                      >
-                                        {deletingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
-                                      </button>
-                                    )}
-                                    <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                                      查看 →
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <span className="rounded-md bg-muted px-2 py-1 text-xs tabular-nums">{done}</span>
                     </div>
-                  )
-                ))}
-                {uncategorizedChapters.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
-                      <span className="text-xs lg:text-sm font-medium truncate">未归档章节</span>
-                      <Badge variant="outline" className="text-xs shrink-0">
-                        {uncategorizedChapters.length} 章
-                      </Badge>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full progress-gradient" style={{ width: `${groupProgress}%` }} />
                     </div>
-                    <div className="grid gap-2">
-                      {uncategorizedChapters.map((chapterIndex) => (
-                        <div
-                          key={`uncategorized-${chapterIndex}`}
-                          role="button"
-                          tabIndex={loading && !selectionMode ? -1 : 0}
-                          aria-pressed={selectionMode ? selectedChapters.has(chapterIndex) : undefined}
-                          onClick={() => {
-                            if (loading && !selectionMode) return;
-                            if (selectionMode) {
-                              toggleSelection(chapterIndex);
-                              return;
-                            }
-                            void handleView(chapterIndex);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.target !== e.currentTarget) return;
-                            if (e.key !== 'Enter' && e.key !== ' ') return;
-                            e.preventDefault();
-                            if (selectionMode) {
-                              toggleSelection(chapterIndex);
-                              return;
-                            }
-                            if (loading) return;
-                            void handleView(chapterIndex);
-                          }}
-                          className={`w-full p-2.5 lg:p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(chapterIndex) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
-                        >
-                          <div className="flex-1 min-w-0 flex items-center gap-2">
-                            {selectionMode && (
-                              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(chapterIndex) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                                {selectedChapters.has(chapterIndex) && <Check className="h-3 w-3" />}
-                              </div>
-                            )}
-                            <span className="font-medium text-xs lg:text-sm">第 {chapterIndex} 章</span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {selectionMode ? (
-                              <span className="text-xs text-muted-foreground">
-                                {selectedChapters.has(chapterIndex) ? '已选中' : '点击选择'}
-                              </span>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={(e) => handleQuickCopy(chapterIndex, e)}
-                                  disabled={copyingChapter === chapterIndex}
-                                  className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                                  title="复制章节内容"
-                                >
-                                  {copyingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === chapterIndex ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === chapterIndex ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
-                                </button>
-                                <button
-                                  onClick={(e) => handleRegenerate(chapterIndex, e)}
-                                  disabled={generatingChapter === chapterIndex}
-                                  className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                                  title="重新生成"
-                                >
-                                  {generatingChapter === chapterIndex ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
-                                  重写
-                                </button>
-                                {onDeleteChapter && (
-                                  <button
-                                    onClick={(e) => handleDelete(chapterIndex, e)}
-                                    disabled={deletingChapter === chapterIndex}
-                                    className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                                    title="删除章节"
-                                  >
-                                    {deletingChapter === chapterIndex ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
-                                  </button>
-                                )}
-                                <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                                  查看 →
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                    {group.goal && <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{group.goal}</p>}
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+
+          <CardContent className="p-4 lg:p-5">
+            {chapterIndices.length === 0 ? (
+              <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-dashed border-border text-center text-muted-foreground">
+                <BookOpen className="mb-3 h-10 w-10 opacity-50" />
+                <p className="font-medium">暂无生成的章节</p>
+                <p className="mt-1 text-sm">生成大纲后，可从这里开始生产第一章。</p>
+                <Button className="mt-4" onClick={handleGenerateNext} disabled={!canGenerateNext}>
+                  <Sparkles className="h-4 w-4" />
+                  生成下一章
+                </Button>
               </div>
             ) : (
-              // Simple list
-              <div className="grid gap-2">
-                {chapterIndices.map((index) => {
-                  const ch = `${index.toString().padStart(3, '0')}.md`;
-                  return (
-                    <div
-                      key={ch}
-                      role="button"
-                      tabIndex={loading && !selectionMode ? -1 : 0}
-                      aria-pressed={selectionMode ? selectedChapters.has(index) : undefined}
-                      onClick={() => {
-                        if (loading && !selectionMode) return;
-                        if (selectionMode) {
-                          toggleSelection(index);
-                          return;
-                        }
-                        void handleView(index);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key !== 'Enter' && e.key !== ' ') return;
-                        e.preventDefault();
-                        if (selectionMode) {
-                          toggleSelection(index);
-                          return;
-                        }
-                        if (loading) return;
-                        void handleView(index);
-                      }}
-                      className={`w-full p-3 rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer ${selectionMode && selectedChapters.has(index) ? 'bg-primary/20 ring-2 ring-primary' : 'bg-muted/30 hover:bg-muted/60'}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {selectionMode && (
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${selectedChapters.has(index) ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                            {selectedChapters.has(index) && <Check className="h-3 w-3" />}
-                          </div>
-                        )}
-                        <span className="font-medium">第 {index} 章</span>
+              <div className="space-y-5">
+                {visibleGroups.map((group) => (
+                  <div key={group.id} className="space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-primary" />
+                          <h3 className="font-semibold">{group.title}</h3>
+                          <Badge variant="outline">{group.chapters.length} 章</Badge>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">{group.subtitle}</p>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {selectionMode ? (
-                          <span className="text-xs text-muted-foreground">
-                            {selectedChapters.has(index) ? '已选中' : '点击选择'}
-                          </span>
-                        ) : (
-                          <>
-                            <button
-                              onClick={(e) => handleQuickCopy(index, e)}
-                              disabled={copyingChapter === index}
-                              className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                              title="复制章节内容"
-                            >
-                              {copyingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />复制中</> : copiedChapter === index ? <><Check className="h-3 w-3 inline mr-1" />已复制</> : copyError === index ? <><X className="h-3 w-3 inline mr-1" />失败</> : <><Copy className="h-3 w-3 inline mr-1" />复制</>}
-                            </button>
-                            <button
-                              onClick={(e) => handleRegenerate(index, e)}
-                              disabled={getIsChapterGenerating(index)}
-                              className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
-                              title="重新生成"
-                            >
-                              {getIsChapterGenerating(index) ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : <RefreshCw className="h-3 w-3 inline mr-1" />}
-                              重写
-                            </button>
-                            {onDeleteChapter && (
-                              <button
-                                onClick={(e) => handleDelete(index, e)}
-                                disabled={deletingChapter === index}
-                                className="text-xs px-2 py-1 rounded bg-muted/50 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                                title="删除章节"
-                              >
-                                {deletingChapter === index ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />删除中</> : <><Trash2 className="h-3 w-3 inline mr-1" />删除</>}
-                              </button>
-                            )}
-                            <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                              查看 →
-                            </span>
-                          </>
-                        )}
-                      </div>
+                      {onDeleteVolume && group.volumeIndex !== undefined && group.chapters.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="self-start text-muted-foreground hover:text-destructive sm:self-auto"
+                          onClick={() => setVolumeToDelete({
+                            index: group.volumeIndex!,
+                            title: group.title,
+                            fromChapter: group.startChapter || group.chapters[0]?.index || 1,
+                          })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          删除本卷及之后
+                        </Button>
+                      )}
                     </div>
-                  );
-                })}
+                    <div className="space-y-2">
+                      {group.chapters.length > 0 ? (
+                        group.chapters.map(renderChapterRow)
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                          本卷还没有已生成章节。
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
+          </CardContent>
+        </div>
+      </section>
 
-            {project.chapters.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                <BookOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                <p>暂无生成的章节</p>
-                <p className="text-sm">前往"生成"标签页开始创作</p>
-              </div>
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
-
-      {/* Chapter Reader Dialog */}
       <Dialog open={!!viewingChapter} onOpenChange={() => setViewingChapter(null)}>
-        <DialogContent className="max-w-4xl w-[95vw] sm:w-full max-h-[85vh] flex flex-col">
-          <DialogHeader className="pb-3 lg:pb-4 border-b border-border">
+        <DialogContent className="max-h-[85vh] w-[95vw] max-w-4xl sm:w-full">
+          <DialogHeader className="border-b border-border pb-4">
             <div className="flex items-center justify-between gap-2">
-              <DialogTitle className="flex items-center gap-2 text-sm lg:text-base min-w-0">
-                <span className="shrink-0">第 {viewingChapter?.index} 章</span>
-                {viewingChapter?.title && (
-                  <span className="text-muted-foreground font-normal truncate text-xs lg:text-sm">
-                    {viewingChapter.title}
-                  </span>
-                )}
+              <DialogTitle className="min-w-0 text-base">
+                第 {viewingChapter?.index} 章
+                {viewingChapter?.title && <span className="ml-2 text-sm font-normal text-muted-foreground">{viewingChapter.title}</span>}
               </DialogTitle>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex shrink-0 items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -714,9 +571,8 @@ export function ChapterListView({
                       setViewingChapter(null);
                     }
                   }}
-                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
                 >
-                  <Edit className="h-4 w-4" />
+                  <PenLine className="h-4 w-4" />
                   <span className="hidden sm:inline">编辑</span>
                 </Button>
                 <Button
@@ -726,50 +582,31 @@ export function ChapterListView({
                     if (!viewingChapter) return;
                     const nextIndex = chapterIndices.find(index => index > viewingChapter.index);
                     if (!nextIndex) return;
-                    setLoading(true);
-                    try {
-                      const content = await onViewChapter(nextIndex);
-                      setViewingChapter({
-                        index: nextIndex,
-                        content,
-                        title: getChapterTitle(nextIndex) || undefined
-                      });
-                    } catch (err) {
-                      setActionError(`加载下一章失败：${(err as Error).message}`);
-                    } finally {
-                      setLoading(false);
-                    }
+                    await handleView(nextIndex);
                   }}
-                  disabled={loading || !viewingChapter || !chapterIndices.some(index => index > (viewingChapter?.index ?? 0))}
-                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
+                  disabled={!viewingChapter || !chapterIndices.some(index => index > (viewingChapter?.index ?? 0))}
                 >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
-                  <span className="hidden sm:inline">{loading ? '加载中' : '下一章'}</span>
+                  <ChevronRight className="h-4 w-4" />
+                  <span className="hidden sm:inline">下一章</span>
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCopy}
-                  className="gap-1 lg:gap-2 text-xs lg:text-sm"
-                  aria-label={copySuccess ? '已复制' : '复制章节内容'}
-                >
+                <Button variant="outline" size="sm" onClick={handleCopy} aria-label={copySuccess ? '已复制' : '复制章节内容'}>
                   {copySuccess ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                   <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
                 </Button>
               </div>
             </div>
+            <DialogDescription className="sr-only">
+              阅读、复制、编辑或跳转到下一章。
+            </DialogDescription>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto mt-3 lg:mt-4 scrollbar-thin">
-            <div className="prose prose-sm dark:prose-invert max-w-none pr-2">
-              <pre className="whitespace-pre-wrap font-sans text-xs lg:text-sm leading-relaxed">
-                {viewingChapter?.content}
-              </pre>
-            </div>
+          <div className="mt-4 max-h-[62vh] overflow-y-auto scrollbar-thin">
+            <pre className="whitespace-pre-wrap pr-2 font-sans text-sm leading-8">
+              {viewingChapter?.content}
+            </pre>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={chapterToDelete !== null} onOpenChange={() => setChapterToDelete(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -779,9 +616,7 @@ export function ChapterListView({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setChapterToDelete(null)}>
-              取消
-            </Button>
+            <Button variant="outline" onClick={() => setChapterToDelete(null)}>取消</Button>
             <Button variant="destructive" onClick={confirmDelete} disabled={deletingChapter !== null}>
               {deletingChapter !== null ? '删除中...' : '确认删除'}
             </Button>
@@ -789,7 +624,6 @@ export function ChapterListView({
         </DialogContent>
       </Dialog>
 
-      {/* Batch Delete Confirmation Dialog */}
       <Dialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -799,9 +633,7 @@ export function ChapterListView({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setShowBatchDeleteConfirm(false)}>
-              取消
-            </Button>
+            <Button variant="outline" onClick={() => setShowBatchDeleteConfirm(false)}>取消</Button>
             <Button variant="destructive" onClick={confirmBatchDelete} disabled={batchDeleting}>
               {batchDeleting ? '删除中...' : `删除 ${selectedChapters.size} 章`}
             </Button>
@@ -809,7 +641,6 @@ export function ChapterListView({
         </DialogContent>
       </Dialog>
 
-      {/* Volume Delete Confirmation Dialog */}
       <Dialog open={volumeToDelete !== null} onOpenChange={() => setVolumeToDelete(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -817,14 +648,11 @@ export function ChapterListView({
             <DialogDescription>
               确定要删除「{volumeToDelete?.title}」及之后所有已生成章节吗？
               <br /><br />
-              将删除第 {volumeToDelete?.fromChapter} 章起的所有内容（包括后续卷的章节）。
-              大纲不受影响，可重新生成。此操作不可恢复。
+              将删除第 {volumeToDelete?.fromChapter} 章起的所有内容。大纲不受影响，可重新生成。此操作不可恢复。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setVolumeToDelete(null)}>
-              取消
-            </Button>
+            <Button variant="outline" onClick={() => setVolumeToDelete(null)}>取消</Button>
             <Button variant="destructive" onClick={confirmDeleteVolume} disabled={deletingVolume}>
               {deletingVolume ? '删除中...' : '确认删除'}
             </Button>
@@ -832,7 +660,6 @@ export function ChapterListView({
         </DialogContent>
       </Dialog>
 
-      {/* Chapter Editor (Full-screen overlay) */}
       {editingChapter && (
         <ChapterEditor
           projectName={project.id}
