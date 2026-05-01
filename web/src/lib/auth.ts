@@ -53,36 +53,6 @@ export function getAuthHeaders(): Record<string, string> {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-
-  // Add custom AI config if exists
-  const STORAGE_KEY = 'novel-copilot-ai-config';
-  if (typeof window !== 'undefined') {
-    try {
-      const storedConfig = localStorage.getItem(STORAGE_KEY);
-      if (storedConfig) {
-        const config = JSON.parse(storedConfig);
-        if (config.apiKey) {
-          if (config.provider) headers['x-custom-provider'] = config.provider;
-          if (config.model) headers['x-custom-model'] = config.model;
-          if (config.baseUrl) headers['x-custom-base-url'] = config.baseUrl;
-          if (config.apiKey) headers['x-custom-api-key'] = config.apiKey;
-        }
-      } else {
-        // Fallback to individual keys (legacy or manual set)
-        const aiProvider = localStorage.getItem('ai_provider');
-        const aiModel = localStorage.getItem('ai_model');
-        const aiBaseUrl = localStorage.getItem('ai_base_url');
-        const aiApiKey = localStorage.getItem('ai_api_key');
-
-        if (aiProvider) headers['x-custom-provider'] = aiProvider;
-        if (aiModel) headers['x-custom-model'] = aiModel;
-        if (aiBaseUrl) headers['x-custom-base-url'] = aiBaseUrl;
-        if (aiApiKey) headers['x-custom-api-key'] = aiApiKey;
-      }
-    } catch (e) {
-      console.error('Error parsing AI config', e);
-    }
-  }
   
   return headers;
 }
