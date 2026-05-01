@@ -46,7 +46,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <TabsContent value="general" className="space-y-4 py-4">
             {/* Custom AI Config (Only for whitelisted users) */}
             {user?.allowCustomProvider && (
-              <AIConfigSection />
+              <>
+                <AIConfigSection />
+                <div className="p-3 rounded-lg border bg-muted/20">
+                  <p className="text-xs text-muted-foreground leading-5">
+                    项目主流程中的“生成大纲”和“生成章节”默认使用后台模型路由。
+                    这里保存的自定义模型不会再隐式覆盖这些请求，只会在显式传入自定义模型的高级功能中生效。
+                  </p>
+                </div>
+              </>
             )}
 
             {/* AI Status (Default - only show if NOT using custom or for non-whitelisted) */}
