@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normalizeProviderId } from '../services/providerCatalog.js';
+import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normalizeProviderId, buildOpenAiModelsUrl } from '../services/providerCatalog.js';
 import {
   getImagineTemplateSnapshot,
   listImagineTemplateSnapshotDates,
@@ -589,15 +589,18 @@ adminRoutes.get('/model-registry', async (c) => {
     `).all();
     
     // Mask provider keys for display
-    const masked = (results || []).map((m: any) => ({
-      ...m,
-      provider: m.provider_id, // Backward compatibility for UI
-      provider_name: m.provider_name || m.provider_id,
-      api_key_encrypted: m.provider_api_key
-        ? `${m.provider_api_key.slice(0, 8)}...${m.provider_api_key.slice(-4)}`
-        : null,
-      base_url: m.provider_base_url
-    }));
+    const masked = (results || []).map((m: any) => {
+      const { provider_api_key, ...rest } = m;
+      return {
+        ...rest,
+        provider: m.provider_id, // Backward compatibility for UI
+        provider_name: m.provider_name || m.provider_id,
+        api_key_encrypted: provider_api_key
+          ? `${provider_api_key.slice(0, 8)}...${provider_api_key.slice(-4)}`
+          : null,
+        base_url: m.provider_base_url
+      };
+    });
     return c.json({ success: true, models: masked });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -954,10 +957,8 @@ adminRoutes.post('/fetch-models', async (c) => {
         displayName: m.display_name || m.id || m.name,
       }));
     } else {
-      // OpenAI 兼容 API: GET /v1/models 或 /models
-      const modelsUrl = effectiveBaseUrl.endsWith('/v1')
-        ? `${effectiveBaseUrl}/models`
-        : `${effectiveBaseUrl}/v1/models`;
+      // OpenAI 兼容 API: GET /v1/models 或 /models（按 base URL 是否已带版本号判断）
+      const modelsUrl = buildOpenAiModelsUrl(effectiveBaseUrl);
 
       const res = await fetch(modelsUrl, {
         headers: {

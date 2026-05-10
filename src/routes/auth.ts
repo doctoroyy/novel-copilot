@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { signToken, hashPassword, verifyPassword, authMiddleware } from '../middleware/authMiddleware.js';
+import { signToken, hashPassword, verifyPassword, authMiddleware, getJwtSecret } from '../middleware/authMiddleware.js';
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
@@ -96,7 +96,7 @@ authRoutes.post('/register', async (c) => {
     }
 
     // Generate token
-    const token = await signToken({ userId, username: normalizedUsername });
+    const token = await signToken({ userId, username: normalizedUsername }, getJwtSecret(c.env));
 
     return c.json({
       success: true,
@@ -143,7 +143,7 @@ authRoutes.post('/login', async (c) => {
     const token = await signToken({
       userId: (user as any).id,
       username: (user as any).username,
-    });
+    }, getJwtSecret(c.env));
 
     return c.json({
       success: true,
@@ -346,7 +346,7 @@ authRoutes.get('/google/callback', async (c) => {
     const token = await signToken({
       userId: user.id,
       username: user.username,
-    });
+    }, getJwtSecret(c.env));
 
     // Redirect to frontend with token
     return c.redirect(`${origin}/login?token=${token}&username=${encodeURIComponent(user.username)}&role=${user.role || 'user'}`);

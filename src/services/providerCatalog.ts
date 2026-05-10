@@ -86,6 +86,19 @@ export function getProviderPresets(): ProviderPreset[] {
 }
 
 /**
+ * Build the OpenAI-compatible /models endpoint for a given base URL.
+ * Treats any base URL whose final path segment matches /v\d+/ (e.g. /v1, /paas/v4)
+ * as already-versioned and only appends /models. Otherwise appends /v1/models.
+ */
+export function buildOpenAiModelsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (/\/v\d+[a-z]*$/i.test(trimmed)) {
+    return `${trimmed}/models`;
+  }
+  return `${trimmed}/v1/models`;
+}
+
+/**
  * Normalize Gemini base URL to API root with version path.
  * Accepts host-only/base paths and strips accidental /models suffix.
  */
