@@ -20,6 +20,7 @@ export interface Env {
   ANIME_VIDEOS: R2Bucket;
   GENERATION_QUEUE: Queue<any>;
   FANQIE_BROWSER?: Fetcher;
+  JWT_SECRET?: string;
 }
 
 const EVENTS_STREAM_POLL_INTERVAL_MS = 2000;
@@ -73,14 +74,14 @@ app.route('/api/projects', qcRoutes);
 
 app.get('/api/events', async (c) => {
   const { eventBus } = await import('./eventBus.js');
-  const { verifyToken } = await import('./middleware/authMiddleware.js');
+  const { verifyToken, getJwtSecret } = await import('./middleware/authMiddleware.js');
 
   const token = c.req.query('token');
   if (!token) {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
 
-  const payload = await verifyToken(token);
+  const payload = await verifyToken(token, getJwtSecret(c.env));
   if (!payload?.userId) {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }

@@ -4,8 +4,20 @@ import type { Env } from '../worker.js';
 // Simple JWT-like token structure (using base64 encoded JSON + signature)
 // For production, consider using a proper JWT library compatible with Workers
 
-const JWT_SECRET = 'novel-copilot-secret-key-change-in-production';
+const FALLBACK_JWT_SECRET = 'novel-copilot-secret-key-change-in-production';
 const TOKEN_EXPIRY_HOURS = 24 * 7; // 7 days
+
+let warnedMissingSecret = false;
+
+export function getJwtSecret(env: Pick<Env, 'JWT_SECRET'> | undefined | null): string {
+  const secret = env?.JWT_SECRET?.trim();
+  if (secret) return secret;
+  if (!warnedMissingSecret) {
+    warnedMissingSecret = true;
+    console.warn('[auth] JWT_SECRET binding missing — falling back to built-in dev secret. Set JWT_SECRET in production.');
+  }
+  return FALLBACK_JWT_SECRET;
+}
 
 interface TokenPayload {
   userId: string;
@@ -31,38 +43,38 @@ function base64UrlDecode(str: string): string {
   return atob(str);
 }
 
-export async function signToken(payload: Omit<TokenPayload, 'exp'>): Promise<string> {
+export async function signToken(payload: Omit<TokenPayload, 'exp'>, secret: string): Promise<string> {
   const exp = Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000;
   const fullPayload: TokenPayload = { ...payload, exp };
-  
+
   const payloadStr = base64UrlEncode(JSON.stringify(fullPayload));
-  
+
   // Create HMAC signature using Web Crypto API
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(JWT_SECRET),
+    encoder.encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
   );
-  
+
   const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payloadStr));
   const signature = base64UrlEncode(String.fromCharCode(...new Uint8Array(signatureBuffer)));
-  
+
   return `${payloadStr}.${signature}`;
 }
 
-export async function verifyToken(token: string): Promise<TokenPayload | null> {
+export async function verifyToken(token: string, secret: string): Promise<TokenPayload | null> {
   try {
     const [payloadStr, signature] = token.split('.');
     if (!payloadStr || !signature) return null;
-    
+
     // Verify signature
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
       'raw',
-      encoder.encode(JWT_SECRET),
+      encoder.encode(secret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['verify']
@@ -111,15 +123,15 @@ export function authMiddleware() {
       return c.json({ success: false, error: '未登录，请先登录' }, 401);
     }
 
-    const payload = await verifyToken(token);
-    
+    const payload = await verifyToken(token, getJwtSecret(c.env));
+
     if (!payload) {
       return c.json({ success: false, error: '登录已过期，请重新登录' }, 401);
     }
-    
+
     c.set('user', payload);
     c.set('userId', payload.userId);
-    
+
     await next();
   };
 }
@@ -128,10 +140,10 @@ export function authMiddleware() {
 export function optionalAuthMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authHeader = c.req.header('Authorization');
-    
+
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
-      const payload = await verifyToken(token);
+      const payload = await verifyToken(token, getJwtSecret(c.env));
       
       if (payload) {
         c.set('user', payload);

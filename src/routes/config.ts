@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, AIProvider } from '../services/aiClient';
-import { getProviderPresets, getProviderPreset, normalizeProviderId, normalizeGeminiBaseUrl } from '../services/providerCatalog.js';
+import { getProviderPresets, getProviderPreset, normalizeProviderId, normalizeGeminiBaseUrl, buildOpenAiModelsUrl } from '../services/providerCatalog.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();
 
@@ -130,9 +130,7 @@ configRoutes.post('/fetch-models', async (c) => {
         displayName: m.display_name || m.id || m.name,
       }));
     } else {
-      const modelsUrl = effectiveBaseUrl.endsWith('/v1')
-        ? `${effectiveBaseUrl}/models`
-        : `${effectiveBaseUrl}/v1/models`;
+      const modelsUrl = buildOpenAiModelsUrl(effectiveBaseUrl);
       const res = await fetch(modelsUrl, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
