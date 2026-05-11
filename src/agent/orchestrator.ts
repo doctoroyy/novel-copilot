@@ -141,11 +141,22 @@ export class ChapterAgentOrchestrator {
               this.aiCallCount++;
             }
 
+            // Heartbeat: keep the outer task progress timer warm while
+            // long-running AI tool calls block. Without this, an AI tool
+            // that takes >12 min trips the chapter-task stale-timeout.
+            const heartbeat = AI_TOOLS.has(call.tool)
+              ? setInterval(() => {
+                  this.config.onProgress?.('tool_call', `调用 ${call.tool}（进行中）`);
+                }, 30_000)
+              : null;
+
             let result: string;
             try {
               result = await this.toolExecutor.execute(call);
             } catch (err) {
               result = `[ERROR] ${call.tool} 执行失败: ${(err as Error).message}`;
+            } finally {
+              if (heartbeat) clearInterval(heartbeat);
             }
             return { tool: call.tool, args: call.args, result };
           }),
@@ -158,7 +169,15 @@ export class ChapterAgentOrchestrator {
           if (r.result.startsWith('[WRITE_CHAPTER_SIGNAL]')) {
             const payload = JSON.parse(r.result.slice('[WRITE_CHAPTER_SIGNAL]'.length));
             this.config.onProgress?.('generating', '正在生成章节正文...');
-            const draft = await this.executeWriteChapter(payload.scenePlan, payload.writingNotes);
+            const writeHeartbeat = setInterval(() => {
+              this.config.onProgress?.('generating', '正在生成章节正文（进行中）...');
+            }, 30_000);
+            let draft: string;
+            try {
+              draft = await this.executeWriteChapter(payload.scenePlan, payload.writingNotes);
+            } finally {
+              clearInterval(writeHeartbeat);
+            }
             this.state.currentDraft = draft;
             this.toolExecutor.setCurrentDraft(draft);
             const draftWordCount = draft.replace(/\s/g, '').length;
@@ -167,7 +186,15 @@ export class ChapterAgentOrchestrator {
           } else if (r.result.startsWith('[REWRITE_SECTION_SIGNAL]')) {
             const payload = JSON.parse(r.result.slice('[REWRITE_SECTION_SIGNAL]'.length));
             this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}...`);
-            const rewritten = await this.executeRewriteSection(payload.section, payload.guidance);
+            const rewriteHeartbeat = setInterval(() => {
+              this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}（进行中）...`);
+            }, 30_000);
+            let rewritten: string;
+            try {
+              rewritten = await this.executeRewriteSection(payload.section, payload.guidance);
+            } finally {
+              clearInterval(rewriteHeartbeat);
+            }
             // 安全检查：如果重写结果比原稿短超过 20%，拒绝替换
             const oldLen = this.state.currentDraft?.replace(/\s/g, '').length || 0;
             const newLen = rewritten.replace(/\s/g, '').length;
