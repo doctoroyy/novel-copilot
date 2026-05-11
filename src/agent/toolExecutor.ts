@@ -33,6 +33,18 @@ export class ToolExecutor {
     return this.currentDraft;
   }
 
+  /**
+   * Short-output structured tools (design_scene_sequence, evaluate_draft,
+   * query_reader_expectations) only return ~600-1000 tokens of JSON. They
+   * should not consume the full 5-minute AI timeout × 2 retries — that puts
+   * a single tool call within reach of the 12-minute chapter task stale
+   * threshold. Cap them at 90s × 1 retry so each tool call cannot exceed
+   * ~3 minutes total.
+   */
+  private get shortToolCallOptions(): AICallOptions {
+    return { ...(this.callOptions || {}), timeoutMs: 90_000, maxRetries: 1 };
+  }
+
   async execute(call: ToolCall): Promise<string> {
     switch (call.tool) {
       case 'query_plot_graph':
@@ -251,7 +263,7 @@ ${lastChapterEnding}
       prompt,
       temperature: 0.5,
       maxTokens: 600,
-    }, 2, this.callOptions);
+    }, 2, this.shortToolCallOptions);
   }
 
   private async designSceneSequence(goal: string, constraints?: string): Promise<string> {
@@ -291,7 +303,7 @@ ${rollingSummary.slice(0, 1500)}
       prompt,
       temperature: 0.6,
       maxTokens: 1000,
-    }, 2, this.callOptions);
+    }, 2, this.shortToolCallOptions);
   }
 
   private async evaluateDraft(focus: string): Promise<string> {
@@ -325,7 +337,7 @@ ${focus !== 'all' ? `【重点评估】${focus}` : ''}
       prompt,
       temperature: 0.3,
       maxTokens: 800,
-    }, 2, this.callOptions);
+    }, 2, this.shortToolCallOptions);
   }
 
   /**
