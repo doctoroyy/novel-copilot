@@ -8,7 +8,7 @@ export type TaskType = 'chapters' | 'outline' | 'bible' | 'qc' | 'qc_fix' | 'oth
 type ActiveTaskStatus = 'running' | 'paused' | 'completed' | 'failed';
 const TASK_STREAM_POLL_INTERVAL_MS = 1500;
 const TASK_STREAM_KEEPALIVE_MS = 15000;
-const CHAPTER_TASK_STALE_THRESHOLD_MS = 12 * 60 * 1000;
+const CHAPTER_TASK_STALE_THRESHOLD_MS = 18 * 60 * 1000;
 const DEFAULT_TASK_STALE_THRESHOLD_MS = 30 * 60 * 1000;
 export type TaskRuntimeControl = {
   exists: boolean;
