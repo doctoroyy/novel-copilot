@@ -56,7 +56,7 @@ export const generationRoutes = new Hono<{ Bindings: Env }>();
 const DEFAULT_MIN_CHAPTER_WORDS = 2500;
 const MIN_CHAPTER_WORDS_LIMIT = 500;
 const MAX_CHAPTER_WORDS_LIMIT = 20000;
-const CHAPTER_TASK_STALE_THRESHOLD_MS = 12 * 60 * 1000;
+const CHAPTER_TASK_STALE_THRESHOLD_MS = 18 * 60 * 1000;
 
 function normalizeMinChapterWords(value: unknown): number | null {
   if (value === undefined || value === null || value === '') {
@@ -1618,6 +1618,20 @@ export async function runChapterGenerationTaskInBackground(params: {
     console.log(`[Perf][Task ${taskId}] 队列延迟: ${(queueLatencyMs / 1000).toFixed(1)}s`);
   }
 
+  // Top-level heartbeat: keep updated_at fresh every 30s for the whole
+  // chapter-generation invocation. This is the single source of truth for
+  // stale-timeout protection — any inner stage (fast-path AI call, agent
+  // getNextTurn, post-processing parallel calls) is automatically covered
+  // regardless of whether it has its own progress callback.
+  const heartbeatId = setInterval(() => {
+    env.DB.prepare(
+      `UPDATE generation_tasks SET updated_at = (unixepoch() * 1000)
+       WHERE id = ? AND status = 'running'`
+    ).bind(taskId).run().catch((err) => {
+      console.warn(`[Heartbeat] Task ${taskId} updated_at refresh failed:`, (err as Error).message);
+    });
+  }, 30_000);
+
   try {
     // 1. Load Task State (fresh each iteration)
     const task = await getTaskById(env.DB, taskId, userId);
@@ -2269,6 +2283,8 @@ export async function runChapterGenerationTaskInBackground(params: {
     //   3. Fatal/transient error: retried up to max_retries; if exhausted, the task
     //      stays 'running' until the stale-task timeout cleans it up.
     throw error;
+  } finally {
+    clearInterval(heartbeatId);
   }
 }
 
