@@ -99,7 +99,7 @@ export function SettingsScreen() {
               <Text style={styles.accountText}>当前用户：{user?.username || '未知'}</Text>
               <Text style={styles.accountRole}>用户ID：{user?.id || '...'}</Text>
               <Text style={styles.accountRole}>权限组：{user?.role || 'user'}</Text>
-              
+
               {user?.role === 'admin' && (
                 <Pressable style={({ pressed }) => [styles.adminButton, pressed && styles.pressed]} onPress={openAdminPanel}>
                   <Ionicons name="settings-outline" size={16} color={ui.colors.primaryStrong} />
@@ -132,58 +132,56 @@ export function SettingsScreen() {
               </Text>
             </View>
 
-            {user?.allow_custom_provider && (
-              <View style={[styles.card, styles.serviceCard]}>
-                <View style={styles.sectionTitleRow}>
-                  <Ionicons name="options-outline" size={18} color={ui.colors.primaryStrong} />
-                  <Text style={styles.cardTitle}>自定义模型配置</Text>
-                </View>
-                <Text style={styles.hintText}>
-                  您拥有自定义模型权限，设置后将覆盖默认模型。
-                </Text>
-                
-                <Text style={styles.label}>提供商 (Provider)</Text>
-                <TextInput
-                  value={config.ai?.provider || ''}
-                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, provider: v } as any })}
-                  autoCapitalize="none"
-                  style={styles.input}
-                  placeholder="openai, anthropic, etc."
-                  placeholderTextColor={ui.colors.textTertiary}
-                />
-
-                <Text style={styles.label}>模型名称 (Model)</Text>
-                <TextInput
-                  value={config.ai?.model || ''}
-                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, model: v } as any })}
-                  autoCapitalize="none"
-                  style={styles.input}
-                  placeholder="gpt-4o, claude-3-5-sonnet..."
-                  placeholderTextColor={ui.colors.textTertiary}
-                />
-
-                <Text style={styles.label}>API Base URL</Text>
-                <TextInput
-                  value={config.ai?.baseUrl || ''}
-                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, baseUrl: v } as any })}
-                  autoCapitalize="none"
-                  style={styles.input}
-                  placeholder="https://api.openai.com/v1"
-                  placeholderTextColor={ui.colors.textTertiary}
-                />
-
-                <Text style={styles.label}>API Key</Text>
-                <TextInput
-                  value={config.ai?.apiKey || ''}
-                  onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, apiKey: v } as any })}
-                  autoCapitalize="none"
-                  secureTextEntry
-                  style={styles.input}
-                  placeholder="sk-..."
-                  placeholderTextColor={ui.colors.textTertiary}
-                />
+            <View style={[styles.card, styles.serviceCard]}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="options-outline" size={18} color={ui.colors.primaryStrong} />
+                <Text style={styles.cardTitle}>自定义模型配置</Text>
               </View>
-            )}
+              <Text style={styles.hintText}>
+                所有用户都可以配置自定义模型；显式传入自定义模型时会覆盖默认模型。
+              </Text>
+
+              <Text style={styles.label}>提供商 (Provider)</Text>
+              <TextInput
+                value={config.ai?.provider || ''}
+                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, provider: v } as any })}
+                autoCapitalize="none"
+                style={styles.input}
+                placeholder="openai, anthropic, etc."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+
+              <Text style={styles.label}>模型名称 (Model)</Text>
+              <TextInput
+                value={config.ai?.model || ''}
+                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, model: v } as any })}
+                autoCapitalize="none"
+                style={styles.input}
+                placeholder="gpt-4o, claude-3-5-sonnet..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+
+              <Text style={styles.label}>API Base URL</Text>
+              <TextInput
+                value={config.ai?.baseUrl || ''}
+                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, baseUrl: v } as any })}
+                autoCapitalize="none"
+                style={styles.input}
+                placeholder="https://api.openai.com/v1"
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+
+              <Text style={styles.label}>API Key</Text>
+              <TextInput
+                value={config.ai?.apiKey || ''}
+                onChangeText={(v) => updateConfig({ ...config, ai: { ...config.ai, apiKey: v } as any })}
+                autoCapitalize="none"
+                secureTextEntry
+                style={styles.input}
+                placeholder="sk-..."
+                placeholderTextColor={ui.colors.textTertiary}
+              />
+            </View>
 
             <Pressable style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]} onPress={() => void handleSave()} disabled={saving}>
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>保存设置</Text>}

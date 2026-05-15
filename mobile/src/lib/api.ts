@@ -62,12 +62,11 @@ export async function register(
   apiBaseUrl: string,
   username: string,
   password: string,
-  invitationCode: string,
 ): Promise<ApiSuccess<{ user: User; token: string }>> {
   const res = await fetch(buildApiUrl(apiBaseUrl, '/auth/register'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, invitationCode }),
+    body: JSON.stringify({ username, password }),
   });
 
   return parseJsonResponse<{ user: User; token: string }>(res);

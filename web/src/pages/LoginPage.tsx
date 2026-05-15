@@ -17,7 +17,6 @@ export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [invitationCode, setInvitationCode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
 
   // Handle OAuth callback - check for token in URL
@@ -64,11 +63,7 @@ export function LoginPage() {
         setLocalError('密码不一致');
         return;
       }
-      if (!invitationCode.trim()) {
-        setLocalError('请输入邀请码');
-        return;
-      }
-      await register(username, password, invitationCode);
+      await register(username, password);
     } else {
       await login(username, password);
     }
@@ -198,21 +193,6 @@ export function LoginPage() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="invitationCode">邀请码</Label>
-                  <Input
-                    id="invitationCode"
-                    type="text"
-                    placeholder="请输入邀请码"
-                    value={invitationCode}
-                    onChange={(e) => setInvitationCode(e.target.value)}
-                    className="bg-muted/50"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    需要邀请码才能注册
-                  </p>
-                </div>
               </>
             )}
 

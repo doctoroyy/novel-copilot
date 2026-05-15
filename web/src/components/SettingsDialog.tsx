@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
-import { Bot, Shield, Zap, Settings, Cpu } from 'lucide-react';
+import { Shield, Zap, Settings, Cpu } from 'lucide-react';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -44,32 +44,13 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsList>
           
           <TabsContent value="general" className="space-y-4 py-4">
-            {/* Custom AI Config (Only for whitelisted users) */}
-            {user?.allowCustomProvider && (
-              <>
-                <AIConfigSection />
-                <div className="p-3 rounded-lg border bg-muted/20">
-                  <p className="text-xs text-muted-foreground leading-5">
-                    项目主流程中的“生成大纲”和“生成章节”默认使用后台模型路由。
-                    这里保存的自定义模型不会再隐式覆盖这些请求，只会在显式传入自定义模型的高级功能中生效。
-                  </p>
-                </div>
-              </>
-            )}
-
-            {/* AI Status (Default - only show if NOT using custom or for non-whitelisted) */}
-            {(!user?.allowCustomProvider) && (
-              <div className="p-4 rounded-lg border bg-muted/30">
-                <div className="flex items-center gap-3 mb-2">
-                  <Bot className="h-5 w-5 text-primary" />
-                  <span className="font-medium text-sm">AI 模型配置</span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  AI 模型和 API Key 由管理员在后台统一配置，
-                  无需手动设置。如需调整模型，请联系管理员。
-                </p>
-              </div>
-            )}
+            <AIConfigSection />
+            <div className="p-3 rounded-lg border bg-muted/20">
+              <p className="text-xs text-muted-foreground leading-5">
+                项目主流程中的“生成大纲”和“生成章节”默认使用后台模型路由。
+                这里保存的自定义模型不会再隐式覆盖这些请求，只会在显式传入自定义模型的高级功能中生效。
+              </p>
+            </div>
 
             {/* Credit Info */}
             <div className="p-4 rounded-lg border bg-muted/30">

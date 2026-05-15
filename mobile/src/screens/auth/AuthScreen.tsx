@@ -26,7 +26,6 @@ export function AuthScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [invitationCode, setInvitationCode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
 
   const [showApiConfig, setShowApiConfig] = useState(false);
@@ -65,11 +64,7 @@ export function AuthScreen() {
         setLocalError('两次密码不一致');
         return;
       }
-      if (!invitationCode.trim()) {
-        setLocalError('请输入邀请码');
-        return;
-      }
-      await register(username.trim(), password, invitationCode.trim());
+      await register(username.trim(), password);
       return;
     }
 
@@ -179,14 +174,6 @@ export function AuthScreen() {
                     placeholderTextColor={ui.colors.textTertiary}
                   />
 
-                  <Text style={styles.label}>邀请码</Text>
-                  <TextInput
-                    value={invitationCode}
-                    onChangeText={setInvitationCode}
-                    style={styles.input}
-                    placeholder="请输入邀请码"
-                    placeholderTextColor={ui.colors.textTertiary}
-                  />
                 </>
               ) : null}
 

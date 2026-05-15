@@ -15,7 +15,7 @@ interface AuthContextType {
   isLoggedIn: boolean;
   refreshUser: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, password: string, invitationCode: string) => Promise<boolean>;
+  register: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
@@ -91,15 +91,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const register = useCallback(async (
-    username: string, 
-    password: string, 
-    invitationCode: string
+    username: string,
+    password: string
   ): Promise<boolean> => {
     setError(null);
     setLoading(true);
 
     try {
-      const response = await apiRegister(username, password, invitationCode);
+      const response = await apiRegister(username, password);
       if (response.success && response.user) {
         setUser(response.user);
         return true;

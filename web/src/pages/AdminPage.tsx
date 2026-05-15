@@ -18,13 +18,8 @@ import {
   Users,
   BookOpen,
   FileText,
-  Ticket,
-  Plus,
-  Trash2,
   ArrowLeft,
   RefreshCcw,
-  ToggleLeft,
-  ToggleRight,
   Zap,
   Bot,
   Save,
@@ -48,14 +43,6 @@ interface User {
   total_chapters: number;
 }
 
-interface InvitationCode {
-  code: string;
-  max_uses: number;
-  used_count: number;
-  created_at: string;
-  is_active: number;
-}
-
 interface Stats {
   userCount: number;
   projectCount: number;
@@ -75,12 +62,8 @@ export function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   
   const [users, setUsers] = useState<User[]>([]);
-  const [codes, setCodes] = useState<InvitationCode[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
-  
-  const [newCode, setNewCode] = useState('');
-  const [newCodeMaxUses, setNewCodeMaxUses] = useState('10');
 
   // Credit features state
   const [creditFeatures, setCreditFeatures] = useState<any[]>([]);
@@ -125,24 +108,20 @@ export function AdminPage() {
     try {
       const headers = getAuthHeaders();
       
-      const [usersRes, codesRes, statsRes] = await Promise.all([
+      const [usersRes, statsRes] = await Promise.all([
         fetch('/api/admin/users', { headers }),
-        fetch('/api/admin/invitation-codes', { headers }),
         fetch('/api/admin/stats', { headers }),
       ]);
       
-      const [usersData, codesData, statsData] = await Promise.all([
+      const [usersData, statsData] = await Promise.all([
         usersRes.json(),
-        codesRes.json(),
         statsRes.json(),
       ]);
       
       if (!usersRes.ok) throw new Error(usersData.error || '获取用户列表失败');
-      if (!codesRes.ok) throw new Error(codesData.error || '获取邀请码失败');
       if (!statsRes.ok) throw new Error(statsData.error || '获取统计数据失败');
       
       setUsers(usersData.users);
-      setCodes(codesData.codes);
       setStats(statsData.stats);
       setRecentProjects(statsData.recentProjects || []);
       try {
@@ -169,74 +148,6 @@ export function AdminPage() {
     fetchData();
   }, []);
   
-  const handleCreateCode = async () => {
-    if (!newCode.trim()) return;
-    
-    try {
-      const res = await fetch('/api/admin/invitation-codes', {
-        method: 'POST',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code: newCode.trim(),
-          maxUses: parseInt(newCodeMaxUses),
-        }),
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      
-      setNewCode('');
-      fetchData();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-  
-  const handleDeleteCode = async (code: string) => {
-    if (!confirm(`确定删除邀请码 "${code}"？`)) return;
-    
-    try {
-      const res = await fetch(`/api/admin/invitation-codes/${encodeURIComponent(code)}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(),
-      });
-      
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error);
-      }
-      
-      fetchData();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-  
-  const handleToggleCode = async (code: string, currentActive: number) => {
-    try {
-      const res = await fetch(`/api/admin/invitation-codes/${encodeURIComponent(code)}`, {
-        method: 'PATCH',
-        headers: {
-          ...getAuthHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ isActive: !currentActive }),
-      });
-      
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error);
-      }
-      
-      fetchData();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
   const handleManualTemplateRefresh = async () => {
     setRefreshingTemplates(true);
     try {
@@ -356,9 +267,6 @@ export function AdminPage() {
             <TabsTrigger value="users" className="gap-1.5">
               <Users className="h-4 w-4" /> 用户
             </TabsTrigger>
-            <TabsTrigger value="codes" className="gap-1.5">
-              <Ticket className="h-4 w-4" /> 邀请码
-            </TabsTrigger>
             <TabsTrigger value="templates" className="gap-1.5">
               <Sparkles className="h-4 w-4" /> 模板中心
             </TabsTrigger>
@@ -395,31 +303,12 @@ export function AdminPage() {
                               管理员
                             </span>
                           )}
-                          {(u as any).allow_custom_provider === 1 && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-600">
-                              可自定义模型
-                            </span>
-                          )}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {u.project_count} 个项目 · {u.total_chapters} 章
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="切换自定义模型权限"
-                          onClick={async () => {
-                             // This is a quick implementation. ideally we should have a backend endpoint for this.
-                             // For now assuming we edit it via SQL or waiting for user to ask for UI.
-                             // But wait, the user wants me to implement this.
-                             // I need to add an endpoint to toggle this.
-                             // Let's hold on this button until I add the endpoint.
-                          }}
-                        >
-                           {/* Placeholder for future toggle */}
-                        </Button>
+                      <div>
                         <p className="text-xs text-muted-foreground">
                           {new Date(u.created_at).toLocaleDateString('zh-CN')}
                         </p>
@@ -465,81 +354,6 @@ export function AdminPage() {
                       <Zap className="h-4 w-4 mr-1" /> 充值
                     </Button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ========== Invitation Codes Tab ========== */}
-          <TabsContent value="codes">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Ticket className="h-5 w-5" />
-                  邀请码管理
-                </CardTitle>
-                <CardDescription>创建和管理邀请码</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="新邀请码..."
-                    value={newCode}
-                    onChange={(e) => setNewCode(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Input
-                    type="number"
-                    placeholder="次数"
-                    value={newCodeMaxUses}
-                    onChange={(e) => setNewCodeMaxUses(e.target.value)}
-                    className="w-20"
-                  />
-                  <Button onClick={handleCreateCode} disabled={!newCode.trim()}>
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="space-y-2">
-                  {codes.map((code) => (
-                    <div 
-                      key={code.code} 
-                      className={`flex items-center justify-between p-3 rounded-lg transition-colors ${
-                        code.is_active ? 'bg-muted/50' : 'bg-muted/20 opacity-60'
-                      }`}
-                    >
-                      <div>
-                        <p className="font-mono font-medium">{code.code}</p>
-                        <p className="text-xs text-muted-foreground">
-                          已用 {code.used_count} / {code.max_uses} 次
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleToggleCode(code.code, code.is_active)}
-                          title={code.is_active ? '禁用' : '启用'}
-                        >
-                          {code.is_active ? (
-                            <ToggleRight className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <ToggleLeft className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteCode(code.code)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {codes.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">暂无邀请码</p>
-                  )}
                 </div>
               </CardContent>
             </Card>
