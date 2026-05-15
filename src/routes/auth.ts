@@ -22,16 +22,14 @@ function normalizeAppOrigin(value: string | null | undefined): string | null {
   }
 }
 
-// Register with invitation code
+// Register (open registration — invitation codes removed)
 authRoutes.post('/register', async (c) => {
   try {
-    const { username, password, invitationCode } = await c.req.json();
+    const { username, password } = await c.req.json();
     const normalizedUsername = typeof username === 'string' ? username.trim() : '';
-    const normalizedInvitationCode = typeof invitationCode === 'string' ? invitationCode.trim() : '';
-    const now = Date.now();
 
     // Validate input
-    if (!normalizedUsername || !password || !normalizedInvitationCode) {
+    if (!normalizedUsername || !password) {
       return c.json({ success: false, error: '请填写完整信息' }, 400);
     }
 
@@ -41,34 +39,6 @@ authRoutes.post('/register', async (c) => {
 
     if (password.length < 6) {
       return c.json({ success: false, error: '密码至少需要 6 个字符' }, 400);
-    }
-
-    // Check invitation code
-    const code = await c.env.DB.prepare(`
-      SELECT code, max_uses, used_count, is_active, expires_at
-      FROM invitation_codes
-      WHERE code = ?
-      LIMIT 1
-    `).bind(normalizedInvitationCode).first();
-
-    if (!code) {
-      return c.json({ success: false, error: '邀请码无效' }, 400);
-    }
-
-    if (Number((code as any).is_active ?? 1) !== 1) {
-      return c.json({ success: false, error: '邀请码已失效' }, 400);
-    }
-
-    const expiresAt = Number((code as any).expires_at || 0);
-    if (expiresAt > 0 && expiresAt <= now) {
-      return c.json({ success: false, error: '邀请码已过期' }, 400);
-    }
-
-    const parsedMaxUses = Number((code as any).max_uses);
-    const maxUses = Number.isFinite(parsedMaxUses) ? parsedMaxUses : 10;
-    const usedCount = Number((code as any).used_count ?? 0);
-    if (Number.isFinite(maxUses) && maxUses > 0 && Number.isFinite(usedCount) && usedCount >= maxUses) {
-      return c.json({ success: false, error: '邀请码已用完' }, 400);
     }
 
     // Check if username exists
@@ -87,31 +57,6 @@ authRoutes.post('/register', async (c) => {
     await c.env.DB.prepare(`
       INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)
     `).bind(userId, normalizedUsername, passwordHash).run();
-
-    // Consume invitation code usage with conditions (prevents race condition over max_uses)
-    const consumeResult = await c.env.DB.prepare(`
-      UPDATE invitation_codes
-      SET
-        used_count = COALESCE(used_count, 0) + 1,
-        used_at = ?,
-        used_by = CASE
-          WHEN used_by IS NULL OR used_by = '' THEN ?
-          ELSE used_by
-        END
-      WHERE code = ?
-        AND COALESCE(is_active, 1) = 1
-        AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?)
-        AND (
-          COALESCE(max_uses, 10) <= 0
-          OR COALESCE(used_count, 0) < COALESCE(max_uses, 10)
-        )
-    `).bind(now, userId, normalizedInvitationCode, now).run();
-
-    if (Number(consumeResult.meta?.changes || 0) < 1) {
-      // Roll back user creation if invitation becomes unavailable during concurrent register.
-      await c.env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId).run();
-      return c.json({ success: false, error: '邀请码已用完或失效，请更换邀请码' }, 400);
-    }
 
     // Generate token
     const token = await signToken({ userId, username: normalizedUsername }, getJwtSecret(c.env));
@@ -138,7 +83,7 @@ authRoutes.post('/login', async (c) => {
 
     // Find user
     const user = await c.env.DB.prepare(`
-      SELECT id, username, password_hash, role, allow_custom_provider FROM users WHERE username = ?
+      SELECT id, username, password_hash, role FROM users WHERE username = ?
     `).bind(username).first();
 
     if (!user) {
@@ -169,7 +114,7 @@ authRoutes.post('/login', async (c) => {
         id: (user as any).id,
         username: (user as any).username,
         role: (user as any).role || 'user',
-        allowCustomProvider: !!(user as any).allow_custom_provider,
+        allowCustomProvider: true,
       },
       token,
     });
@@ -189,7 +134,7 @@ authRoutes.get('/me', authMiddleware(), async (c) => {
 
   // Get full user info from DB
   const dbUser = await c.env.DB.prepare(`
-    SELECT id, username, role, credit_balance, allow_custom_provider, vip_type, level, created_at, last_login_at FROM users WHERE id = ?
+    SELECT id, username, role, credit_balance, vip_type, level, created_at, last_login_at FROM users WHERE id = ?
   `).bind(user.userId).first();
 
   if (!dbUser) {
@@ -203,7 +148,7 @@ authRoutes.get('/me', authMiddleware(), async (c) => {
       username: (dbUser as any).username,
       role: (dbUser as any).role || 'user',
       creditBalance: (dbUser as any).credit_balance ?? 150,
-      allowCustomProvider: !!(dbUser as any).allow_custom_provider,
+      allowCustomProvider: true,
       vipType: (dbUser as any).vip_type || 'free',
       level: (dbUser as any).level ?? 1,
       createdAt: (dbUser as any).created_at,

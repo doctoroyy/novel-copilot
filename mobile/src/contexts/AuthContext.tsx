@@ -11,7 +11,7 @@ type AuthContextValue = {
   error: string | null;
   isLoggedIn: boolean;
   login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, password: string, invitationCode: string) => Promise<boolean>;
+  register: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   clearError: () => void;
   refreshMe: () => Promise<void>;
@@ -86,12 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [config.apiBaseUrl]);
 
-  const register = useCallback(async (username: string, password: string, invitationCode: string) => {
+  const register = useCallback(async (username: string, password: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      const result = await registerRequest(config.apiBaseUrl, username, password, invitationCode);
+      const result = await registerRequest(config.apiBaseUrl, username, password);
       if (!result.success || !result.token || !result.user) {
         setError(result.error || '注册失败');
         return false;

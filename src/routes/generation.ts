@@ -74,33 +74,29 @@ function normalizeMinChapterWords(value: unknown): number | null {
 
 // Helper to get AI config from Model Registry (server-side)
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
-// Helper to get AI config from Model Registry (server-side) or Custom Headers
 async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise<AIConfig | null> {
   const userId = c.get('userId');
 
-  // 1. Check if user has permission for custom provider
+  // 1. Custom provider is open to all authenticated users.
+  //    If the request supplies a complete custom provider header set, use it.
   if (userId) {
-    const user = await db.prepare('SELECT allow_custom_provider FROM users WHERE id = ?').bind(userId).first() as any;
-    if (user?.allow_custom_provider) {
-      // 2. Try to get config from headers
-      const headers = c.req.header();
-      const customProvider = headers['x-custom-provider'];
-      const customModel = headers['x-custom-model'];
-      const customBaseUrl = headers['x-custom-base-url'];
-      const customApiKey = headers['x-custom-api-key'];
+    const headers = c.req.header();
+    const customProvider = headers['x-custom-provider'];
+    const customModel = headers['x-custom-model'];
+    const customBaseUrl = headers['x-custom-base-url'];
+    const customApiKey = headers['x-custom-api-key'];
 
-      if (customProvider && customModel && customApiKey) {
-        return {
-          provider: customProvider as any,
-          model: customModel,
-          apiKey: customApiKey,
-          baseUrl: customBaseUrl,
-        };
-      }
+    if (customProvider && customModel && customApiKey) {
+      return {
+        provider: customProvider as any,
+        model: customModel,
+        apiKey: customApiKey,
+        baseUrl: customBaseUrl,
+      };
     }
   }
 
-  // 3. Fallback to registry
+  // 2. Fallback to registry
   return getAIConfigFromRegistry(db, featureKey || 'generate_chapter');
 }
 

@@ -57,18 +57,17 @@ export function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-// Register with invitation code
+// Register
 export async function register(
   username: string,
-  password: string,
-  invitationCode: string
+  password: string
 ): Promise<AuthResponse> {
   const response = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ username, password, invitationCode }),
+    body: JSON.stringify({ username, password }),
   });
 
   const data = await response.json();

@@ -3,7 +3,6 @@ export type User = {
   username: string;
   role?: string;
   credit_balance?: number;
-  allow_custom_provider?: boolean;
   createdAt?: number;
   lastLoginAt?: number;
 };
