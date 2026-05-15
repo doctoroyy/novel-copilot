@@ -3,6 +3,24 @@ import type { Env } from '../worker.js';
 import { signToken, hashPassword, verifyPassword, authMiddleware, getJwtSecret } from '../middleware/authMiddleware.js';
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
+const DEFAULT_APP_ORIGIN = 'https://novel-copilot.doctoroyy.workers.dev';
+
+function getRequestOrigin(c: any): string {
+  try {
+    return new URL(c.req.url).origin;
+  } catch {
+    return DEFAULT_APP_ORIGIN;
+  }
+}
+
+function normalizeAppOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
 
 // Register with invitation code
 authRoutes.post('/register', async (c) => {
@@ -218,8 +236,7 @@ authRoutes.get('/google', async (c) => {
     return c.json({ success: false, error: 'Google OAuth not configured' }, 500);
   }
 
-  // Get the origin from request or use default
-  const origin = c.req.header('Origin') || c.req.header('Referer')?.replace(/\/$/, '') || 'https://novel-copilot.doctoroyy.workers.dev';
+  const origin = getRequestOrigin(c);
   const redirectUri = `${origin}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
@@ -242,13 +259,15 @@ authRoutes.get('/google/callback', async (c) => {
   const code = c.req.query('code');
   const state = c.req.query('state'); // This is the origin we passed
   const error = c.req.query('error');
+  const requestOrigin = getRequestOrigin(c);
+  const appOrigin = normalizeAppOrigin(state) || requestOrigin;
 
   if (error) {
-    return c.redirect(`${state || ''}/login?error=${encodeURIComponent(error)}`);
+    return c.redirect(`${appOrigin}/login?error=${encodeURIComponent(error)}`);
   }
 
   if (!code) {
-    return c.redirect(`${state || ''}/login?error=missing_code`);
+    return c.redirect(`${appOrigin}/login?error=missing_code`);
   }
 
   try {
@@ -258,11 +277,10 @@ authRoutes.get('/google/callback', async (c) => {
     const clientSecret = c.env.GOOGLE_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      return c.redirect(`${state || ''}/login?error=oauth_not_configured`);
+      return c.redirect(`${appOrigin}/login?error=oauth_not_configured`);
     }
 
-    const origin = state || 'https://novel-copilot.doctoroyy.workers.dev';
-    const redirectUri = `${origin}/api/auth/google/callback`;
+    const redirectUri = `${requestOrigin}/api/auth/google/callback`;
 
     // Exchange code for tokens
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -281,7 +299,7 @@ authRoutes.get('/google/callback', async (c) => {
 
     if (tokenData.error) {
       console.error('Token exchange error:', tokenData);
-      return c.redirect(`${origin}/login?error=token_exchange_failed`);
+      return c.redirect(`${appOrigin}/login?error=token_exchange_failed`);
     }
 
     // Get user info from Google
@@ -349,9 +367,9 @@ authRoutes.get('/google/callback', async (c) => {
     }, getJwtSecret(c.env));
 
     // Redirect to frontend with token
-    return c.redirect(`${origin}/login?token=${token}&username=${encodeURIComponent(user.username)}&role=${user.role || 'user'}`);
+    return c.redirect(`${appOrigin}/login?token=${token}&username=${encodeURIComponent(user.username)}&role=${user.role || 'user'}`);
   } catch (error) {
     console.error('Google OAuth callback error:', error);
-    return c.redirect(`${state || ''}/login?error=oauth_failed`);
+    return c.redirect(`${appOrigin}/login?error=oauth_failed`);
   }
 });
