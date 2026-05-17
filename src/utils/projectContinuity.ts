@@ -1,3 +1,4 @@
+import type { Database } from 'better-sqlite3';
 type ChapterRow = {
   chapter_index: number | string | null;
 };
@@ -25,15 +26,15 @@ function normalizeChapterIndex(value: unknown): number | null {
 }
 
 export async function getProjectChapterContinuity(
-  db: D1Database,
+  db: Database,
   projectId: string,
 ): Promise<ProjectChapterContinuity> {
-  const { results } = await db.prepare(`
+  const results = db.prepare(`
     SELECT chapter_index
     FROM chapters
     WHERE project_id = ? AND deleted_at IS NULL
     ORDER BY chapter_index ASC
-  `).bind(projectId).all();
+  `).all(projectId);
 
   const chapterIndices = Array.from(new Set(
     (results as ChapterRow[])
@@ -71,7 +72,7 @@ export async function getProjectChapterContinuity(
 }
 
 export async function loadSummarySnapshotUpToChapter(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number,
 ): Promise<SummarySnapshotState> {
@@ -83,7 +84,7 @@ export async function loadSummarySnapshotUpToChapter(
     };
   }
 
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT rolling_summary, open_loops, summary_base_chapter_index
     FROM summary_memories
     WHERE project_id = ?
@@ -91,7 +92,7 @@ export async function loadSummarySnapshotUpToChapter(
       AND COALESCE(summary_base_chapter_index, 0) <= ?
     ORDER BY chapter_index DESC, id DESC
     LIMIT 1
-  `).bind(projectId, chapterIndex, chapterIndex).first() as {
+  `).get(projectId, chapterIndex, chapterIndex) as {
     rolling_summary?: string;
     open_loops?: string;
     summary_base_chapter_index?: number | string | null;
@@ -125,7 +126,7 @@ export async function loadSummarySnapshotUpToChapter(
 }
 
 export async function rebaseProjectStateToContinuity(
-  db: D1Database,
+  db: Database,
   projectId: string,
 ): Promise<ProjectChapterContinuity & SummarySnapshotState> {
   const continuity = await getProjectChapterContinuity(db, projectId);
@@ -135,7 +136,7 @@ export async function rebaseProjectStateToContinuity(
     continuity.contiguousChapterIndex,
   );
 
-  await db.prepare(`
+  db.prepare(`
     UPDATE states
     SET
       next_chapter_index = ?,
@@ -151,17 +152,17 @@ export async function rebaseProjectStateToContinuity(
     projectId,
   ).run();
 
-  await db.prepare(`
+  db.prepare(`
     DELETE FROM character_states
     WHERE project_id = ?
       AND last_updated_chapter > ?
-  `).bind(projectId, continuity.contiguousChapterIndex).run();
+  `).run(projectId, continuity.contiguousChapterIndex);
 
-  await db.prepare(`
+  db.prepare(`
     DELETE FROM plot_graphs
     WHERE project_id = ?
       AND last_updated_chapter > ?
-  `).bind(projectId, continuity.contiguousChapterIndex).run();
+  `).run(projectId, continuity.contiguousChapterIndex);
 
   return {
     ...continuity,
@@ -170,39 +171,39 @@ export async function rebaseProjectStateToContinuity(
 }
 
 export async function pruneProjectArtifactsBeyondChapter(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number,
 ): Promise<void> {
-  await db.prepare(`
+  db.prepare(`
     UPDATE chapters
     SET deleted_at = (unixepoch() * 1000)
     WHERE project_id = ?
       AND chapter_index > ?
       AND deleted_at IS NULL
-  `).bind(projectId, chapterIndex).run();
+  `).run(projectId, chapterIndex);
 
-  await db.prepare(`
+  db.prepare(`
     DELETE FROM summary_memories
     WHERE project_id = ?
       AND chapter_index > ?
-  `).bind(projectId, chapterIndex).run();
+  `).run(projectId, chapterIndex);
 
-  await db.prepare(`
+  db.prepare(`
     DELETE FROM chapter_qc
     WHERE project_id = ?
       AND chapter_index > ?
-  `).bind(projectId, chapterIndex).run();
+  `).run(projectId, chapterIndex);
 
-  await db.prepare(`
+  db.prepare(`
     DELETE FROM generation_perf_logs
     WHERE project_id = ?
       AND chapter_index > ?
-  `).bind(projectId, chapterIndex).run();
+  `).run(projectId, chapterIndex);
 }
 
 export async function trimProjectToContinuity(
-  db: D1Database,
+  db: Database,
   projectId: string,
 ): Promise<ProjectChapterContinuity & SummarySnapshotState> {
   const continuity = await getProjectChapterContinuity(db, projectId);

@@ -44,10 +44,40 @@ function buildFallbackConfig(primary: AIConfig, fallbackConfigs?: AIConfig[]): F
   };
 }
 
+import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
+
+const GraphState = Annotation.Root({
+  scratchpad: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+    default: () => "",
+  }),
+  currentDraft: Annotation<string | null>({
+    reducer: (x, y) => y ?? x,
+    default: () => null,
+  }),
+  turnCount: Annotation<number>({
+    reducer: (x, y) => y ?? x,
+    default: () => 0,
+  }),
+  aiCallCount: Annotation<number>({
+    reducer: (x, y) => y ?? x,
+    default: () => 0,
+  }),
+  trace: Annotation<AgentTrace>({
+    reducer: (x, y) => y ?? x,
+    default: () => ({ turns: [], totalTurns: 0, totalDurationMs: 0, totalToolCalls: 0 }),
+  }),
+  finalChapterText: Annotation<string | undefined>({
+    reducer: (x, y) => y ?? x,
+    default: () => undefined,
+  }),
+  agentTurn: Annotation<AgentTurn | undefined>({
+    reducer: (x, y) => y ?? x,
+    default: () => undefined,
+  }),
+});
+
 export class ChapterAgentOrchestrator {
-  private state: AgentState;
-  private aiCallCount = 0;
-  /** 保存干净的初始上下文（optimizedContext），不含 Agent 思考历史 */
   private initialWriteContext = '';
 
   constructor(
@@ -56,205 +86,246 @@ export class ChapterAgentOrchestrator {
     private toolExecutor: ToolExecutor,
     private config: AgentConfig = DEFAULT_AGENT_CONFIG,
     private tracer: AICallTracer = new AICallTracer(),
-  ) {
-    this.state = {
-      scratchpad: '',
-      currentDraft: null,
-      queriedTools: new Set(),
-      turnCount: 0,
-    };
-  }
+  ) {}
 
   async run(initialContext: string): Promise<{
     chapterText: string;
     trace: AgentTrace;
   }> {
     const startedAt = Date.now();
-    const trace: AgentTrace = {
-      turns: [],
-      totalTurns: 0,
-      totalDurationMs: 0,
-      totalToolCalls: 0,
-    };
-
-    this.state.scratchpad = initialContext;
     this.initialWriteContext = initialContext;
 
-    for (let turn = 0; turn < this.config.maxTurns; turn++) {
-      // 预算检查：预算耗尽或仅剩1次且已有草稿 → 直接用草稿结束
-      if (this.aiCallCount >= this.config.maxAICalls) {
-        this.config.onProgress?.('budget_exceeded', '推理预算已用完，输出当前最佳结果');
-        break;
-      }
-      if (this.state.currentDraft && this.aiCallCount >= this.config.maxAICalls - 1) {
-        this.config.onProgress?.('budget_exceeded', '预算即将耗尽，提交当前草稿');
-        trace.totalTurns = trace.turns.length;
-        trace.totalDurationMs = Date.now() - startedAt;
-        trace.totalToolCalls = this.countTotalToolCalls(trace);
-        return { chapterText: this.state.currentDraft, trace };
-      }
+    const workflow = new StateGraph(GraphState)
+      .addNode("agent", this.agentNode.bind(this))
+      .addNode("tools", this.toolsNode.bind(this))
+      .addEdge(START, "agent")
+      .addConditionalEdges("agent", this.shouldContinue.bind(this), {
+        continue: "tools",
+        end: END
+      })
+      .addEdge("tools", "agent");
 
-      this.state.turnCount = turn;
-      const turnStartedAt = Date.now();
-      this.config.onProgress?.('reasoning', `推理轮次 ${turn + 1}/${this.config.maxTurns}`);
+    const app = workflow.compile();
 
-      // 1. 调用 LLM 获取下一步
-      const agentTurn = await this.getNextTurn();
-      this.aiCallCount++;
+    const initialState = {
+      scratchpad: initialContext,
+      currentDraft: null,
+      turnCount: 0,
+      aiCallCount: 0,
+      trace: {
+        turns: [],
+        totalTurns: 0,
+        totalDurationMs: 0,
+        totalToolCalls: 0,
+      },
+      agentTurn: undefined,
+      finalChapterText: undefined,
+    };
 
-      const turnRecord = {
-        turnIndex: turn,
-        thought: agentTurn.thought,
-        toolCalls: [] as { tool: string; args: any; result: string }[],
-        durationMs: 0,
-      };
+    const finalState = await app.invoke(initialState);
 
-      // 2. 检查是否有最终输出
-      if (agentTurn.finalOutput) {
-        // 优先使用 currentDraft（比 Agent inline final_output 更完整）
-        let output = agentTurn.finalOutput;
-        if (this.state.currentDraft) {
-          const draftLen = this.state.currentDraft.replace(/\s/g, '').length;
-          const outputLen = output.replace(/\s/g, '').length;
-          if (draftLen > outputLen) {
-            output = this.state.currentDraft;
-          }
-        }
-        turnRecord.durationMs = Date.now() - turnStartedAt;
-        trace.turns.push(turnRecord);
-        trace.totalTurns = turn + 1;
-        trace.totalDurationMs = Date.now() - startedAt;
-        trace.totalToolCalls = this.countTotalToolCalls(trace);
-        return { chapterText: output, trace };
-      }
-
-      // 3. 执行工具调用
-      if (agentTurn.toolCalls && agentTurn.toolCalls.length > 0) {
-        const calls = agentTurn.toolCalls.slice(0, this.config.maxToolCallsPerTurn);
-
-        const results = await Promise.all(
-          calls.map(async (call) => {
-            this.config.onProgress?.('tool_call', `调用 ${call.tool}`);
-
-            // AI 增强工具计入预算
-            if (AI_TOOLS.has(call.tool)) {
-              this.aiCallCount++;
-            }
-
-            // Heartbeat: keep the outer task progress timer warm while
-            // long-running AI tool calls block. Without this, an AI tool
-            // that takes >12 min trips the chapter-task stale-timeout.
-            const heartbeat = AI_TOOLS.has(call.tool)
-              ? setInterval(() => {
-                  this.config.onProgress?.('tool_call', `调用 ${call.tool}（进行中）`);
-                }, 30_000)
-              : null;
-
-            let result: string;
-            try {
-              result = await this.toolExecutor.execute(call);
-            } catch (err) {
-              result = `[ERROR] ${call.tool} 执行失败: ${(err as Error).message}`;
-            } finally {
-              if (heartbeat) clearInterval(heartbeat);
-            }
-            return { tool: call.tool, args: call.args, result };
-          }),
-        );
-
-        turnRecord.toolCalls = results;
-
-        // 4. 处理特殊信号
-        for (const r of results) {
-          if (r.result.startsWith('[WRITE_CHAPTER_SIGNAL]')) {
-            const payload = JSON.parse(r.result.slice('[WRITE_CHAPTER_SIGNAL]'.length));
-            this.config.onProgress?.('generating', '正在生成章节正文...');
-            const writeHeartbeat = setInterval(() => {
-              this.config.onProgress?.('generating', '正在生成章节正文（进行中）...');
-            }, 30_000);
-            let draft: string;
-            try {
-              draft = await this.executeWriteChapter(payload.scenePlan, payload.writingNotes);
-            } finally {
-              clearInterval(writeHeartbeat);
-            }
-            this.state.currentDraft = draft;
-            this.toolExecutor.setCurrentDraft(draft);
-            const draftWordCount = draft.replace(/\s/g, '').length;
-            r.result = `章节草稿已生成，共 ${draftWordCount} 字（目标 >= ${this.toolExecutor['ctx'].minChapterWords || 2500}）。`;
-            console.log(`[Agent] write_chapter: ${draftWordCount} 字`);
-          } else if (r.result.startsWith('[REWRITE_SECTION_SIGNAL]')) {
-            const payload = JSON.parse(r.result.slice('[REWRITE_SECTION_SIGNAL]'.length));
-            this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}...`);
-            const rewriteHeartbeat = setInterval(() => {
-              this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}（进行中）...`);
-            }, 30_000);
-            let rewritten: string;
-            try {
-              rewritten = await this.executeRewriteSection(payload.section, payload.guidance);
-            } finally {
-              clearInterval(rewriteHeartbeat);
-            }
-            // 安全检查：如果重写结果比原稿短超过 20%，拒绝替换
-            const oldLen = this.state.currentDraft?.replace(/\s/g, '').length || 0;
-            const newLen = rewritten.replace(/\s/g, '').length;
-            if (rewritten && newLen >= oldLen * 0.8) {
-              this.state.currentDraft = rewritten;
-              this.toolExecutor.setCurrentDraft(rewritten);
-              r.result = `片段 "${payload.section}" 已重写，字数 ${oldLen} → ${newLen}。`;
-            } else {
-              r.result = `片段 "${payload.section}" 重写后太短（${newLen} < 原稿 ${oldLen} 的 80%），已保留原稿。`;
-            }
-          } else if (r.result.startsWith('[FINISH_SIGNAL]')) {
-            let finalText = r.result.slice('[FINISH_SIGNAL]'.length);
-            // 优先使用存储的 currentDraft（比 Agent inline 输出更完整）
-            if (this.state.currentDraft) {
-              const draftLen = this.state.currentDraft.replace(/\s/g, '').length;
-              const finishLen = finalText.replace(/\s/g, '').length;
-              if (draftLen > finishLen) {
-                finalText = this.state.currentDraft;
-              }
-            }
-            if (finalText) {
-              turnRecord.durationMs = Date.now() - turnStartedAt;
-              trace.turns.push(turnRecord);
-              trace.totalTurns = turn + 1;
-              trace.totalDurationMs = Date.now() - startedAt;
-              trace.totalToolCalls = this.countTotalToolCalls(trace);
-              return { chapterText: finalText, trace };
-            }
-          }
-        }
-
-        // 5. 将工具结果追加到 scratchpad
-        const toolResultsText = results
-          .map(r => `[Tool: ${r.tool}]\n${r.result.slice(0, 2000)}`)
-          .join('\n\n');
-
-        this.state.scratchpad += `\n\n--- Turn ${turn + 1} ---\n`
-          + `Thought: ${agentTurn.thought}\n\n${toolResultsText}`;
-      }
-
-      turnRecord.durationMs = Date.now() - turnStartedAt;
-      trace.turns.push(turnRecord);
-    }
-
-    // 循环结束未得到 finalOutput，使用 currentDraft 或空串
+    const trace = finalState.trace;
     trace.totalTurns = trace.turns.length;
     trace.totalDurationMs = Date.now() - startedAt;
     trace.totalToolCalls = this.countTotalToolCalls(trace);
 
-    if (this.state.currentDraft) {
-      return { chapterText: this.state.currentDraft, trace };
+    const finalText = finalState.finalChapterText || finalState.currentDraft || '';
+
+    return { chapterText: finalText, trace };
+  }
+
+  private async agentNode(state: typeof GraphState.State) {
+    // 预算检查：预算耗尽或仅剩1次且已有草稿 → 直接用草稿结束
+    if (state.aiCallCount >= this.config.maxAICalls) {
+      this.config.onProgress?.('budget_exceeded', '推理预算已用完，输出当前最佳结果');
+      return { finalChapterText: state.currentDraft || "" };
     }
-    return { chapterText: '', trace };
+    if (state.currentDraft && state.aiCallCount >= this.config.maxAICalls - 1) {
+      this.config.onProgress?.('budget_exceeded', '预算即将耗尽，提交当前草稿');
+      return { finalChapterText: state.currentDraft };
+    }
+
+    const turnStartedAt = Date.now();
+    this.config.onProgress?.('reasoning', `推理轮次 ${state.turnCount + 1}/${this.config.maxTurns}`);
+
+    // 调用 LLM 获取下一步
+    const agentTurn = await this.getNextTurn(state.scratchpad, state.currentDraft, state.turnCount, state.aiCallCount);
+    const newAiCallCount = state.aiCallCount + 1;
+
+    const turnRecord = {
+      turnIndex: state.turnCount,
+      thought: agentTurn.thought,
+      toolCalls: [] as { tool: string; args: any; result: string }[],
+      durationMs: Date.now() - turnStartedAt, // initial duration
+    };
+
+    const newTrace = { ...state.trace };
+    newTrace.turns = [...newTrace.turns, turnRecord];
+
+    // 检查是否有最终输出
+    if (agentTurn.finalOutput) {
+      let output = agentTurn.finalOutput;
+      if (state.currentDraft) {
+        const draftLen = state.currentDraft.replace(/\s/g, '').length;
+        const outputLen = output.replace(/\s/g, '').length;
+        if (draftLen > outputLen) {
+          output = state.currentDraft;
+        }
+      }
+      return {
+        agentTurn,
+        aiCallCount: newAiCallCount,
+        trace: newTrace,
+        finalChapterText: output,
+      };
+    }
+
+    return {
+      agentTurn,
+      aiCallCount: newAiCallCount,
+      trace: newTrace,
+    };
+  }
+
+  private async toolsNode(state: typeof GraphState.State) {
+    const agentTurn = state.agentTurn;
+    if (!agentTurn || !agentTurn.toolCalls || agentTurn.toolCalls.length === 0) {
+      return {};
+    }
+
+    const calls = agentTurn.toolCalls.slice(0, this.config.maxToolCallsPerTurn);
+    let currentDraft = state.currentDraft;
+    let aiCallCount = state.aiCallCount;
+    let finalChapterText = state.finalChapterText;
+
+    const results = await Promise.all(
+      calls.map(async (call) => {
+        this.config.onProgress?.('tool_call', `调用 ${call.tool}`);
+
+        if (AI_TOOLS.has(call.tool)) {
+          aiCallCount++;
+        }
+
+        const heartbeat = AI_TOOLS.has(call.tool)
+          ? setInterval(() => {
+              this.config.onProgress?.('tool_call', `调用 ${call.tool}（进行中）`);
+            }, 30_000)
+          : null;
+
+        let result: string;
+        try {
+          result = await this.toolExecutor.execute(call);
+        } catch (err) {
+          result = `[ERROR] ${call.tool} 执行失败: ${(err as Error).message}`;
+        } finally {
+          if (heartbeat) clearInterval(heartbeat);
+        }
+        return { tool: call.tool, args: call.args, result };
+      })
+    );
+
+    // 处理特殊信号
+    for (const r of results) {
+      if (r.result.startsWith('[WRITE_CHAPTER_SIGNAL]')) {
+        const payload = JSON.parse(r.result.slice('[WRITE_CHAPTER_SIGNAL]'.length));
+        this.config.onProgress?.('generating', '正在生成章节正文...');
+        const writeHeartbeat = setInterval(() => {
+          this.config.onProgress?.('generating', '正在生成章节正文（进行中）...');
+        }, 30_000);
+        let draft: string;
+        try {
+          draft = await this.executeWriteChapter(payload.scenePlan, payload.writingNotes, state.scratchpad, currentDraft);
+        } finally {
+          clearInterval(writeHeartbeat);
+        }
+        currentDraft = draft;
+        this.toolExecutor.setCurrentDraft(draft);
+        const draftWordCount = draft.replace(/\s/g, '').length;
+        r.result = `章节草稿已生成，共 ${draftWordCount} 字（目标 >= ${this.toolExecutor['ctx'].minChapterWords || 2500}）。`;
+      } else if (r.result.startsWith('[REWRITE_SECTION_SIGNAL]')) {
+        const payload = JSON.parse(r.result.slice('[REWRITE_SECTION_SIGNAL]'.length));
+        this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}...`);
+        const rewriteHeartbeat = setInterval(() => {
+          this.config.onProgress?.('rewriting', `正在重写片段: ${payload.section}（进行中）...`);
+        }, 30_000);
+        let rewritten: string;
+        try {
+          rewritten = await this.executeRewriteSection(payload.section, payload.guidance, state.scratchpad, currentDraft);
+        } finally {
+          clearInterval(rewriteHeartbeat);
+        }
+        const oldLen = currentDraft?.replace(/\s/g, '').length || 0;
+        const newLen = rewritten.replace(/\s/g, '').length;
+        if (rewritten && newLen >= oldLen * 0.8) {
+          currentDraft = rewritten;
+          this.toolExecutor.setCurrentDraft(rewritten);
+          r.result = `片段 "${payload.section}" 已重写，字数 ${oldLen} → ${newLen}。`;
+        } else {
+          r.result = `片段 "${payload.section}" 重写后太短（${newLen} < 原稿 ${oldLen} 的 80%），已保留原稿。`;
+        }
+      } else if (r.result.startsWith('[FINISH_SIGNAL]')) {
+        let finalText = r.result.slice('[FINISH_SIGNAL]'.length);
+        if (currentDraft) {
+          const draftLen = currentDraft.replace(/\s/g, '').length;
+          const finishLen = finalText.replace(/\s/g, '').length;
+          if (draftLen > finishLen) {
+            finalText = currentDraft;
+          }
+        }
+        if (finalText) {
+          finalChapterText = finalText;
+        }
+      }
+    }
+
+    const toolResultsText = results
+      .map(r => `[Tool: ${r.tool}]\n${r.result.slice(0, 2000)}`)
+      .join('\n\n');
+
+    const newScratchpad = state.scratchpad + `\n\n--- Turn ${state.turnCount + 1} ---\n`
+      + `Thought: ${agentTurn.thought}\n\n${toolResultsText}`;
+
+    // Update trace
+    const newTrace = { ...state.trace };
+    const lastTurnIndex = newTrace.turns.length - 1;
+    if (lastTurnIndex >= 0) {
+      newTrace.turns[lastTurnIndex] = {
+        ...newTrace.turns[lastTurnIndex],
+        toolCalls: results,
+      };
+    }
+
+    return {
+      scratchpad: newScratchpad,
+      currentDraft,
+      aiCallCount,
+      trace: newTrace,
+      turnCount: state.turnCount + 1,
+      finalChapterText,
+    };
+  }
+
+  private shouldContinue(state: typeof GraphState.State) {
+    if (state.finalChapterText !== undefined) {
+      return "end";
+    }
+    if (state.turnCount >= this.config.maxTurns) {
+      return "end";
+    }
+    if (state.agentTurn?.finalOutput) {
+       return "end";
+    }
+    if (!state.agentTurn?.toolCalls?.length) {
+       return "end";
+    }
+    return "continue";
   }
 
   // ========== 私有方法 ==========
 
-  private async getNextTurn(): Promise<AgentTurn> {
+  private async getNextTurn(scratchpad: string, currentDraft: string | null, turnCount: number, aiCallCount: number): Promise<AgentTurn> {
     const systemPrompt = this.buildAgentSystemPrompt();
-    const userPrompt = this.buildTurnPrompt();
+    const userPrompt = this.buildTurnPrompt(scratchpad, currentDraft, turnCount, aiCallCount);
 
     const callOptions: AICallOptions = {
       tracer: this.tracer,
@@ -290,14 +361,14 @@ export class ChapterAgentOrchestrator {
     };
   }
 
-  private buildTurnPrompt(): string {
-    const draftInfo = this.state.currentDraft
-      ? `\n\n[当前草稿状态] 已有草稿，共 ${this.state.currentDraft.length} 字。可用 evaluate_draft 评估或 rewrite_section 修改。`
+  private buildTurnPrompt(scratchpad: string, currentDraft: string | null, turnCount: number, aiCallCount: number): string {
+    const draftInfo = currentDraft
+      ? `\n\n[当前草稿状态] 已有草稿，共 ${currentDraft.length} 字。可用 evaluate_draft 评估或 rewrite_section 修改。`
       : '';
 
-    const budgetInfo = `\n[预算] AI调用 ${this.aiCallCount}/${this.config.maxAICalls}, 轮次 ${this.state.turnCount + 1}/${this.config.maxTurns}`;
+    const budgetInfo = `\n[预算] AI调用 ${aiCallCount}/${this.config.maxAICalls}, 轮次 ${turnCount + 1}/${this.config.maxTurns}`;
 
-    return `${this.state.scratchpad}${draftInfo}${budgetInfo}\n\n请输出你的下一步推理和行动（JSON格式）：`;
+    return `${scratchpad}${draftInfo}${budgetInfo}\n\n请输出你的下一步推理和行动（JSON格式）：`;
   }
 
   private buildAgentSystemPrompt(): string {
@@ -359,7 +430,7 @@ ${toolDescriptions}
   }
 
   /** 执行实际写作 — 系统 prompt 与老 pipeline buildEnhancedSystemPrompt 完全对齐 */
-  private async executeWriteChapter(scenePlan: string, writingNotes: string): Promise<string> {
+  private async executeWriteChapter(scenePlan: string, writingNotes: string, scratchpad: string, currentDraft: string | null): Promise<string> {
     const ctx = this.toolExecutor['ctx'];
     const { chapterIndex, totalChapters, narrativeGuide, enhancedOutline } = ctx;
     const isFinal = chapterIndex === totalChapters;
@@ -513,8 +584,8 @@ ${result}
   }
 
   /** 定向重写草稿片段 */
-  private async executeRewriteSection(section: string, guidance: string): Promise<string> {
-    if (!this.state.currentDraft) return '';
+  private async executeRewriteSection(section: string, guidance: string, scratchpad: string, currentDraft: string | null): Promise<string> {
+    if (!currentDraft) return '';
     const ctx = this.toolExecutor['ctx'];
     const { chapterIndex } = ctx;
     const minChapterWords = ctx.minChapterWords || 2500;
@@ -523,7 +594,7 @@ ${result}
 注意：完整章节正文不少于 ${minChapterWords} 字，不要缩减内容。`;
 
     const prompt = `【当前草稿】
-${this.state.currentDraft}
+${currentDraft}
 
 【要修改的片段】${section}
 【修改指导】${guidance}

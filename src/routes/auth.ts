@@ -1,3 +1,4 @@
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { signToken, hashPassword, verifyPassword, authMiddleware, getJwtSecret } from '../middleware/authMiddleware.js';
@@ -42,9 +43,9 @@ authRoutes.post('/register', async (c) => {
     }
 
     // Check if username exists
-    const existingUser = await c.env.DB.prepare(`
+    const existingUser = getDb().prepare(`
       SELECT id FROM users WHERE username = ?
-    `).bind(normalizedUsername).first();
+    `).get(normalizedUsername);
 
     if (existingUser) {
       return c.json({ success: false, error: '用户名已存在' }, 400);
@@ -54,9 +55,9 @@ authRoutes.post('/register', async (c) => {
     const userId = crypto.randomUUID();
     const passwordHash = await hashPassword(password);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)
-    `).bind(userId, normalizedUsername, passwordHash).run();
+    `).run(userId, normalizedUsername, passwordHash);
 
     // Generate token
     const token = await signToken({ userId, username: normalizedUsername }, getJwtSecret(c.env));
@@ -82,9 +83,9 @@ authRoutes.post('/login', async (c) => {
     }
 
     // Find user
-    const user = await c.env.DB.prepare(`
+    const user = getDb().prepare(`
       SELECT id, username, password_hash, role FROM users WHERE username = ?
-    `).bind(username).first();
+    `).get(username);
 
     if (!user) {
       return c.json({ success: false, error: '用户名或密码错误' }, 401);
@@ -98,7 +99,7 @@ authRoutes.post('/login', async (c) => {
     }
 
     // Update last login
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE users SET last_login_at = (unixepoch() * 1000) WHERE id = ?
     `).bind((user as any).id).run();
 
@@ -133,9 +134,9 @@ authRoutes.get('/me', authMiddleware(), async (c) => {
   }
 
   // Get full user info from DB
-  const dbUser = await c.env.DB.prepare(`
+  const dbUser = getDb().prepare(`
     SELECT id, username, role, credit_balance, vip_type, level, created_at, last_login_at FROM users WHERE id = ?
-  `).bind(user.userId).first();
+  `).get(user.userId);
 
   if (!dbUser) {
     return c.json({ success: false, error: '用户不存在' }, 404);
@@ -164,7 +165,7 @@ authRoutes.post('/logout', async (c) => {
 
 // Check if any users exist (for first-time setup)
 authRoutes.get('/status', async (c) => {
-  const result = await c.env.DB.prepare(`SELECT COUNT(*) as count FROM users`).first();
+  const result = getDb().prepare(`SELECT COUNT(*) as count FROM users`).get();
   const hasUsers = (result as any)?.count > 0;
 
   return c.json({
@@ -260,21 +261,21 @@ authRoutes.get('/google/callback', async (c) => {
     };
 
     // Check if user exists by google_id
-    let user = await c.env.DB.prepare(`
+    let user = getDb().prepare(`
       SELECT id, username, role FROM users WHERE google_id = ?
-    `).bind(googleUser.id).first() as any;
+    `).get(googleUser.id) as any;
 
     if (!user) {
       // Check if email already exists (link accounts)
-      user = await c.env.DB.prepare(`
+      user = getDb().prepare(`
         SELECT id, username, role FROM users WHERE email = ?
-      `).bind(googleUser.email).first() as any;
+      `).get(googleUser.email) as any;
 
       if (user) {
         // Link Google account to existing user
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE users SET google_id = ?, avatar_url = ? WHERE id = ?
-        `).bind(googleUser.id, googleUser.picture, user.id).run();
+        `).run(googleUser.id, googleUser.picture, user.id);
       } else {
         // Create new user
         const userId = crypto.randomUUID();
@@ -284,26 +285,26 @@ authRoutes.get('/google/callback', async (c) => {
         let finalUsername = username;
         let counter = 1;
         while (true) {
-          const existing = await c.env.DB.prepare(`
+          const existing = getDb().prepare(`
             SELECT id FROM users WHERE username = ?
-          `).bind(finalUsername).first();
+          `).get(finalUsername);
           if (!existing) break;
           finalUsername = `${username}${counter++}`;
         }
 
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO users (id, username, google_id, email, avatar_url, role)
           VALUES (?, ?, ?, ?, ?, 'user')
-        `).bind(userId, finalUsername, googleUser.id, googleUser.email, googleUser.picture).run();
+        `).run(userId, finalUsername, googleUser.id, googleUser.email, googleUser.picture);
 
         user = { id: userId, username: finalUsername, role: 'user' };
       }
     }
 
     // Update last login
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE users SET last_login_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(user.id).run();
+    `).run(user.id);
 
     // Generate JWT token
     const token = await signToken({
