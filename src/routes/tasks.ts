@@ -34,14 +34,27 @@ function toTimestampMs(value: unknown): number {
       }
     }
 
+    // SQLite's CURRENT_TIMESTAMP returns UTC text without a timezone marker
+    // (e.g. "2026-05-17 10:23:11"). Date.parse would interpret that as local
+    // time on most engines, causing an 8h drift that makes freshly-inserted
+    // rows look stale. If the string lacks an explicit TZ, treat it as UTC.
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed);
+    if (!hasTz) {
+      const isoish = trimmed.replace(' ', 'T');
+      const parsedUtc = Date.parse(`${isoish}Z`);
+      if (Number.isFinite(parsedUtc)) {
+        return parsedUtc;
+      }
+    }
+
     const parsed = Date.parse(trimmed);
     if (Number.isFinite(parsed)) {
       return parsed;
     }
 
-    const parsedUtc = Date.parse(`${trimmed}Z`);
-    if (Number.isFinite(parsedUtc)) {
-      return parsedUtc;
+    const parsedUtcFallback = Date.parse(`${trimmed}Z`);
+    if (Number.isFinite(parsedUtcFallback)) {
+      return parsedUtcFallback;
     }
   }
   return Date.now();
