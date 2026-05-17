@@ -1,3 +1,4 @@
+import { getDb } from '../db/db.js';
 /**
  * 上下文工程 API 路由
  *
@@ -62,25 +63,25 @@ contextRoutes.get('/projects/:name/summary-memories', async (c) => {
   const limit = Number.isInteger(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 30;
 
   try {
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT id
       FROM projects
       WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first() as { id: string } | null;
+    `).get(name, name, userId, name) as { id: string } | null;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT id, chapter_index, rolling_summary, open_loops, summary_updated, update_reason, model_provider, model_name, created_at
       FROM summary_memories
       WHERE project_id = ?
       ORDER BY chapter_index DESC, id DESC
       LIMIT ?
-    `).bind(project.id, limit).all();
+    `).all(project.id, limit);
 
     const memories = (results || []).map((row: any) => {
       let openLoops: string[] = [];
@@ -121,12 +122,12 @@ contextRoutes.get('/projects/:name/character-states', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT cs.registry_json, cs.last_updated_chapter
       FROM character_states cs
       JOIN projects p ON cs.project_id = p.id
       WHERE p.name = ? AND p.deleted_at IS NULL
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, data: null, message: 'No character states found' });
@@ -155,12 +156,12 @@ contextRoutes.post('/projects/:name/character-states/initialize', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, c.characters_json
       FROM projects p
       LEFT JOIN characters c ON p.id = c.project_id
       WHERE p.name = ? AND p.deleted_at IS NULL
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -173,7 +174,7 @@ contextRoutes.post('/projects/:name/character-states/initialize', async (c) => {
     const characters = JSON.parse(project.characters_json);
     const registry = initializeRegistryFromGraph(characters);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT OR REPLACE INTO character_states (project_id, registry_json, last_updated_chapter)
       VALUES (?, ?, 0)
     `).bind(project.id, JSON.stringify(registry)).run();
@@ -198,13 +199,13 @@ contextRoutes.put('/projects/:name/character-states/:characterId', async (c) => 
   try {
     const updates = await c.req.json();
 
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT cs.registry_json, p.id as project_id, s.next_chapter_index
       FROM character_states cs
       JOIN projects p ON cs.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: false, error: 'Character states not found' }, 404);
@@ -220,7 +221,7 @@ contextRoutes.put('/projects/:name/character-states/:characterId', async (c) => 
       chapterIndex
     );
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE character_states SET registry_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedRegistry), result.project_id).run();
@@ -243,12 +244,12 @@ contextRoutes.get('/projects/:name/character-states/context', async (c) => {
   const chapterIndex = parseInt(c.req.query('chapter') || '1');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT cs.registry_json
       FROM character_states cs
       JOIN projects p ON cs.project_id = p.id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, context: '' });
@@ -270,12 +271,12 @@ contextRoutes.get('/projects/:name/plot-graph', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT pg.graph_json, pg.last_updated_chapter
       FROM plot_graphs pg
       JOIN projects p ON pg.project_id = p.id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, data: null, message: 'No plot graph found' });
@@ -302,9 +303,9 @@ contextRoutes.post('/projects/:name/plot-graph/initialize', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -312,7 +313,7 @@ contextRoutes.post('/projects/:name/plot-graph/initialize', async (c) => {
 
     const graph = createEmptyPlotGraph();
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT OR REPLACE INTO plot_graphs (project_id, graph_json, last_updated_chapter)
       VALUES (?, ?, 0)
     `).bind(project.id, JSON.stringify(graph)).run();
@@ -330,13 +331,13 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing', async (c) => {
   try {
     const { content, characters, importance = 5 } = await c.req.json();
 
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT pg.graph_json, p.id as project_id, s.next_chapter_index, s.total_chapters
       FROM plot_graphs pg
       JOIN projects p ON pg.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: false, error: 'Plot graph not found' }, 404);
@@ -354,7 +355,7 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing', async (c) => {
       result.total_chapters
     );
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE plot_graphs SET graph_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedGraph), result.project_id).run();
@@ -377,13 +378,13 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing/:nodeId/resolve', a
   const nodeId = c.req.param('nodeId');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT pg.graph_json, p.id as project_id, s.next_chapter_index, s.total_chapters
       FROM plot_graphs pg
       JOIN projects p ON pg.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: false, error: 'Plot graph not found' }, 404);
@@ -394,7 +395,7 @@ contextRoutes.post('/projects/:name/plot-graph/foreshadowing/:nodeId/resolve', a
 
     const updatedGraph = manualResolveForeshadowing(graph, nodeId, chapterIndex, result.total_chapters);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE plot_graphs SET graph_json = ?, updated_at = (unixepoch() * 1000)
       WHERE project_id = ?
     `).bind(JSON.stringify(updatedGraph), result.project_id).run();
@@ -416,13 +417,13 @@ contextRoutes.get('/projects/:name/plot-graph/foreshadowing/urgent', async (c) =
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT pg.graph_json, s.next_chapter_index, s.total_chapters
       FROM plot_graphs pg
       JOIN projects p ON pg.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, data: [] });
@@ -453,12 +454,12 @@ contextRoutes.get('/projects/:name/plot-graph/context', async (c) => {
   const totalChapters = parseInt(c.req.query('total') || '100');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT pg.graph_json
       FROM plot_graphs pg
       JOIN projects p ON pg.project_id = p.id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, context: '' });
@@ -480,13 +481,13 @@ contextRoutes.get('/projects/:name/narrative', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT nc.pacing_curve_json, nc.narrative_arc_json, s.total_chapters
       FROM narrative_config nc
       JOIN projects p ON nc.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: true, data: null, message: 'No narrative config found' });
@@ -519,13 +520,13 @@ contextRoutes.post('/projects/:name/narrative/generate', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT p.id, o.outline_json, s.total_chapters
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -538,7 +539,7 @@ contextRoutes.post('/projects/:name/narrative/generate', async (c) => {
     const outline = JSON.parse(result.outline_json);
     const narrativeArc = generateNarrativeArc(outline.volumes || [], result.total_chapters);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT OR REPLACE INTO narrative_config (project_id, narrative_arc_json)
       VALUES (?, ?)
     `).bind(result.id, JSON.stringify(narrativeArc)).run();
@@ -561,13 +562,13 @@ contextRoutes.get('/projects/:name/narrative/pacing-curve', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT nc.narrative_arc_json, s.total_chapters
       FROM narrative_config nc
       JOIN projects p ON nc.project_id = p.id
       JOIN states s ON p.id = s.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result || !result.narrative_arc_json) {
       return c.json({ success: true, data: null });
@@ -592,13 +593,13 @@ contextRoutes.get('/projects/:name/qc', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT qc.chapter_index, qc.passed, qc.score, qc.qc_json, qc.created_at
       FROM chapter_qc qc
       JOIN projects p ON qc.project_id = p.id
       WHERE p.name = ?
       ORDER BY qc.chapter_index
-    `).bind(name).all();
+    `).all(name);
 
     // Calculate summary stats
     const totalChecked = results.length;
@@ -636,12 +637,12 @@ contextRoutes.get('/projects/:name/qc/:chapter', async (c) => {
   const chapter = parseInt(c.req.param('chapter'));
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT qc.qc_json, qc.passed, qc.score
       FROM chapter_qc qc
       JOIN projects p ON qc.project_id = p.id
       WHERE p.name = ? AND qc.chapter_index = ?
-    `).bind(name, chapter).first() as any;
+    `).get(name, chapter) as any;
 
     if (!result) {
       return c.json({ success: true, data: null, message: 'No QC result for this chapter' });
@@ -670,7 +671,7 @@ contextRoutes.get('/projects/:name/context-overview', async (c) => {
   const name = c.req.param('name');
 
   try {
-    const result = await c.env.DB.prepare(`
+    const result = getDb().prepare(`
       SELECT
         p.id,
         s.next_chapter_index,
@@ -684,17 +685,17 @@ contextRoutes.get('/projects/:name/context-overview', async (c) => {
       LEFT JOIN plot_graphs pg ON p.id = pg.project_id
       LEFT JOIN narrative_config nc ON p.id = nc.project_id
       WHERE p.name = ?
-    `).bind(name).first() as any;
+    `).get(name) as any;
 
     if (!result) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
     // Get QC summary
-    const qcResult = await c.env.DB.prepare(`
+    const qcResult = getDb().prepare(`
       SELECT COUNT(*) as total, SUM(passed) as passed, AVG(score) as avg_score
       FROM chapter_qc WHERE project_id = ?
-    `).bind(result.id).first() as any;
+    `).get(result.id) as any;
 
     return c.json({
       success: true,

@@ -23,7 +23,7 @@ function runWranglerJson(args: string[]): Row[] {
     maxBuffer: 64 * 1024 * 1024,
   });
   const parsed = JSON.parse(raw);
-  return Array.isArray(parsed) ? parsed.flatMap((entry) => entry.results || []) : [];
+  return Array.isArray(parsed) ? parsed.flatMap((entry) => entry) : [];
 }
 
 function localQuery(sql: string): Row[] {

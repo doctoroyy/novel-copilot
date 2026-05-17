@@ -4,10 +4,11 @@
 
 import type { ToolDefinition } from '../types.js';
 import type { AIConfig } from '../../services/aiClient.js';
+import type { Database } from 'better-sqlite3';
 
 /** ExploreAgent 工具执行上下文 */
 export type ExploreToolContext = {
-  db: D1Database;
+  db: Database;
   browserBinding?: Fetcher;
   aiConfig: AIConfig;
   fallbackConfigs?: AIConfig[];

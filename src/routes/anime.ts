@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { getAIConfigFromHeaders, getAIConfigFromRegistry, generateText, type AIConfig } from '../services/aiClient.js';
@@ -84,35 +86,35 @@ function generateId(): string {
 // List all anime projects
 animeRoutes.get('/projects', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT * FROM anime_projects ORDER BY created_at DESC
-    `).all();
+    `).all() as any;
 
     return c.json({ success: true, projects: results || [] });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}) as any;
 
 // Get single project with episodes
 animeRoutes.get('/projects/:id', async (c) => {
   const id = c.req.param('id');
 
   try {
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT * FROM anime_projects WHERE id = ?
-    `).bind(id).first();
+    `).get(id) as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const { results: episodes } = await c.env.DB.prepare(`
+    const episodes = getDb().prepare(`
       SELECT id, episode_num, status, duration_seconds, video_r2_key, error_message, updated_at
       FROM anime_episodes 
       WHERE project_id = ?
       ORDER BY episode_num ASC
-    `).bind(id).all();
+    `).all(id) as any;
 
     return c.json({ 
       success: true, 
@@ -122,7 +124,7 @@ animeRoutes.get('/projects/:id', async (c) => {
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}) as any;
 
 // Create new anime project
 animeRoutes.post('/projects', async (c) => {
@@ -134,9 +136,9 @@ animeRoutes.post('/projects', async (c) => {
     }
 
     // Check if project name already exists
-    const existing = await c.env.DB.prepare(`
+    const existing = getDb().prepare(`
       SELECT id FROM anime_projects WHERE name = ?
-    `).bind(name).first();
+    `).get(name) as any;
 
     if (existing) {
       return c.json({ success: false, error: 'Project name already exists' }, 400);
@@ -145,14 +147,14 @@ animeRoutes.post('/projects', async (c) => {
     const projectId = generateId();
 
     // Insert project
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO anime_projects (id, name, novel_text, total_episodes, status)
       VALUES (?, ?, ?, ?, 'pending')
-    `).bind(projectId, name, novelText, totalEpisodes).run();
+    `).run(projectId, name, novelText, totalEpisodes);
 
     // Split novel into chunks and create episode records
     const chunkSize = Math.ceil(novelText.length / totalEpisodes);
-    const statements = [];
+    const statements: any[] = [];
 
     for (let i = 1; i <= totalEpisodes; i++) {
       const start = (i - 1) * chunkSize;
@@ -160,7 +162,7 @@ animeRoutes.post('/projects', async (c) => {
       const episodeId = generateId();
 
       statements.push(
-        c.env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO anime_episodes (id, project_id, episode_num, novel_chunk, status)
           VALUES (?, ?, ?, ?, 'pending')
         `).bind(episodeId, projectId, i, chunk)
@@ -168,7 +170,12 @@ animeRoutes.post('/projects', async (c) => {
     }
 
     // Batch insert episodes
-    await c.env.DB.batch(statements);
+    const tx = getDb().transaction(() => {
+      for (const stmt of statements) {
+        stmt.run();
+      }
+    });
+    tx();
 
     return c.json({ 
       success: true, 
@@ -186,9 +193,9 @@ animeRoutes.delete('/projects/:id', async (c) => {
 
   try {
     // Episodes will be cascade deleted
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       DELETE FROM anime_projects WHERE id = ?
-    `).bind(id).run();
+    `).run(id);
 
     // TODO: Also delete R2 videos
 
@@ -204,15 +211,15 @@ animeRoutes.delete('/projects/:id', async (c) => {
 animeRoutes.get('/projects/:id/script', async (c) => {
   const projectId = c.req.param('id');
   try {
-    const script = await c.env.DB.prepare(`
+    const script = getDb().prepare(`
       SELECT * FROM anime_series_scripts WHERE project_id = ?
-    `).bind(projectId).first();
+    `).get(projectId) as any;
 
     return c.json({ success: true, script });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}) as any;
 
 // Generate series script
 animeRoutes.post('/projects/:id/script', async (c) => {
@@ -231,9 +238,9 @@ animeRoutes.post('/projects/:id/script', async (c) => {
     if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
 
     // 1. Get Project Data
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT * FROM anime_projects WHERE id = ?
-    `).bind(projectId).first() as AnimeProject | null;
+    `).get(projectId) as AnimeProject | null;
 
     if (!project) {
         return c.json({ success: false, error: 'Project not found' }, 404);
@@ -257,11 +264,11 @@ animeRoutes.post('/projects/:id/script', async (c) => {
 
     // 3. Save Script
     const scriptId = generateId();
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO anime_series_scripts (id, project_id, content)
       VALUES (?, ?, ?)
       ON CONFLICT(project_id) DO UPDATE SET content = excluded.content
-    `).bind(scriptId, projectId, scriptContent).run();
+    `).run(scriptId, projectId, scriptContent);
 
     return c.json({ success: true, scriptId, content: scriptContent });
   } catch (error) {
@@ -275,15 +282,15 @@ animeRoutes.post('/projects/:id/script', async (c) => {
 animeRoutes.get('/projects/:id/characters', async (c) => {
   const projectId = c.req.param('id');
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT * FROM anime_characters WHERE project_id = ? ORDER BY created_at ASC
-    `).bind(projectId).all();
+    `).all(projectId) as any;
 
     return c.json({ success: true, characters: results || [] });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}) as any;
 
 // Extract and Generate Characters
 animeRoutes.post('/projects/:id/characters/generate', async (c) => {
@@ -299,13 +306,13 @@ animeRoutes.post('/projects/:id/characters/generate', async (c) => {
 
   try {
     // 1. Get Series Script (or fallback to Project Novel Text)
-    const scriptRecord = await c.env.DB.prepare(`
+    const scriptRecord = getDb().prepare(`
         SELECT content FROM anime_series_scripts WHERE project_id = ?
-    `).bind(projectId).first();
+    `).get(projectId) as any;
 
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
         SELECT novel_text FROM anime_projects WHERE id = ?
-    `).bind(projectId).first();
+    `).get(projectId) as any;
 
     const sourceText = (scriptRecord?.content as string) || (project?.novel_text as string);
 
@@ -320,10 +327,10 @@ animeRoutes.post('/projects/:id/characters/generate', async (c) => {
     const savedCharacters = [];
     for (const char of characters) {
         const charId = generateId();
-        await c.env.DB.prepare(`
+        getDb().prepare(`
             INSERT INTO anime_characters (id, project_id, name, description, status)
             VALUES (?, ?, ?, ?, 'pending')
-        `).bind(charId, projectId, char.name, char.description).run();
+        `).run(charId, projectId, char.name, char.description);
         
         savedCharacters.push({ id: charId, ...char, status: 'pending' });
     }
@@ -356,9 +363,9 @@ animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
   }
 
   try {
-      const char = await c.env.DB.prepare(`
+      const char = getDb().prepare(`
           SELECT * FROM anime_characters WHERE id = ? AND project_id = ?
-      `).bind(charId, projectId).first();
+      `).get(charId, projectId) as any;
 
       if (!char) return c.json({ success: false, error: 'Character not found' }, 404);
 
@@ -397,11 +404,11 @@ animeRoutes.post('/projects/:id/characters/:charId/image', async (c) => {
       const serveUrl = `/api/anime/projects/${projectId}/characters/${charId}/image.png`;
 
       // Update DB
-      await c.env.DB.prepare(`
+      getDb().prepare(`
           UPDATE anime_characters 
           SET image_url = ?, status = 'generated', updated_at = (unixepoch() * 1000)
           WHERE id = ?
-      `).bind(serveUrl, charId).run();
+      `).run(serveUrl, charId);
 
       return c.json({ success: true, imageUrl: serveUrl });
   } catch (error) {
@@ -414,7 +421,7 @@ animeRoutes.get('/projects/:id/characters/:charId/image.png', async (c) => {
     const { id: projectId, charId } = c.req.param();
     const r2Key = `projects/${projectId}/characters/${charId}.png`;
     
-    const object = await c.env.ANIME_VIDEOS.get(r2Key);
+    const object = await c.env.ANIME_VIDEOS.get(r2Key) as any;
     if (!object) {
         return c.newResponse('Image not found', 404);
     }
@@ -427,7 +434,7 @@ animeRoutes.get('/projects/:id/characters/:charId/image.png', async (c) => {
     return new Response(object.body, {
         headers,
     });
-});
+}) as any;
 
 // Update Character (e.g., set Voice ID)
 animeRoutes.patch('/projects/:id/characters/:charId', async (c) => {
@@ -436,10 +443,10 @@ animeRoutes.patch('/projects/:id/characters/:charId', async (c) => {
 
     try {
         if (voiceId) {
-             await c.env.DB.prepare(`
+             getDb().prepare(`
                 UPDATE anime_characters SET voice_id = ?, updated_at = (unixepoch() * 1000)
                 WHERE id = ? AND project_id = ?
-            `).bind(voiceId, charId, projectId).run();
+            `).run(voiceId, charId, projectId);
         }
         return c.json({ success: true, message: 'Character updated' });
     } catch (error) {
@@ -459,7 +466,7 @@ animeRoutes.get('/voices', async (c) => {
     } catch (error) {
         return c.json({ success: false, error: (error as Error).message }, 500);
     }
-});
+}) as any;
 
 // ==================== Episode Routes ====================
 
@@ -469,10 +476,10 @@ animeRoutes.get('/projects/:projectId/episodes/:num', async (c) => {
   const num = parseInt(c.req.param('num'), 10);
 
   try {
-    const episode = await c.env.DB.prepare(`
+    const episode = getDb().prepare(`
       SELECT * FROM anime_episodes 
       WHERE project_id = ? AND episode_num = ?
-    `).bind(projectId, num).first();
+    `).get(projectId, num) as any;
 
     if (!episode) {
       return c.json({ success: false, error: 'Episode not found' }, 404);
@@ -492,7 +499,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num', async (c) => {
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
-});
+}) as any;
 
 // Serve Episode Video (Main/Fallback)
 animeRoutes.get('/projects/:projectId/episodes/:num/video', async (c) => {
@@ -500,16 +507,16 @@ animeRoutes.get('/projects/:projectId/episodes/:num/video', async (c) => {
     const num = parseInt(c.req.param('num'), 10);
 
     try {
-        const episode = await c.env.DB.prepare(`
+        const episode = getDb().prepare(`
             SELECT video_r2_key FROM anime_episodes 
             WHERE project_id = ? AND episode_num = ?
-        `).bind(projectId, num).first();
+        `).get(projectId, num) as any;
 
         if (!episode || !episode.video_r2_key) {
             return c.newResponse('Video not found', 404);
         }
 
-        const object = await c.env.ANIME_VIDEOS.get(episode.video_r2_key as string);
+        const object = await c.env.ANIME_VIDEOS.get(episode.video_r2_key as string) as any;
         if (!object) {
             return c.newResponse('Video object not found in storage', 404);
         }
@@ -525,7 +532,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num/video', async (c) => {
     } catch (error) {
         return c.newResponse((error as Error).message, 500);
     }
-});
+}) as any;
 
 // Serve Specific Shot Video
 animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/video', async (c) => {
@@ -535,7 +542,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/video', async 
     const key = `projects/${projectId}/episodes/${num}/shot_${shotId}_video.mp4`;
 
     try {
-        const object = await c.env.ANIME_VIDEOS.get(key);
+        const object = await c.env.ANIME_VIDEOS.get(key) as any;
         if (!object) {
             return c.newResponse('Shot video not found', 404);
         }
@@ -548,7 +555,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/video', async 
     } catch (error) {
         return c.newResponse((error as Error).message, 500);
     }
-});
+}) as any;
 
 // Serve Specific Shot Audio
 animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/audio', async (c) => {
@@ -558,7 +565,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/audio', async 
     const key = `projects/${projectId}/episodes/${num}/shot_${shotId}_audio.mp3`;
 
     try {
-        const object = await c.env.ANIME_VIDEOS.get(key);
+        const object = await c.env.ANIME_VIDEOS.get(key) as any;
         if (!object) {
             return c.newResponse('Shot audio not found', 404);
         }
@@ -571,7 +578,7 @@ animeRoutes.get('/projects/:projectId/episodes/:num/shots/:shotId/audio', async 
     } catch (error) {
         return c.newResponse((error as Error).message, 500);
     }
-});
+}) as any;
 
 // Regenerate Shot
 animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', async (c) => {
@@ -590,9 +597,9 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
 
     try {
         // 1. Get Episode
-        const episode = await c.env.DB.prepare(`
+        const episode = getDb().prepare(`
             SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?
-        `).bind(projectId, num).first();
+        `).get(projectId, num) as any;
 
         if (!episode || !episode.storyboard_json) {
              return c.json({ success: false, error: 'Episode not found' }, 404);
@@ -615,7 +622,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
 
         // 3. Save "Pending" state first
         storyboard[shotIndex] = shot;
-        await c.env.DB.prepare(`
+        getDb().prepare(`
             UPDATE anime_episodes 
             SET storyboard_json = ?, status = 'processing', updated_at = (unixepoch() * 1000)
             WHERE id = ?
@@ -636,13 +643,13 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         }
 
         // Look up characters (duplicate logic, should refactor helper)
-        const characters = await c.env.DB.prepare(`
+        const characters = getDb().prepare(`
              SELECT name, image_url, voice_id FROM anime_characters 
              WHERE project_id = ? AND status = 'generated' AND image_url IS NOT NULL
-        `).bind(projectId).all();
+        `).all(projectId) as any;
          
-        const charImageUrls = (characters.results || []).map((c: any) => c.image_url as string).filter(url => !!url);
-        const charVoices = (characters.results || []).reduce((acc: any, char: any) => {
+        const charImageUrls = (characters).map((c: any) => c.image_url as string).filter((url: string) => !!url);
+        const charVoices = (characters).reduce((acc: any, char: any) => {
              if (char.voice_id) acc[char.name] = char.voice_id;
              return acc;
         }, {});
@@ -704,7 +711,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/shots/:shotId/regenerate', 
         // 5. Save Final State
         if (updated) {
              storyboard[shotIndex] = shot;
-             await c.env.DB.prepare(`
+             getDb().prepare(`
                  UPDATE anime_episodes SET storyboard_json = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
              `).bind(JSON.stringify(storyboard), episode.id).run();
         }
@@ -738,9 +745,9 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
 
     // Get project
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT * FROM anime_projects WHERE id = ?
-    `).bind(projectId).first() as AnimeProject | null;
+    `).get(projectId) as AnimeProject | null;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -749,16 +756,16 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
     const end = endEpisode || project.total_episodes;
 
     // Update project status
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE anime_projects SET status = 'processing', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(projectId).run();
+    `).run(projectId);
 
     // Get episodes to process
-    const { results: episodes } = await c.env.DB.prepare(`
+    const episodes = getDb().prepare(`
       SELECT * FROM anime_episodes 
       WHERE project_id = ? AND episode_num >= ? AND episode_num <= ?
       ORDER BY episode_num ASC
-    `).bind(projectId, startEpisode, end).all() as { results: AnimeEpisode[] };
+    `).all(projectId, startEpisode, end) as AnimeEpisode[];
 
     let processedCount = 0;
     const errors: string[] = [];
@@ -814,7 +821,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
                duration: s.duration || 5
            }));
 
-           await c.env.DB.prepare(`
+           getDb().prepare(`
              UPDATE anime_episodes 
              SET script = ?, storyboard_json = ?, status = 'storyboard', updated_at = (unixepoch() * 1000)
              WHERE id = ?
@@ -841,16 +848,16 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
             }
 
             // Fetch validated characters and their voices
-            const characters = await c.env.DB.prepare(`
+            const characters = getDb().prepare(`
                 SELECT name, image_url, voice_id FROM anime_characters 
                 WHERE project_id = ? AND status = 'generated' AND image_url IS NOT NULL
-            `).bind(projectId).all();
+            `).all(projectId) as any;
             
-            const charImageUrls = (characters.results || [])
+            const charImageUrls = (characters)
                 .map((c: any) => c.image_url)
                 .filter((url: string) => !!url); // Ensure no nulls
             
-            const charVoices = (characters.results || []).reduce((acc: any, char: any) => {
+            const charVoices = (characters).reduce((acc: any, char: any) => {
                 if (char.voice_id) acc[char.name] = char.voice_id;
                 return acc;
             }, {});
@@ -962,7 +969,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
                 // SAVE PROGRESS: Update DB after each shot
                 if (updated) {
-                    await c.env.DB.prepare(`
+                    getDb().prepare(`
                         UPDATE anime_episodes 
                         SET storyboard_json = ?, video_r2_key = ?, audio_r2_key = ?, updated_at = (unixepoch() * 1000)
                         WHERE id = ?
@@ -971,11 +978,11 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
             }
 
             // Final status update
-            await c.env.DB.prepare(`
+            getDb().prepare(`
                 UPDATE anime_episodes 
                 SET status = 'done', updated_at = (unixepoch() * 1000)
                 WHERE id = ?
-            `).bind(episode.id).run();
+            `).run(episode.id);
         }
 
         processedCount++;
@@ -1000,7 +1007,7 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
         eventBus.error(`第 ${episode.episode_num} 集生成失败: ${(error as Error).message}`, project.name, userId || undefined);
 
         
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE anime_episodes 
           SET status = 'error', error_message = ?, updated_at = (unixepoch() * 1000)
           WHERE id = ?
@@ -1012,9 +1019,9 @@ animeRoutes.post('/projects/:id/generate', async (c) => {
 
     // Update project status
     const finalStatus = errors.length === episodes.length ? 'error' : 'done';
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE anime_projects SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(finalStatus, projectId).run();
+    `).run(finalStatus, projectId);
 
     return c.json({
       success: true,
@@ -1148,12 +1155,12 @@ function isVeoCompatibleConfig(config: AIConfig | null | undefined): config is A
     return config.provider === 'gemini' || /googleapis\.com|generativelanguage/i.test(config.baseUrl || '');
 }
 
-async function getVeoAIConfig(db: D1Database, preferred?: AIConfig | null): Promise<AIConfig | null> {
+async function getVeoAIConfig(db: Database, preferred?: AIConfig | null): Promise<AIConfig | null> {
     if (isVeoCompatibleConfig(preferred)) {
         return { ...preferred, model: 'veo-3.1-fast-generate-preview' };
     }
 
-    const row = await db.prepare(`
+    const row = db.prepare(`
         SELECT p.id as provider_id, p.api_key_encrypted as api_key, p.base_url as base_url
         FROM provider_registry p
         LEFT JOIN model_registry m ON m.provider_id = p.id AND m.is_active = 1
@@ -1162,7 +1169,7 @@ async function getVeoAIConfig(db: D1Database, preferred?: AIConfig | null): Prom
           AND COALESCE(p.enabled, 1) = 1
         ORDER BY m.is_default DESC, m.updated_at DESC
         LIMIT 1
-    `).first() as { provider_id?: string; api_key?: string; base_url?: string } | null;
+    `).get() as { provider_id?: string; api_key?: string; base_url?: string } | null;
 
     if (!row?.api_key) return null;
     return {
@@ -1455,19 +1462,19 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/script', async (c)
     if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
 
     try {
-        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        const episode = getDb().prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).get(projectId, num) as any;
         if (!episode) return c.json({ success: false, error: 'Episode not found' }, 404);
 
         if (!episode.novel_chunk) return c.json({ success: false, error: 'No novel chunk' }, 400);
 
         // Update status
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
+        getDb().prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).run(episode.id);
 
         const script = await generateTextScript(episode.novel_chunk as string, parseInt(num), aiConfig);
 
-        await c.env.DB.prepare(`
+        getDb().prepare(`
             UPDATE anime_episodes SET script = ?, status = 'script', updated_at = (unixepoch() * 1000) WHERE id = ?
-        `).bind(script, episode.id).run();
+        `).run(script, episode.id);
 
         return c.json({ success: true, script });
 
@@ -1483,17 +1490,17 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/storyboard', async
     if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
 
     try {
-        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        const episode = getDb().prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).get(projectId, num) as any;
         if (!episode) return c.json({ success: false, error: 'Episode not found' }, 404);
 
         if (!episode.script) return c.json({ success: false, error: 'No script found. Please generate script first.' }, 400);
 
         // Update status
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
+        getDb().prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).run(episode.id);
 
         const storyboard = await generateStoryboardFromScript(episode.script as string, aiConfig);
 
-        await c.env.DB.prepare(`
+        getDb().prepare(`
             UPDATE anime_episodes SET storyboard_json = ?, status = 'storyboard', updated_at = (unixepoch() * 1000) WHERE id = ?
         `).bind(JSON.stringify(storyboard), episode.id).run();
 
@@ -1511,24 +1518,24 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
     if (!aiConfig?.apiKey) return c.json({ success: false, error: 'Missing AI Key' }, 401);
 
     try {
-        const episode = await c.env.DB.prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).bind(projectId, num).first();
+        const episode = getDb().prepare(`SELECT * FROM anime_episodes WHERE project_id = ? AND episode_num = ?`).get(projectId, num) as any;
         if (!episode) return c.json({ success: false, error: 'Episode not found' }, 404);
 
         if (!episode.storyboard_json) return c.json({ success: false, error: 'No storyboard found. Please generate storyboard first.' }, 400);
 
         // Update status
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).bind(episode.id).run();
+        getDb().prepare(`UPDATE anime_episodes SET status = 'processing' WHERE id = ?`).run(episode.id);
 
         let storyboard: any[] = JSON.parse(episode.storyboard_json as string);
 
         // Get character voices
-        const characters = await c.env.DB.prepare(`
+        const characters = getDb().prepare(`
             SELECT name, image_url, voice_id FROM anime_characters 
             WHERE project_id = ? AND status = 'generated' AND image_url IS NOT NULL
-        `).bind(projectId).all();
+        `).all(projectId) as any;
         
-        const charImageUrls = (characters.results || []).map((c: any) => c.image_url as string).filter(url => !!url);
-        const charVoices = (characters.results || []).reduce((acc: any, char: any) => {
+        const charImageUrls = (characters).map((c: any) => c.image_url as string).filter((url: string) => !!url);
+        const charVoices = (characters).reduce((acc: any, char: any) => {
             if (char.voice_id) acc[char.name] = char.voice_id;
             return acc;
         }, {});
@@ -1546,7 +1553,7 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
 
         for (let i = 0; i < storyboard.length; i++) {
             // Check cancellation
-            const currentEp = await c.env.DB.prepare(`SELECT status FROM anime_episodes WHERE id = ?`).bind(episode.id).first();
+            const currentEp = getDb().prepare(`SELECT status FROM anime_episodes WHERE id = ?`).get(episode.id) as any;
             if (!currentEp || currentEp.status === 'stopped' || currentEp.status === 'pending') {
                 return c.json({ success: false, message: 'Generation cancelled' });
             }
@@ -1601,13 +1608,13 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
 
             if (updated || hasError) {
                 storyboard[i] = shot;
-                await c.env.DB.prepare(`UPDATE anime_episodes SET storyboard_json = ?, updated_at = (unixepoch() * 1000) WHERE id = ?`)
+                getDb().prepare(`UPDATE anime_episodes SET storyboard_json = ?, updated_at = (unixepoch() * 1000) WHERE id = ?`)
                     .bind(JSON.stringify(storyboard), episode.id).run();
             }
         }
 
         const finalStatus = hasError ? 'error' : 'done';
-        await c.env.DB.prepare(`UPDATE anime_episodes SET status = ? WHERE id = ?`).bind(finalStatus, episode.id).run();
+        getDb().prepare(`UPDATE anime_episodes SET status = ? WHERE id = ?`).run(finalStatus, episode.id);
 
         return c.json({ success: true, storyboard });
 
@@ -1619,20 +1626,20 @@ animeRoutes.post('/projects/:projectId/episodes/:num/generate/video', async (c) 
 // 4. Cancel/Stop
 animeRoutes.post('/projects/:projectId/episodes/:num/cancel', async (c) => {
     const { projectId, num } = c.req.param();
-    await c.env.DB.prepare(`
+    getDb().prepare(`
         UPDATE anime_episodes SET status = 'stopped' 
         WHERE project_id = ? AND episode_num = ? AND status = 'processing'
-    `).bind(projectId, num).run();
+    `).run(projectId, num);
     return c.json({ success: true });
 });
 
 // 5. Delete Content
 animeRoutes.delete('/projects/:projectId/episodes/:num/content', async (c) => {
     const { projectId, num } = c.req.param();
-    await c.env.DB.prepare(`
+    getDb().prepare(`
         UPDATE anime_episodes 
         SET status = 'pending', script = NULL, storyboard_json = NULL, video_r2_key = NULL, audio_r2_key = NULL, error_message = NULL
         WHERE project_id = ? AND episode_num = ?
-    `).bind(projectId, num).run();
+    `).run(projectId, num);
     return c.json({ success: true });
 });

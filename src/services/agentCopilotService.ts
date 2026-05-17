@@ -1,3 +1,4 @@
+import type { Database } from 'better-sqlite3';
 import { z } from 'zod';
 import type { AIConfig } from './aiClient.js';
 import { generateTextStreamCollect, generateTextWithRetry } from './aiClient.js';
@@ -466,23 +467,23 @@ function buildPreviewFromActions(actions: AgentProposalAction[]): ProposalRespon
   return preview;
 }
 
-async function getTableColumns(db: D1Database, tableName: string): Promise<Set<string>> {
-  const { results } = await db.prepare(`PRAGMA table_info(${tableName})`).all();
+async function getTableColumns(db: Database, tableName: string): Promise<Set<string>> {
+  const results = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return new Set((results || []).map((row: any) => String(row.name)));
 }
 
 async function getProjectIdentity(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string
 ): Promise<ProjectIdentity | null> {
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT id, name
     FROM projects
     WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectRef, projectRef, userId, projectRef).first();
+  `).get(projectRef, projectRef, userId, projectRef);
 
   if (!row) return null;
   return {
@@ -491,9 +492,9 @@ async function getProjectIdentity(
   };
 }
 
-async function ensureBuiltInSkills(db: D1Database): Promise<void> {
+async function ensureBuiltInSkills(db: Database): Promise<void> {
   for (const skill of BUILTIN_SKILLS) {
-    await db.prepare(`
+    db.prepare(`
       INSERT INTO agent_skills (
         id,
         slug,
@@ -533,10 +534,10 @@ async function ensureBuiltInSkills(db: D1Database): Promise<void> {
   }
 }
 
-async function listPlatformSkills(db: D1Database): Promise<AgentSkillRecord[]> {
+async function listPlatformSkills(db: Database): Promise<AgentSkillRecord[]> {
   await ensureBuiltInSkills(db);
 
-  const { results } = await db.prepare(`
+  const results = db.prepare(`
     SELECT *
     FROM agent_skills
     WHERE is_active = 1
@@ -559,9 +560,9 @@ async function listPlatformSkills(db: D1Database): Promise<AgentSkillRecord[]> {
   }));
 }
 
-async function getDefaultEnabledSkillIds(db: D1Database): Promise<string[]> {
+async function getDefaultEnabledSkillIds(db: Database): Promise<string[]> {
   await ensureBuiltInSkills(db);
-  const { results } = await db.prepare(`
+  const results = db.prepare(`
     SELECT id
     FROM agent_skills
     WHERE is_active = 1 AND default_enabled = 1
@@ -571,14 +572,14 @@ async function getDefaultEnabledSkillIds(db: D1Database): Promise<string[]> {
 }
 
 async function getOrCreateProjectSettings(
-  db: D1Database,
+  db: Database,
   projectId: string
 ): Promise<ProjectCopilotSettings> {
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT enabled, enabled_skill_ids_json
     FROM project_agent_settings
     WHERE project_id = ?
-  `).bind(projectId).first();
+  `).get(projectId);
 
   if (row) {
     return {
@@ -588,7 +589,7 @@ async function getOrCreateProjectSettings(
   }
 
   const defaultSkillIds = await getDefaultEnabledSkillIds(db);
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO project_agent_settings (
       project_id,
       enabled,
@@ -605,16 +606,16 @@ async function getOrCreateProjectSettings(
 }
 
 async function listSessions(
-  db: D1Database,
+  db: Database,
   projectId: string,
   userId: string
 ): Promise<AgentSessionSummary[]> {
-  const { results } = await db.prepare(`
+  const results = db.prepare(`
     SELECT id, title, enabled_skill_ids_json, created_at, updated_at
     FROM agent_sessions
     WHERE project_id = ? AND user_id = ? AND archived_at IS NULL
     ORDER BY updated_at DESC, created_at DESC
-  `).bind(projectId, userId).all();
+  `).all(projectId, userId);
 
   return (results || []).map((row: any) => ({
     id: String(row.id),
@@ -626,7 +627,7 @@ async function listSessions(
 }
 
 async function getSessionRow(
-  db: D1Database,
+  db: Database,
   sessionId: string,
   userId: string
 ): Promise<{
@@ -638,13 +639,13 @@ async function getSessionRow(
   createdAt: number;
   updatedAt: number;
 } | null> {
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT s.id, s.title, s.project_id, s.enabled_skill_ids_json, s.created_at, s.updated_at, p.name AS project_name
     FROM agent_sessions s
     JOIN projects p ON p.id = s.project_id
     WHERE s.id = ? AND s.user_id = ? AND s.archived_at IS NULL AND p.deleted_at IS NULL
     LIMIT 1
-  `).bind(sessionId, userId).first();
+  `).get(sessionId, userId);
 
   if (!row) return null;
   return {
@@ -658,25 +659,25 @@ async function getSessionRow(
   };
 }
 
-async function touchSession(db: D1Database, sessionId: string, title?: string): Promise<void> {
+async function touchSession(db: Database, sessionId: string, title?: string): Promise<void> {
   if (title) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE agent_sessions
       SET title = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(title, sessionId).run();
+    `).run(title, sessionId);
     return;
   }
 
-  await db.prepare(`
+  db.prepare(`
     UPDATE agent_sessions
     SET updated_at = (unixepoch() * 1000)
     WHERE id = ?
-  `).bind(sessionId).run();
+  `).run(sessionId);
 }
 
 async function insertMessage(
-  db: D1Database,
+  db: Database,
   sessionId: string,
   role: AgentMessageRecord['role'],
   content: string,
@@ -684,7 +685,7 @@ async function insertMessage(
 ): Promise<AgentMessageRecord> {
   const id = crypto.randomUUID();
   const createdAt = Date.now();
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO agent_messages (
       id,
       session_id,
@@ -712,7 +713,7 @@ async function insertMessage(
 }
 
 async function insertProposalRecord(
-  db: D1Database,
+  db: Database,
   sessionId: string,
   userMessageId: string | null,
   assistantMessageId: string | null,
@@ -723,7 +724,7 @@ async function insertProposalRecord(
   const id = crypto.randomUUID();
   const createdAt = Date.now();
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO agent_proposals (
       id,
       session_id,
@@ -774,13 +775,13 @@ async function insertProposalRecord(
   };
 }
 
-async function loadMessages(db: D1Database, sessionId: string): Promise<AgentMessageRecord[]> {
-  const { results } = await db.prepare(`
+async function loadMessages(db: Database, sessionId: string): Promise<AgentMessageRecord[]> {
+  const results = db.prepare(`
     SELECT id, role, content, payload_json, created_at
     FROM agent_messages
     WHERE session_id = ?
     ORDER BY created_at ASC
-  `).bind(sessionId).all();
+  `).all(sessionId);
 
   return (results || []).map((row: any) => ({
     id: String(row.id),
@@ -791,13 +792,13 @@ async function loadMessages(db: D1Database, sessionId: string): Promise<AgentMes
   }));
 }
 
-async function loadProposals(db: D1Database, sessionId: string): Promise<AgentProposalRecord[]> {
-  const { results } = await db.prepare(`
+async function loadProposals(db: Database, sessionId: string): Promise<AgentProposalRecord[]> {
+  const results = db.prepare(`
     SELECT *
     FROM agent_proposals
     WHERE session_id = ?
     ORDER BY created_at ASC
-  `).bind(sessionId).all();
+  `).all(sessionId);
 
   return (results || []).map((row: any) => ({
     id: String(row.id),
@@ -824,7 +825,7 @@ async function loadProposals(db: D1Database, sessionId: string): Promise<AgentPr
   }));
 }
 
-async function loadSessionEntries(db: D1Database, sessionId: string): Promise<CopilotEntry[]> {
+async function loadSessionEntries(db: Database, sessionId: string): Promise<CopilotEntry[]> {
   const [messages, proposals] = await Promise.all([
     loadMessages(db, sessionId),
     loadProposals(db, sessionId),
@@ -845,7 +846,7 @@ async function loadSessionEntries(db: D1Database, sessionId: string): Promise<Co
 }
 
 async function buildProjectSnapshot(
-  db: D1Database,
+  db: Database,
   project: ProjectIdentity,
   userPrompt: string
 ): Promise<ProjectSnapshot> {
@@ -869,7 +870,7 @@ async function buildProjectSnapshot(
     'c.characters_json',
   ];
 
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT ${selectColumns.join(', ')}
     FROM projects p
     LEFT JOIN states s ON s.project_id = p.id
@@ -877,18 +878,18 @@ async function buildProjectSnapshot(
     LEFT JOIN characters c ON c.project_id = p.id
     WHERE p.id = ?
     LIMIT 1
-  `).bind(project.id).first();
+  `).get(project.id);
 
   if (!row) {
     throw new Error('Project not found');
   }
 
-  const { results: chapterIndexRows } = await db.prepare(`
+  const chapterIndexRows = db.prepare(`
     SELECT chapter_index
     FROM chapters
     WHERE project_id = ? AND deleted_at IS NULL
     ORDER BY chapter_index ASC
-  `).bind(project.id).all();
+  `).all(project.id);
 
   const chapterIndexes = (chapterIndexRows || []).map((chapter: any) => parseNumber(chapter.chapter_index)).filter(Boolean);
   const mentionedIndexes = parseChapterMentions(userPrompt);
@@ -896,22 +897,22 @@ async function buildProjectSnapshot(
   let chapterRows: any[] = [];
   if (mentionedIndexes.length > 0) {
     const placeholders = mentionedIndexes.map(() => '?').join(', ');
-    const response = await db.prepare(`
+    const response = db.prepare(`
       SELECT chapter_index, content
       FROM chapters
       WHERE project_id = ? AND deleted_at IS NULL AND chapter_index IN (${placeholders})
       ORDER BY chapter_index ASC
-    `).bind(project.id, ...mentionedIndexes).all();
-    chapterRows = response.results || [];
+    `).all(project.id, ...mentionedIndexes);
+    chapterRows = response;
   } else {
-    const response = await db.prepare(`
+    const response = db.prepare(`
       SELECT chapter_index, content
       FROM chapters
       WHERE project_id = ? AND deleted_at IS NULL
       ORDER BY chapter_index DESC
       LIMIT 3
-    `).bind(project.id).all();
-    chapterRows = (response.results || []).reverse();
+    `).all(project.id);
+    chapterRows = (response).reverse();
   }
 
   const state = {
@@ -1211,12 +1212,12 @@ function requireInteger(value: unknown, fieldName: string): number {
   return parsed;
 }
 
-async function recalculateNextChapterIndex(db: D1Database, projectId: string): Promise<void> {
+async function recalculateNextChapterIndex(db: Database, projectId: string): Promise<void> {
   await rebaseProjectStateToContinuity(db, projectId);
 }
 
 async function executeUpdateProject(
-  db: D1Database,
+  db: Database,
   projectId: string,
   payload: Record<string, unknown>
 ): Promise<string> {
@@ -1241,20 +1242,20 @@ async function executeUpdateProject(
   }
 
   if (updates.length > 0) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE projects
       SET ${updates.join(', ')}
       WHERE id = ?
-    `).bind(...values, projectId).run();
+    `).run(...values, projectId);
   }
 
   if ('minChapterWords' in payload) {
     const minChapterWords = requireInteger(payload.minChapterWords, 'minChapterWords');
-    await db.prepare(`
+    db.prepare(`
       UPDATE states
       SET min_chapter_words = ?
       WHERE project_id = ?
-    `).bind(minChapterWords, projectId).run();
+    `).run(minChapterWords, projectId);
     touchedFields.push('minChapterWords');
   }
 
@@ -1266,7 +1267,7 @@ async function executeUpdateProject(
 }
 
 async function executeReplaceOutline(
-  db: D1Database,
+  db: Database,
   projectId: string,
   payload: Record<string, unknown>
 ): Promise<string> {
@@ -1275,12 +1276,12 @@ async function executeReplaceOutline(
     throw new Error('replace_outline 缺少 outline 对象');
   }
 
-  const stateRow = await db.prepare(`
+  const stateRow = db.prepare(`
     SELECT total_chapters, min_chapter_words
     FROM states
     WHERE project_id = ?
     LIMIT 1
-  `).bind(projectId).first();
+  `).get(projectId);
 
   const outline = normalizeNovelOutline(outlinePayload, {
     fallbackMinChapterWords: (stateRow as any)?.min_chapter_words,
@@ -1290,7 +1291,7 @@ async function executeReplaceOutline(
     throw new Error('replace_outline 的 outline 结构无效');
   }
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO outlines (project_id, outline_json)
     VALUES (?, ?)
     ON CONFLICT(project_id) DO UPDATE SET outline_json = excluded.outline_json
@@ -1298,18 +1299,18 @@ async function executeReplaceOutline(
 
   const totalChapters = Number(outline.totalChapters);
   if (Number.isFinite(totalChapters) && totalChapters > 0) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE states
       SET total_chapters = ?
       WHERE project_id = ?
-    `).bind(totalChapters, projectId).run();
+    `).run(totalChapters, projectId);
   }
 
   return '已替换项目大纲';
 }
 
 async function executeUpdateCharacters(
-  db: D1Database,
+  db: Database,
   projectId: string,
   payload: Record<string, unknown>
 ): Promise<string> {
@@ -1318,7 +1319,7 @@ async function executeUpdateCharacters(
     throw new Error('update_characters 缺少 characters 对象');
   }
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO characters (project_id, characters_json)
     VALUES (?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
@@ -1330,7 +1331,7 @@ async function executeUpdateCharacters(
 }
 
 async function executeUpsertChapter(
-  db: D1Database,
+  db: Database,
   projectId: string,
   payload: Record<string, unknown>
 ): Promise<string> {
@@ -1347,32 +1348,32 @@ async function executeUpsertChapter(
 
   let resolvedIndex = chapterIndex;
   if (resolvedIndex == null) {
-    const row = await db.prepare(`
+    const row = db.prepare(`
       SELECT next_chapter_index
       FROM states
       WHERE project_id = ?
-    `).bind(projectId).first();
+    `).get(projectId);
     resolvedIndex = parseNumber((row as any)?.next_chapter_index, 1);
   }
 
-  const existing = await db.prepare(`
+  const existing = db.prepare(`
     SELECT id
     FROM chapters
     WHERE project_id = ? AND chapter_index = ?
     LIMIT 1
-  `).bind(projectId, resolvedIndex).first();
+  `).get(projectId, resolvedIndex);
 
   if (existing) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE chapters
       SET content = ?, deleted_at = NULL
       WHERE id = ?
     `).bind(content, (existing as any).id).run();
   } else {
-    await db.prepare(`
+    db.prepare(`
       INSERT INTO chapters (project_id, chapter_index, content)
       VALUES (?, ?, ?)
-    `).bind(projectId, resolvedIndex, content).run();
+    `).run(projectId, resolvedIndex, content);
   }
 
   await recalculateNextChapterIndex(db, projectId);
@@ -1380,23 +1381,23 @@ async function executeUpsertChapter(
 }
 
 async function executeDeleteChapter(
-  db: D1Database,
+  db: Database,
   projectId: string,
   payload: Record<string, unknown>
 ): Promise<string> {
   const chapterIndex = requireInteger(payload.chapterIndex, 'chapterIndex');
-  await db.prepare(`
+  db.prepare(`
     UPDATE chapters
     SET deleted_at = (unixepoch() * 1000)
     WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-  `).bind(projectId, chapterIndex).run();
+  `).run(projectId, chapterIndex);
 
   await trimProjectToContinuity(db, projectId);
   return `已删除第 ${chapterIndex} 章`;
 }
 
 async function executeProposalAction(
-  db: D1Database,
+  db: Database,
   projectId: string,
   action: AgentProposalAction
 ): Promise<string> {
@@ -1417,7 +1418,7 @@ async function executeProposalAction(
 }
 
 export async function getCopilotWorkspace(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string
 ): Promise<ProjectCopilotWorkspace> {
@@ -1441,7 +1442,7 @@ export async function getCopilotWorkspace(
 }
 
 export async function updateCopilotSettings(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string,
   updates: Partial<ProjectCopilotSettings>
@@ -1457,7 +1458,7 @@ export async function updateCopilotSettings(
     enabledSkillIds: updates.enabledSkillIds ?? current.enabledSkillIds,
   };
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO project_agent_settings (
       project_id,
       enabled,
@@ -1479,7 +1480,7 @@ export async function updateCopilotSettings(
 }
 
 export async function createCopilotSession(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string,
   requestedTitle?: string
@@ -1494,7 +1495,7 @@ export async function createCopilotSession(
   const title = requestedTitle?.trim() || '新会话';
   const createdAt = Date.now();
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO agent_sessions (
       id,
       project_id,
@@ -1524,7 +1525,7 @@ export async function createCopilotSession(
 }
 
 export async function getCopilotSessionDetail(
-  db: D1Database,
+  db: Database,
   sessionId: string,
   userId: string
 ): Promise<AgentSessionDetail> {
@@ -1547,7 +1548,7 @@ export async function getCopilotSessionDetail(
 }
 
 export async function sendCopilotMessage(params: {
-  db: D1Database;
+  db: Database;
   sessionId: string;
   userId: string;
   content: string;
@@ -1635,7 +1636,7 @@ export async function sendCopilotMessage(params: {
 }
 
 export async function streamCopilotMessage(params: {
-  db: D1Database;
+  db: Database;
   sessionId: string;
   userId: string;
   content: string;
@@ -1766,17 +1767,17 @@ export async function streamCopilotMessage(params: {
 }
 
 export async function confirmCopilotProposal(
-  db: D1Database,
+  db: Database,
   proposalId: string,
   userId: string
 ): Promise<AgentSessionDetail> {
-  const proposalRow = await db.prepare(`
+  const proposalRow = db.prepare(`
     SELECT p.*, s.project_id, s.user_id
     FROM agent_proposals p
     JOIN agent_sessions s ON s.id = p.session_id
     WHERE p.id = ? AND s.user_id = ?
     LIMIT 1
-  `).bind(proposalId, userId).first();
+  `).get(proposalId, userId);
 
   if (!proposalRow) {
     throw new Error('Proposal not found');
@@ -1791,11 +1792,11 @@ export async function confirmCopilotProposal(
   const projectId = String((proposalRow as any).project_id);
   const actions = parseJson<AgentProposalAction[]>((proposalRow as any).actions_json, []);
 
-  await db.prepare(`
+  db.prepare(`
     UPDATE agent_proposals
     SET status = 'confirmed', updated_at = (unixepoch() * 1000)
     WHERE id = ?
-  `).bind(proposalId).run();
+  `).run(proposalId);
 
   await insertMessage(db, sessionId, 'trace', '开始执行 proposal', {
     title: '开始执行 proposal',
@@ -1814,7 +1815,7 @@ export async function confirmCopilotProposal(
     }
 
     const resultSummary = results.join('\n');
-    await db.prepare(`
+    db.prepare(`
       UPDATE agent_proposals
       SET
         status = 'executed',
@@ -1822,7 +1823,7 @@ export async function confirmCopilotProposal(
         executed_at = (unixepoch() * 1000),
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(resultSummary, proposalId).run();
+    `).run(resultSummary, proposalId);
 
     await insertMessage(db, sessionId, 'result', resultSummary, {
       results,
@@ -1830,14 +1831,14 @@ export async function confirmCopilotProposal(
     await touchSession(db, sessionId);
   } catch (error) {
     const message = (error as Error).message;
-    await db.prepare(`
+    db.prepare(`
       UPDATE agent_proposals
       SET
         status = 'failed',
         error_message = ?,
         updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(message, proposalId).run();
+    `).run(message, proposalId);
 
     await insertMessage(db, sessionId, 'result', `执行失败：${message}`, {
       error: message,

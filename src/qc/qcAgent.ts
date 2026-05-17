@@ -1,3 +1,4 @@
+import type { Database } from 'better-sqlite3';
 import { getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
 import { createBackgroundTask, updateTaskMessage, completeTask, getTaskRuntimeControl } from '../routes/tasks.js';
 import { runQuickQC, type QCResult, type QCIssue } from './multiDimensionalQC.js';
@@ -88,25 +89,25 @@ function buildActionableIssues(chapters: Record<number, ChapterQCEntry>): Action
 }
 
 export async function runQCScan(
-  db: D1Database,
+  db: Database,
   projectId: string,
   scanMode: ScanMode,
   taskId: number,
   reportId: string,
 ): Promise<QCReport> {
   // Load chapters
-  const { results: chapterRows } = await db.prepare(`
+  const chapterRows = db.prepare(`
     SELECT chapter_index, content FROM chapters
     WHERE project_id = ? AND deleted_at IS NULL
     ORDER BY chapter_index
-  `).bind(projectId).all() as { results: { chapter_index: number; content: string }[] };
+  `).all(projectId) as { chapter_index: number; content: string }[];
 
   if (chapterRows.length === 0) {
     throw new Error('没有章节可扫描');
   }
 
   // Load project settings
-  const project = await db.prepare(`
+  const project = db.prepare(`
     SELECT s.total_chapters, s.min_chapter_words,
            o.outline_json,
            cs.registry_json as character_states_json
@@ -115,7 +116,7 @@ export async function runQCScan(
     LEFT JOIN outlines o ON p.id = o.project_id
     LEFT JOIN character_states cs ON p.id = cs.project_id
     WHERE p.id = ?
-  `).bind(projectId).first() as any;
+  `).get(projectId) as any;
 
   const outlineJson = project?.outline_json ? JSON.parse(project.outline_json) : null;
   const totalChapters = project?.total_chapters || chapterRows.length;
@@ -449,7 +450,7 @@ function findChapterOutline(outlineJson: any, chapterIndex: number): any | null 
 }
 
 export async function runQCScanInBackground(params: {
-  env: { DB: D1Database };
+  env: { DB: Database };
   taskId: number;
   projectId: string;
   userId: string;
@@ -463,7 +464,7 @@ export async function runQCScanInBackground(params: {
     const report = await runQCScan(db, projectId, scanMode, taskId, reportId);
 
     // Save report to DB
-    await db.prepare(`
+    db.prepare(`
       UPDATE qc_reports
       SET report_json = ?,
           overall_score = ?,
@@ -488,9 +489,9 @@ export async function runQCScanInBackground(params: {
     await updateTaskMessage(db, taskId, `扫描完成: 评分 ${report.summary.overallScore}/100, ${report.actionableIssues.length} 个可修复问题`);
   } catch (error) {
     const msg = (error as Error).message || '扫描失败';
-    await db.prepare(`
+    db.prepare(`
       UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(reportId).run();
+    `).run(reportId);
     await completeTask(db, taskId, false, msg);
   }
 }
