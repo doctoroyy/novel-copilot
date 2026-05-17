@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "rootDir": "..",
+    "declaration": true,
+    "sourceMap": true,
+    "paths": {
+      "@src/*": ["../src/*"],
+      "@cloudflare/playwright": ["./shims/cloudflare-playwright.ts"]
+    },
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "../web", "../src/**/*.test.ts"]
+}

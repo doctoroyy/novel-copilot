@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import { getProviderPreset, getProviderPresets, normalizeGeminiBaseUrl, normalizeProviderId, buildOpenAiModelsUrl } from '../services/providerCatalog.js';
 import {
@@ -12,7 +14,7 @@ import {
 } from '../services/imagineTemplateJobService.js';
 
 interface Bindings {
-  DB: D1Database;
+  DB: Database;
   FANQIE_BROWSER?: Fetcher;
   GENERATION_QUEUE?: Queue<any>;
 }
@@ -29,9 +31,9 @@ const requireAdmin = async (c: any, next: () => Promise<void>) => {
     return c.json({ success: false, error: '未登录' }, 401);
   }
 
-  const user = await c.env.DB.prepare(`
+  const user = getDb().prepare(`
     SELECT role FROM users WHERE id = ?
-  `).bind(userId).first();
+  `).get(userId);
 
   if (!user || (user as any).role !== 'admin') {
     return c.json({ success: false, error: '需要管理员权限' }, 403);
@@ -46,7 +48,7 @@ adminRoutes.use('/*', requireAdmin);
 // Get all users with stats
 adminRoutes.get('/users', async (c) => {
   try {
-    const { results: users } = await c.env.DB.prepare(`
+    const users = getDb().prepare(`
       SELECT 
         u.id, 
         u.username, 
@@ -75,7 +77,7 @@ adminRoutes.get('/users/:id/projects', async (c) => {
   const userId = c.req.param('id');
 
   try {
-    const { results: projects } = await c.env.DB.prepare(`
+    const projects = getDb().prepare(`
       SELECT 
         p.id, 
         p.name, 
@@ -86,7 +88,7 @@ adminRoutes.get('/users/:id/projects', async (c) => {
       LEFT JOIN states s ON p.id = s.project_id
       WHERE p.user_id = ? AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC
-    `).bind(userId).all();
+    `).all(userId);
 
     return c.json({ success: true, projects });
   } catch (error) {
@@ -180,20 +182,20 @@ adminRoutes.get('/bible-templates/jobs/:id', async (c) => {
 // Get system stats
 adminRoutes.get('/stats', async (c) => {
   try {
-    const userCount = await c.env.DB.prepare(`
+    const userCount = getDb().prepare(`
       SELECT COUNT(*) as count FROM users
-    `).first() as any;
+    `).get() as any;
 
-    const projectCount = await c.env.DB.prepare(`
+    const projectCount = getDb().prepare(`
       SELECT COUNT(*) as count FROM projects WHERE deleted_at IS NULL
-    `).first() as any;
+    `).get() as any;
 
-    const chapterCount = await c.env.DB.prepare(`
+    const chapterCount = getDb().prepare(`
       SELECT COUNT(*) as count FROM chapters WHERE deleted_at IS NULL
-    `).first() as any;
+    `).get() as any;
 
     // Get recent activity
-    const { results: recentProjects } = await c.env.DB.prepare(`
+    const recentProjects = getDb().prepare(`
       SELECT 
         p.name,
         p.created_at,
@@ -226,7 +228,7 @@ adminRoutes.get('/stats', async (c) => {
 // Get all credit features
 adminRoutes.get('/credit-features', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(
+    const results = getDb().prepare(
       'SELECT * FROM credit_features ORDER BY category, feature_key'
     ).all();
     return c.json({ success: true, features: results });
@@ -243,10 +245,10 @@ adminRoutes.post('/credit-features', async (c) => {
       return c.json({ success: false, error: '功能标识和名称不能为空' }, 400);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO credit_features (feature_key, name, description, base_cost, category, is_vip_only, model_multiplier_enabled)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(featureKey, name, description || '', baseCost || 10, category || 'basic', isVipOnly ? 1 : 0, modelMultiplierEnabled !== false ? 1 : 0).run();
+    `).run(featureKey, name, description || '', baseCost || 10, category || 'basic', isVipOnly ? 1 : 0, modelMultiplierEnabled !== false ? 1 : 0);
 
     return c.json({ success: true });
   } catch (error) {
@@ -260,7 +262,7 @@ adminRoutes.put('/credit-features/:key', async (c) => {
   try {
     const { name, description, baseCost, category, isVipOnly, isActive, modelMultiplierEnabled } = await c.req.json();
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE credit_features 
       SET name = COALESCE(?, name),
           description = COALESCE(?, description),
@@ -289,7 +291,7 @@ adminRoutes.put('/credit-features/:key', async (c) => {
 adminRoutes.delete('/credit-features/:key', async (c) => {
   const key = c.req.param('key');
   try {
-    await c.env.DB.prepare('DELETE FROM credit_features WHERE feature_key = ?').bind(key).run();
+    getDb().prepare('DELETE FROM credit_features WHERE feature_key = ?').run(key);
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -303,7 +305,7 @@ adminRoutes.delete('/credit-features/:key', async (c) => {
 // Get all feature model mappings
 adminRoutes.get('/feature-models', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT fmm.*, m.model_name, m.provider_id as provider, cf.name as feature_name
       FROM feature_model_mappings fmm
       JOIN model_registry m ON fmm.model_id = m.id
@@ -324,14 +326,14 @@ adminRoutes.post('/feature-models', async (c) => {
       return c.json({ success: false, error: 'featureKey and modelId are required' }, 400);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO feature_model_mappings (feature_key, model_id, temperature)
       VALUES (?, ?, ?)
       ON CONFLICT(feature_key) DO UPDATE SET
         model_id = excluded.model_id,
         temperature = excluded.temperature,
         updated_at = (unixepoch() * 1000)
-    `).bind(featureKey, modelId, temperature || 0.7).run();
+    `).run(featureKey, modelId, temperature || 0.7);
 
     return c.json({ success: true });
   } catch (error) {
@@ -350,7 +352,7 @@ adminRoutes.post('/feature-models', async (c) => {
 // Get all providers
 adminRoutes.get('/provider-registry', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT p.*,
         (SELECT COUNT(*) FROM model_registry m WHERE m.provider_id = p.id) as model_count
       FROM provider_registry p
@@ -390,9 +392,9 @@ adminRoutes.put('/provider-registry/:id', async (c) => {
     if (updates.length > 0) {
       updates.push("updated_at = (unixepoch() * 1000)");
       values.push(id);
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE provider_registry SET ${updates.join(', ')} WHERE id = ?
-      `).bind(...values).run();
+      `).run(...values);
     }
 
     return c.json({ success: true });
@@ -413,17 +415,17 @@ adminRoutes.post('/provider-registry', async (c) => {
       return c.json({ success: false, error: 'id 和 name 不能为空' }, 400);
     }
 
-    const existing = await c.env.DB.prepare('SELECT id FROM provider_registry WHERE id = ?').bind(id).first();
+    const existing = getDb().prepare('SELECT id FROM provider_registry WHERE id = ?').get(id);
     if (existing) {
       return c.json({ success: false, error: 'Provider 已存在' }, 400);
     }
 
     // Get max display_order
-    const maxOrder = await c.env.DB.prepare(
+    const maxOrder = getDb().prepare(
       'SELECT COALESCE(MAX(display_order), -1) as max_order FROM provider_registry'
-    ).first() as any;
+    ).get() as any;
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO provider_registry (id, name, protocol, base_url, api_key_encrypted, display_order)
       VALUES (?, ?, ?, ?, ?, ?)
     `).bind(
@@ -446,16 +448,16 @@ adminRoutes.delete('/provider-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
     // First delete feature_model_mappings for all models of this provider
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       DELETE FROM feature_model_mappings
       WHERE model_id IN (SELECT id FROM model_registry WHERE provider_id = ?)
-    `).bind(id).run();
+    `).run(id);
 
     // Delete all models of this provider
-    await c.env.DB.prepare('DELETE FROM model_registry WHERE provider_id = ?').bind(id).run();
+    getDb().prepare('DELETE FROM model_registry WHERE provider_id = ?').run(id);
 
     // Delete the provider itself
-    await c.env.DB.prepare('DELETE FROM provider_registry WHERE id = ?').bind(id).run();
+    getDb().prepare('DELETE FROM provider_registry WHERE id = ?').run(id);
 
     return c.json({ success: true });
   } catch (error) {
@@ -467,7 +469,7 @@ adminRoutes.delete('/provider-registry/:id', async (c) => {
 adminRoutes.patch('/provider-registry/:id/toggle', async (c) => {
   const id = c.req.param('id');
   try {
-    const provider = await c.env.DB.prepare('SELECT enabled FROM provider_registry WHERE id = ?').bind(id).first() as any;
+    const provider = getDb().prepare('SELECT enabled FROM provider_registry WHERE id = ?').get(id) as any;
     if (!provider) {
       return c.json({ success: false, error: 'Provider 不存在' }, 404);
     }
@@ -475,15 +477,15 @@ adminRoutes.patch('/provider-registry/:id/toggle', async (c) => {
     const newEnabled = provider.enabled ? 0 : 1;
 
     // Toggle provider
-    await c.env.DB.prepare(
+    getDb().prepare(
       'UPDATE provider_registry SET enabled = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
-    ).bind(newEnabled, id).run();
+    ).run(newEnabled, id);
 
     // If disabling, also disable all models
     if (!newEnabled) {
-      await c.env.DB.prepare(
+      getDb().prepare(
         'UPDATE model_registry SET is_active = 0, updated_at = (unixepoch() * 1000) WHERE provider_id = ?'
-      ).bind(id).run();
+      ).run(id);
     }
 
     return c.json({ success: true, enabled: Boolean(newEnabled) });
@@ -497,7 +499,7 @@ adminRoutes.patch('/provider-registry/:id/toggle', async (c) => {
 // ==========================================
 adminRoutes.get('/model-registry', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id, p.name as provider_name
       FROM model_registry m
       JOIN provider_registry p ON m.provider_id = p.id
@@ -532,27 +534,27 @@ adminRoutes.post('/model-registry', async (c) => {
     }
 
     // Ensure provider exists
-    const provider = await c.env.DB.prepare('SELECT id FROM provider_registry WHERE id = ?').bind(providerId).first();
+    const provider = getDb().prepare('SELECT id FROM provider_registry WHERE id = ?').get(providerId);
     if (!provider) {
       // Auto-create provider if it's a known preset
       const preset = getProviderPreset(providerId);
       if (preset) {
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO provider_registry (id, name, protocol, base_url)
           VALUES (?, ?, ?, ?)
-        `).bind(preset.id, preset.label, preset.protocol, preset.defaultBaseUrl || null).run();
+        `).run(preset.id, preset.label, preset.protocol, preset.defaultBaseUrl || null);
       } else if (providerId.startsWith('custom')) {
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO provider_registry (id, name, protocol, base_url)
           VALUES (?, ?, ?, ?)
-        `).bind(providerId, customProviderName || providerId, 'openai', null).run();
+        `).run(providerId, customProviderName || providerId, 'openai', null);
       } else {
         return c.json({ success: false, error: 'Provider 不存在且非预设' }, 400);
       }
     }
 
     const id = crypto.randomUUID();
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO model_registry (id, provider_id, model_name, display_name, credit_multiplier, capabilities, config_json)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
@@ -585,7 +587,7 @@ adminRoutes.put('/model-registry/:id', async (c) => {
     
     if (body.isDefault !== undefined) {
       if (body.isDefault) {
-        await c.env.DB.prepare('UPDATE model_registry SET is_default = 0').run();
+        getDb().prepare('UPDATE model_registry SET is_default = 0').run();
       }
       updates.push('is_default = ?');
       values.push(body.isDefault ? 1 : 0);
@@ -594,9 +596,9 @@ adminRoutes.put('/model-registry/:id', async (c) => {
     if (updates.length > 0) {
       updates.push("updated_at = (unixepoch() * 1000)");
       values.push(id);
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE model_registry SET ${updates.join(', ')} WHERE id = ?
-      `).bind(...values).run();
+      `).run(...values);
     }
 
     return c.json({ success: true });
@@ -618,9 +620,9 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
       const chunk = ids.slice(i, i + 20);
       const placeholders = chunk.map(() => '?').join(', ');
 
-      await c.env.DB.prepare(`DELETE FROM feature_model_mappings WHERE model_id IN (${placeholders})`).bind(...chunk).run();
-      const { meta } = await c.env.DB.prepare(`DELETE FROM model_registry WHERE id IN (${placeholders})`).bind(...chunk).run();
-      deletedCount += meta.changes || 0;
+      getDb().prepare(`DELETE FROM feature_model_mappings WHERE model_id IN (${placeholders})`).run(...chunk);
+      const res = getDb().prepare(`DELETE FROM model_registry WHERE id IN (${placeholders})`).run(...chunk);
+      deletedCount += res.changes || 0;
     }
 
     return c.json({ success: true, count: deletedCount });
@@ -633,8 +635,8 @@ adminRoutes.delete('/model-registry/batch', async (c) => {
 adminRoutes.delete('/model-registry/:id', async (c) => {
   const id = c.req.param('id');
   try {
-    await c.env.DB.prepare('DELETE FROM feature_model_mappings WHERE model_id = ?').bind(id).run();
-    await c.env.DB.prepare('DELETE FROM model_registry WHERE id = ?').bind(id).run();
+    getDb().prepare('DELETE FROM feature_model_mappings WHERE model_id = ?').run(id);
+    getDb().prepare('DELETE FROM model_registry WHERE id = ?').run(id);
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
@@ -648,19 +650,19 @@ adminRoutes.delete('/model-registry/:id', async (c) => {
 // Get credit stats
 adminRoutes.get('/credit-stats', async (c) => {
   try {
-    const totalCredit = await c.env.DB.prepare(
+    const totalCredit = getDb().prepare(
       'SELECT SUM(credit_balance) as total FROM users'
-    ).first() as any;
+    ).get() as any;
 
-    const totalConsumed = await c.env.DB.prepare(
+    const totalConsumed = getDb().prepare(
       "SELECT COALESCE(SUM(ABS(amount)), 0) as total FROM credit_transactions WHERE type = 'consume'"
-    ).first() as any;
+    ).get() as any;
 
-    const totalRecharged = await c.env.DB.prepare(
+    const totalRecharged = getDb().prepare(
       "SELECT COALESCE(SUM(amount), 0) as total FROM credit_transactions WHERE type IN ('recharge', 'reward')"
-    ).first() as any;
+    ).get() as any;
 
-    const topFeatures = await c.env.DB.prepare(`
+    const topFeatures = getDb().prepare(`
       SELECT feature_key, COUNT(*) as usage_count, SUM(ABS(amount)) as total_cost
       FROM credit_transactions WHERE type = 'consume'
       GROUP BY feature_key ORDER BY usage_count DESC LIMIT 10
@@ -672,7 +674,7 @@ adminRoutes.get('/credit-stats', async (c) => {
         totalCreditInCirculation: totalCredit?.total || 0,
         totalConsumed: totalConsumed?.total || 0,
         totalRecharged: totalRecharged?.total || 0,
-        topFeatures: topFeatures.results || [],
+        topFeatures: topFeatures,
       },
     });
   } catch (error) {
@@ -690,9 +692,9 @@ adminRoutes.post('/users/:id/credit', async (c) => {
     }
 
     // Get current balance
-    const user = await c.env.DB.prepare(
+    const user = getDb().prepare(
       'SELECT credit_balance FROM users WHERE id = ?'
-    ).bind(userId).first() as any;
+    ).get(userId) as any;
 
     if (!user) {
       return c.json({ success: false, error: '用户不存在' }, 404);
@@ -700,13 +702,14 @@ adminRoutes.post('/users/:id/credit', async (c) => {
 
     const balanceAfter = (user.credit_balance || 0) + amount;
 
-    await c.env.DB.batch([
-      c.env.DB.prepare('UPDATE users SET credit_balance = ? WHERE id = ?').bind(balanceAfter, userId),
-      c.env.DB.prepare(`
+    const tx = c.env.DB.transaction(() => {
+      getDb().prepare('UPDATE users SET credit_balance = ? WHERE id = ?').run(balanceAfter, userId);
+      getDb().prepare(`
         INSERT INTO credit_transactions (user_id, feature_key, amount, balance_after, type, description)
         VALUES (?, NULL, ?, ?, 'recharge', ?)
-      `).bind(userId, amount, balanceAfter, description || '管理员充值'),
-    ]);
+      `).run(userId, amount, balanceAfter, description || '管理员充值');
+    });
+    tx();
 
     return c.json({ success: true, balanceAfter });
   } catch (error) {
@@ -720,12 +723,12 @@ adminRoutes.post('/users/:id/credit', async (c) => {
 
 adminRoutes.get('/generation-settings', async (c) => {
   try {
-    const row = await c.env.DB.prepare(`
+    const row = getDb().prepare(`
       SELECT setting_value
       FROM system_settings
       WHERE setting_key = ?
       LIMIT 1
-    `).bind(SUMMARY_INTERVAL_SETTING_KEY).first() as { setting_value?: string } | null;
+    `).get(SUMMARY_INTERVAL_SETTING_KEY) as { setting_value?: string } | null;
 
     const parsed = Number.parseInt(String(row?.setting_value ?? ''), 10);
     const summaryUpdateInterval = Number.isInteger(parsed)
@@ -760,7 +763,7 @@ adminRoutes.put('/generation-settings', async (c) => {
       }, 400);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO system_settings (setting_key, setting_value, description, updated_at)
       VALUES (?, ?, ?, (unixepoch() * 1000))
       ON CONFLICT(setting_key) DO UPDATE SET
