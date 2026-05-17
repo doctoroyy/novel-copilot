@@ -15,8 +15,10 @@ import { agentRoutes } from './routes/agent.js';
 import { qcRoutes } from './routes/qc.js';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/authMiddleware.js';
 
+import type { Database } from 'better-sqlite3';
+
 export interface Env {
-  DB: D1Database;
+  DB: Database;
   ANIME_VIDEOS: R2Bucket;
   GENERATION_QUEUE: Queue<any>;
   FANQIE_BROWSER?: Fetcher;
@@ -26,7 +28,7 @@ export interface Env {
 const EVENTS_STREAM_POLL_INTERVAL_MS = 2000;
 const EVENTS_STREAM_KEEPALIVE_MS = 15000;
 
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', cors());

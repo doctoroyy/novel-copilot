@@ -8,3 +8,5 @@ projects/*/chapters/*.md
 .wrangler
 .history/
 tmp/
+tsconfig.tsbuildinfo
+errors*.txt

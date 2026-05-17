@@ -1,3 +1,4 @@
+import type { Database } from 'better-sqlite3';
 import { getAIConfigFromRegistry, generateTextWithRetry, type AIConfig } from '../services/aiClient.js';
 import { updateTaskMessage, completeTask, getTaskRuntimeControl } from '../routes/tasks.js';
 import { runQuickQC, type QCResult } from './multiDimensionalQC.js';
@@ -7,10 +8,10 @@ import type { RepairResult } from './repairLoop.js';
 /**
  * 加载项目的 total_chapters 和 min_chapter_words（从 states 表）
  */
-async function loadProjectMeta(db: D1Database, projectId: string) {
-  const row = await db.prepare(`
+async function loadProjectMeta(db: Database, projectId: string) {
+  const row = db.prepare(`
     SELECT total_chapters, min_chapter_words FROM states WHERE project_id = ?
-  `).bind(projectId).first() as { total_chapters: number; min_chapter_words: number } | null;
+  `).get(projectId) as { total_chapters: number; min_chapter_words: number } | null;
   return {
     totalChapters: row?.total_chapters || 100,
     minChapterWords: row?.min_chapter_words || 1500,
@@ -21,20 +22,18 @@ async function loadProjectMeta(db: D1Database, projectId: string) {
  * 加载前后章内容，用于约束修复不破坏连续性
  */
 async function loadSurroundingChapters(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number,
 ): Promise<{ prevChapter: string | null; nextChapter: string | null }> {
-  const rows = await db.prepare(`
+  const rows = db.prepare(`
     SELECT chapter_index, content FROM chapters
     WHERE project_id = ? AND chapter_index IN (?, ?) AND deleted_at IS NULL
-  `).bind(projectId, chapterIndex - 1, chapterIndex + 1).all() as {
-    results: { chapter_index: number; content: string }[];
-  };
+  `).all(projectId, chapterIndex - 1, chapterIndex + 1) as { chapter_index: number; content: string }[];
 
   let prevChapter: string | null = null;
   let nextChapter: string | null = null;
-  for (const r of rows.results) {
+  for (const r of rows) {
     if (r.chapter_index === chapterIndex - 1) prevChapter = r.content;
     if (r.chapter_index === chapterIndex + 1) nextChapter = r.content;
   }
@@ -111,13 +110,13 @@ function buildConstrainedRepairPrompt(
  * 从 QC 报告加载指定章节的问题
  */
 async function loadReportIssues(
-  db: D1Database,
+  db: Database,
   reportId: string,
   chapterIndex: number,
 ): Promise<{ issues: QCResult['issues']; score: number } | null> {
-  const reportRow = await db.prepare(`
+  const reportRow = db.prepare(`
     SELECT report_json FROM qc_reports WHERE id = ?
-  `).bind(reportId).first() as { report_json: string } | null;
+  `).get(reportId) as { report_json: string } | null;
 
   if (!reportRow) return null;
 
@@ -135,7 +134,7 @@ async function loadReportIssues(
  * 修复单章（带前后文约束）
  */
 export async function fixChapter(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number,
   reportId: string,
@@ -146,10 +145,10 @@ export async function fixChapter(
 
   await updateTaskMessage(db, taskId, `修复第 ${chapterIndex} 章...`);
 
-  const chapter = await db.prepare(`
+  const chapter = db.prepare(`
     SELECT content FROM chapters
     WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-  `).bind(projectId, chapterIndex).first() as { content: string } | null;
+  `).get(projectId, chapterIndex) as { content: string } | null;
 
   if (!chapter) throw new Error(`第 ${chapterIndex} 章未找到`);
 
@@ -203,10 +202,10 @@ export async function fixChapter(
 
   // Accept repair if it doesn't introduce structural regressions
   if (finalQC.score >= 60 && !finalQC.issues.some(i => i.severity === 'critical')) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE chapters SET content = ?
       WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(repairedText, projectId, chapterIndex).run();
+    `).run(repairedText, projectId, chapterIndex);
 
     await updateReportAfterFix(db, reportId, chapterIndex, {
       repairedChapter: repairedText, attempts: 1, finalQC, success: true, repairLog: [],
@@ -221,15 +220,15 @@ export async function fixChapter(
  * 批量修复（按章节顺序，带前后章约束）
  */
 export async function fixAllChapters(
-  db: D1Database,
+  db: Database,
   projectId: string,
   reportId: string,
   taskId: number,
   maxSeverity: string = 'major',
 ): Promise<void> {
-  const reportRow = await db.prepare(`
+  const reportRow = db.prepare(`
     SELECT report_json FROM qc_reports WHERE id = ?
-  `).bind(reportId).first() as { report_json: string } | null;
+  `).get(reportId) as { report_json: string } | null;
 
   if (!reportRow) throw new Error('报告未找到');
 
@@ -268,14 +267,14 @@ export async function fixAllChapters(
 }
 
 async function updateReportAfterFix(
-  db: D1Database,
+  db: Database,
   reportId: string,
   chapterIndex: number,
   result: RepairResult,
 ): Promise<void> {
-  const reportRow = await db.prepare(`
+  const reportRow = db.prepare(`
     SELECT report_json FROM qc_reports WHERE id = ?
-  `).bind(reportId).first() as { report_json: string } | null;
+  `).get(reportId) as { report_json: string } | null;
 
   if (!reportRow) return;
 
@@ -307,7 +306,7 @@ async function updateReportAfterFix(
     report.summary.majorCount = allIssues.filter(i => i.severity === 'major').length;
     report.summary.minorCount = allIssues.filter(i => i.severity === 'minor').length;
 
-    await db.prepare(`
+    db.prepare(`
       UPDATE qc_reports
       SET report_json = ?,
           overall_score = ?,
@@ -332,7 +331,7 @@ async function updateReportAfterFix(
 }
 
 export async function runQCFixInBackground(params: {
-  env: { DB: D1Database };
+  env: { DB: Database };
   taskId: number;
   projectId: string;
   userId: string;
@@ -350,16 +349,17 @@ export async function runQCFixInBackground(params: {
       await fixAllChapters(db, projectId, reportId, taskId, maxSeverity);
     }
     // Mark report status back to completed
-    await db.prepare(`
+    db.prepare(`
       UPDATE qc_reports SET status = 'completed', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(reportId).run();
+    `).run(reportId);
     await completeTask(db, taskId, true);
   } catch (error) {
     const msg = (error as Error).message || '修复失败';
-    // Still mark report back to completed on error
-    await db.prepare(`
-      UPDATE qc_reports SET status = 'completed', updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(reportId).run().catch(() => {});
+    try {
+      db.prepare(`
+        UPDATE qc_reports SET status = 'completed', updated_at = (unixepoch() * 1000) WHERE id = ?
+      `).run(reportId);
+    } catch {}
     await completeTask(db, taskId, false, msg);
   }
 }
