@@ -115,8 +115,8 @@ export function getLangChainModel(config: AIConfig, options?: { temperature?: nu
     }) as unknown as BaseChatModel;
   } else if (preset?.protocol === 'anthropic' || effectiveProvider === 'anthropic') {
     return new ChatAnthropic({
-      modelName: config.model,
-      anthropicApiKey: config.apiKey,
+      model: config.model,
+      apiKey: config.apiKey,
       anthropicApiUrl: baseUrl || undefined,
       temperature: options?.temperature ?? 0.8,
       maxTokens: options?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
@@ -124,8 +124,8 @@ export function getLangChainModel(config: AIConfig, options?: { temperature?: nu
   } else {
     // Default to OpenAI compatible
     return new ChatOpenAI({
-      modelName: config.model,
-      openAIApiKey: config.apiKey,
+      model: config.model,
+      apiKey: config.apiKey,
       configuration: {
         baseURL: baseUrl,
         defaultHeaders: SANITIZED_HEADERS
