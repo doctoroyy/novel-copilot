@@ -68,5 +68,10 @@
     "wait-on": "^9.0.10",
     "wrangler": "^4.11.0"
   },
-  "main": "dist/main.js"
+  "main": "dist/main.js",
+  "pnpm": {
+    "patchedDependencies": {
+      "hono@4.11.0": "patches/hono@4.11.0.patch"
+    }
+  }
 }
