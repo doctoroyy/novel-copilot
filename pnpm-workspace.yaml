@@ -1,0 +1,2 @@
+patchedDependencies:
+  hono@4.11.0: patches/hono@4.11.0.patch
