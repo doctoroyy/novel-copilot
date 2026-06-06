@@ -10,11 +10,18 @@
  */
 
 import { createServer, type Server } from 'node:http';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { initializeLocalEnv, type LocalEnv } from './env.js';
 import type { Env } from '../src/worker.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 let server: ReturnType<typeof serve> | null = null;
 
@@ -197,8 +204,23 @@ async function createApp(): Promise<Hono<{ Bindings: Env }>> {
     timestamp: new Date().toISOString(),
   }));
 
-  // 404
+  // 404 for API routes
   app.all('/api/*', (c) => c.json({ success: false, error: 'Not found' }, 404));
+
+  // ========== 静态文件服务（生产模式前端） ==========
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  if (fs.existsSync(rendererDir)) {
+    app.use('/*', serveStatic({ root: rendererDir }));
+    // SPA fallback: 所有非 API、非静态文件请求返回 index.html
+    app.get('*', (c) => {
+      const indexPath = path.join(rendererDir, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        const html = fs.readFileSync(indexPath, 'utf-8');
+        return c.html(html);
+      }
+      return c.text('Not found', 404);
+    });
+  }
 
   // ========== 注册队列消费者 ==========
   registerQueueConsumer(env);

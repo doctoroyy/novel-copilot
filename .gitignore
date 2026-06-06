@@ -10,3 +10,8 @@ projects/*/chapters/*.md
 tmp/
 tsconfig.tsbuildinfo
 errors*.txt
+
+# Electron build artifacts
+electron/release/
+electron/renderer/
+electron/dist/
