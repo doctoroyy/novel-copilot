@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "novel-copilot": {
+      "command": "node",
+      "args": ["--import", "tsx", "mcp-server/src/index.ts"],
+      "cwd": ".",
+      "env": {
+        "APP_DATA_DIR": "~/.novel-copilot"
+      }
+    }
+  }
+}
