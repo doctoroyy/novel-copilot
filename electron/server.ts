@@ -70,8 +70,11 @@ async function createApp(): Promise<Hono<{ Bindings: Env }>> {
   const { editingRoutes } = await import('../src/routes/editing.js');
   const { agentRoutes } = await import('../src/routes/agent.js');
   const { qcRoutes } = await import('../src/routes/qc.js');
+  const { adminRoutes } = await import('../src/routes/admin.js');
+  const { creditRoutes } = await import('../src/routes/credit.js');
+  const { animeRoutes } = await import('../src/routes/anime.js');
 
-  // 挂载路由（不需要认证中间件）
+  // 挂载路由（不需要认证中间件，外层已注入用户上下文）
   app.route('/api/projects', projectsRoutes);
   app.route('/api/config', configRoutes);
   app.route('/api', generationRoutes);
@@ -81,6 +84,9 @@ async function createApp(): Promise<Hono<{ Bindings: Env }>> {
   app.route('/api/context', contextRoutes);
   app.route('/api/agent', agentRoutes);
   app.route('/api/projects', qcRoutes);
+  app.route('/api/admin', adminRoutes);
+  app.route('/api/credit', creditRoutes);
+  app.route('/api/anime', animeRoutes);
 
   // SSE 事件流（本地简化版本）
   app.get('/api/events', async (c) => {
@@ -211,6 +217,7 @@ async function registerQueueConsumer(env: LocalEnv): Promise<void> {
     } = await import('../src/routes/generation.js');
     const { runQCScanInBackground } = await import('../src/qc/qcAgent.js');
     const { runQCFixInBackground } = await import('../src/qc/qcFixAgent.js');
+    const { runImagineTemplateRefreshJob } = await import('../src/services/imagineTemplateJobService.js');
 
     for (const message of batch.messages) {
       try {
@@ -219,7 +226,12 @@ async function registerQueueConsumer(env: LocalEnv): Promise<void> {
         const taskRef = payload.taskId || payload.jobId || 'n/a';
         console.log(`[Queue] 处理任务: ref=${taskRef}, type=${taskType}`);
 
-        if (taskType === 'outline') {
+        if (taskType === 'imagine_templates') {
+          if (!payload.jobId) {
+            throw new Error('Missing jobId for imagine_templates queue payload');
+          }
+          await runImagineTemplateRefreshJob(env as any, payload.jobId);
+        } else if (taskType === 'outline') {
           await runOutlineGenerationTaskInBackground({
             env: env as any,
             aiConfig: payload.aiConfig,

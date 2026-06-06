@@ -105,6 +105,12 @@ function allowsQueryTokenForSse(path: string): boolean {
 // Middleware that requires authentication
 export function authMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    // Skip verification if user context is already set (e.g., local mode pre-auth)
+    if (c.get('userId')) {
+      await next();
+      return;
+    }
+
     const authHeader = c.req.header('Authorization');
 
     const acceptHeader = c.req.header('Accept') || '';
@@ -139,6 +145,12 @@ export function authMiddleware() {
 // Optional auth middleware - sets user if valid token, but doesn't require it
 export function optionalAuthMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    // Skip if already authenticated (e.g., local mode pre-auth)
+    if (c.get('userId')) {
+      await next();
+      return;
+    }
+
     const authHeader = c.req.header('Authorization');
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
