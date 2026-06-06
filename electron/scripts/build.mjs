@@ -61,12 +61,16 @@ async function main() {
     outExtension: { '.js': '.mjs' },
   });
 
-  // Preload 脚本（需要 CJS 格式）
+  // Preload 脚本（需要 CJS 格式，.js 扩展名）
   await build({
-    ...sharedConfig,
-    entryPoints: [path.join(electronDir, 'preload.ts')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
     format: 'cjs',
-    outExtension: { '.js': '.mjs' },
+    sourcemap: true,
+    outdir: outDir,
+    entryPoints: [path.join(electronDir, 'preload.ts')],
+    outExtension: { '.js': '.js' },
     external: ['electron'],
   });
 

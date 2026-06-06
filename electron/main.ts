@@ -31,7 +31,7 @@ async function createWindow() {
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#0a0a0b',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -50,9 +50,8 @@ async function createWindow() {
     await mainWindow.loadURL(devUrl);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // 生产模式：加载打包后的前端文件
-    const indexPath = path.join(__dirname, '..', 'renderer', 'index.html');
-    await mainWindow.loadFile(indexPath);
+    // 生产模式：通过本地 HTTP 服务器加载前端（支持 BrowserRouter）
+    await mainWindow.loadURL(`http://localhost:${serverPort}`);
   }
 
   mainWindow.on('closed', () => {
