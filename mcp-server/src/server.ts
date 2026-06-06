@@ -15,6 +15,9 @@ import { registerChapterTools } from './tools/chapter.js';
 import { registerContextTools } from './tools/context.js';
 import { registerQcTools } from './tools/qc.js';
 import { registerBatchTools } from './tools/batch.js';
+import { registerGenerateTools } from './tools/generate.js';
+import { registerMemoryTools } from './tools/memory.js';
+import { registerExportTools } from './tools/export.js';
 import { registerResources } from './resources/novel.js';
 import { registerPrompts } from './prompts/templates.js';
 
@@ -34,6 +37,9 @@ export function createServer(): McpServer {
   registerContextTools(server, db);
   registerQcTools(server, db);
   registerBatchTools(server, db);
+  registerGenerateTools(server, db);
+  registerMemoryTools(server, db);
+  registerExportTools(server, db);
 
   // Register resources and prompts
   registerResources(server, db);
