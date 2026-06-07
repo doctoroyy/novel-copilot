@@ -1,11 +1,9 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
-import { CreditDisplay } from '@/components/CreditDisplay';
 import type { ProjectDetail } from '@/lib/api';
 import {
   PanelLeftOpen,
-  LogOut,
   LayoutDashboard,
   ScrollText,
   FileText,
@@ -20,11 +18,9 @@ import {
   RefreshCw,
   Download,
   Trash2,
-  User,
   Sparkles,
   type LucideIcon
 } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
   project: ProjectDetail | null;
@@ -66,14 +62,12 @@ export function Header({
   sidebarOpen = true,
   activityPanelOpen = true
 }: HeaderProps) {
-  const { user, logout } = useAuth();
 
   if (!project) {
     return (
       <header className="border-b border-border flex flex-col">
         <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
         <div className="h-16 flex items-center justify-between px-4 lg:px-6">
-        {/* Mobile menu button */}
         {!sidebarOpen && (
             <Button 
             variant="ghost" 
@@ -86,26 +80,6 @@ export function Header({
         )}
         <div className="text-muted-foreground text-sm lg:text-base">选择一个项目开始</div>
         <div className="flex items-center gap-1 lg:gap-2">
-          {user && (
-            <>
-              <span className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
-                <User className="h-4 w-4 text-muted-foreground" />
-                <span className="max-w-[110px] truncate">{user.username}</span>
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={logout}
-                title="退出登录"
-                className="text-sm font-medium text-foreground"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline ml-1">退出</span>
-              </Button>
-              <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-            </>
-          )}
-          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline ml-1">设置</span>
@@ -179,32 +153,11 @@ export function Header({
             <span className="hidden xl:inline">删除</span>
           </Button>
           <div className="w-px h-6 bg-border mx-0.5 hidden sm:block" />
-          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1 px-2">
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline lg:hidden xl:inline">设置</span>
           </Button>
-          
-          {/* User info and logout */}
-          {user && (
-            <>
-              <div className="w-px h-6 bg-border mx-0.5 hidden md:block" />
-              <div className="hidden lg:flex items-center gap-1.5 text-sm font-medium text-foreground px-1">
-                <User className="h-4 w-4 text-muted-foreground" />
-                <span className="max-w-[110px] truncate">{user.username}</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={logout}
-                title="退出登录"
-                className="text-sm font-medium text-foreground px-2"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="hidden lg:inline ml-1">退出</span>
-              </Button>
-            </>
-          )}
+          <ThemeToggle />
           
           <Button
             variant={activityPanelOpen ? 'secondary' : 'ghost'}

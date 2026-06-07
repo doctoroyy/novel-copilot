@@ -1,12 +1,10 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import type { User } from '@/lib/auth';
-import { 
-  login as apiLogin, 
-  register as apiRegister, 
-  logout as apiLogout, 
-  getCurrentUser,
-  isAuthenticated,
-} from '@/lib/auth';
+
+/**
+ * Local-first: no authentication required.
+ * Always provides a local admin user for API compatibility.
+ */
 
 interface AuthContextType {
   user: User | null;
@@ -20,6 +18,12 @@ interface AuthContextType {
   clearError: () => void;
 }
 
+const LOCAL_USER: User = {
+  id: 'local-user',
+  username: 'local',
+  role: 'admin',
+};
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 interface AuthProviderProps {
@@ -27,112 +31,16 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const refreshUser = useCallback(async (): Promise<boolean> => {
-    if (!isAuthenticated()) {
-      setUser(null);
-      return false;
-    }
-
-    try {
-      const response = await getCurrentUser();
-      if (response.success && response.user) {
-        setUser(response.user);
-        return true;
-      }
-      setUser(null);
-      return false;
-    } catch {
-      setUser(null);
-      return false;
-    }
-  }, []);
-
-  // Check if user is logged in on mount
-  useEffect(() => {
-    const checkAuth = async () => {
-      if (!isAuthenticated()) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        await refreshUser();
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkAuth();
-  }, [refreshUser]);
-
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      const response = await apiLogin(username, password);
-      if (response.success && response.user) {
-        setUser(response.user);
-        return true;
-      } else {
-        setError(response.error || '登录失败');
-        return false;
-      }
-    } catch (err) {
-      setError((err as Error).message);
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const register = useCallback(async (
-    username: string,
-    password: string
-  ): Promise<boolean> => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      const response = await apiRegister(username, password);
-      if (response.success && response.user) {
-        setUser(response.user);
-        return true;
-      } else {
-        setError(response.error || '注册失败');
-        return false;
-      }
-    } catch (err) {
-      setError((err as Error).message);
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const logout = useCallback(async () => {
-    await apiLogout();
-    setUser(null);
-  }, []);
-
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
-
   const value: AuthContextType = {
-    user,
-    loading,
-    error,
-    isLoggedIn: !!user,
-    refreshUser,
-    login,
-    register,
-    logout,
-    clearError,
+    user: LOCAL_USER,
+    loading: false,
+    error: null,
+    isLoggedIn: true,
+    refreshUser: async () => true,
+    login: async () => true,
+    register: async () => true,
+    logout: async () => {},
+    clearError: () => {},
   };
 
   return (

@@ -1,5 +1,3 @@
-import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
 import { AIConfigSection } from './AIConfigSection';
 import { ModelFeatureConfig } from './admin/ModelFeatureConfig';
 import {
@@ -10,8 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/contexts/AuthContext';
-import { Shield, Zap, Settings, Cpu } from 'lucide-react';
+import { Settings, Cpu } from 'lucide-react';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -19,9 +16,6 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl glass-card w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
@@ -31,70 +25,32 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <span>设置</span>
           </DialogTitle>
           <DialogDescription className="text-sm">
-            管理您的个人偏好和系统设置
+            AI 模型配置与系统设置
           </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="general" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="general">常规设置</TabsTrigger>
-            {user?.role === 'admin' && (
-              <TabsTrigger value="models">模型配置</TabsTrigger>
-            )}
+            <TabsTrigger value="general">AI 服务商</TabsTrigger>
+            <TabsTrigger value="models">模型路由</TabsTrigger>
           </TabsList>
           
           <TabsContent value="general" className="space-y-4 py-4">
             <AIConfigSection />
-            <div className="p-3 rounded-lg border bg-muted/20">
-              <p className="text-xs text-muted-foreground leading-5">
-                项目主流程中的“生成大纲”和“生成章节”默认使用后台模型路由。
-                这里保存的自定义模型不会再隐式覆盖这些请求，只会在显式传入自定义模型的高级功能中生效。
-              </p>
-            </div>
-
-            {/* Credit Info */}
-            <div className="p-4 rounded-lg border bg-muted/30">
-              <div className="flex items-center gap-3 mb-2">
-                <Zap className="h-5 w-5 text-amber-500" />
-                <span className="font-medium text-sm">创作能量</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                使用 AI 功能会消耗创作能量。点击顶栏的创作能量入口可查看余额和消费记录。
-              </p>
-            </div>
-            
-            {user?.role === 'admin' && (
-              <div className="pt-4 border-t">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    navigate('/admin');
-                    onOpenChange(false);
-                  }}
-                  className="w-full justify-start"
-                >
-                  <Shield className="h-4 w-4 mr-2" />
-                  前往管理后台
-                </Button>
-              </div>
-            )}
           </TabsContent>
 
-          {user?.role === 'admin' && (
-            <TabsContent value="models" className="space-y-4 py-4">
-              <div className="p-4 rounded-lg border bg-muted/30 mb-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <Cpu className="h-5 w-5 text-blue-500" />
-                  <span className="font-medium text-sm">高级模型路由</span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  在此处可以为特定的功能（如“生成大纲”、“润色章节”）指定使用特定的模型。
-                  这允许您优化成本和质量。
-                </p>
+          <TabsContent value="models" className="space-y-4 py-4">
+            <div className="p-4 rounded-lg border bg-muted/30 mb-4">
+              <div className="flex items-center gap-3 mb-2">
+                <Cpu className="h-5 w-5 text-blue-500" />
+                <span className="font-medium text-sm">高级模型路由</span>
               </div>
-              <ModelFeatureConfig />
-            </TabsContent>
-          )}
+              <p className="text-xs text-muted-foreground">
+                为特定功能（如"生成大纲"、"润色章节"）指定不同的模型，优化成本和质量。
+              </p>
+            </div>
+            <ModelFeatureConfig />
+          </TabsContent>
         </Tabs>
       </DialogContent>
     </Dialog>
