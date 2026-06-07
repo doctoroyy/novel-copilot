@@ -14,13 +14,13 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@google/genai": "^0.14.0",
+    "@hono/node-server": "^1.14.0",
     "@mariozechner/pi-ai": "^0.54.0",
     "@sinclair/typebox": "^0.34.48",
     "archiver": "^7.0.1",
     "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.5",
     "electron-store": "^10.0.0",
-    "@hono/node-server": "^1.14.0",
     "hono": "4.11.0",
     "jszip": "^3.10.1",
     "openai": "^6.10.0",
@@ -29,6 +29,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@electron/asar": "^4.2.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "electron": "^35.2.1",
@@ -53,24 +54,36 @@
       {
         "from": "../src/db",
         "to": "db",
-        "filter": ["**/*.sql"]
+        "filter": [
+          "**/*.sql"
+        ]
       },
       {
         "from": "../migrations",
         "to": "migrations",
-        "filter": ["**/*.sql"]
+        "filter": [
+          "**/*.sql"
+        ]
       }
     ],
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "build/icon.icns",
       "category": "public.app-category.productivity"
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     },
     "nsis": {
       "oneClick": false,

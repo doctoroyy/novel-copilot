@@ -70,7 +70,9 @@ export function Header({
 
   if (!project) {
     return (
-      <header className="h-16 border-b border-border flex items-center justify-between px-4 lg:px-6">
+      <header className="border-b border-border flex flex-col">
+        <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
+        <div className="h-16 flex items-center justify-between px-4 lg:px-6">
         {/* Mobile menu button */}
         {!sidebarOpen && (
             <Button 
@@ -110,6 +112,7 @@ export function Header({
           </Button>
           <ThemeToggle />
         </div>
+        </div>
       </header>
     );
   }
@@ -121,6 +124,8 @@ export function Header({
 
   return (
     <header className="border-b border-border">
+      {/* Titlebar drag region (Electron safe area) */}
+      <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
       {/* Top Bar */}
       <div className="h-16 flex items-center justify-between px-4 lg:px-6 gap-2">
         {/* Sidebar Toggle (Only show if closed) */}
