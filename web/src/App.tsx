@@ -1,8 +1,8 @@
 import { Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { Loader2, BookOpen, ShieldX, Crown } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { AIConfigProvider } from './contexts/AIConfigContext';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
 import { GenerationProvider } from './contexts/GenerationContext';
 import { ServerEventsProvider } from './contexts/ServerEventsContext';
 import { WebMCPProvider } from './components/WebMCPProvider';
@@ -21,9 +21,7 @@ const SettingsPage = lazyWithRecovery('SettingsPage', () => import('./pages/proj
 const CharactersPage = lazyWithRecovery('CharactersPage', () => import('./pages/project/CharactersPage'));
 const AnimePage = lazyWithRecovery('AnimePage', () => import('./pages/project/AnimePage'));
 const QualityPage = lazyWithRecovery('QualityPage', () => import('./pages/project/QualityPage'));
-const LoginPage = lazyWithRecovery('LoginPage', async () => ({ default: (await import('./pages/LoginPage')).LoginPage }));
 const AdminPage = lazyWithRecovery('AdminPage', async () => ({ default: (await import('./pages/AdminPage')).AdminPage }));
-const LandingPage = lazyWithRecovery('LandingPage', async () => ({ default: (await import('./pages/LandingPage')).LandingPage }));
 
 function RouteLoadingFallback() {
   return (
@@ -34,80 +32,6 @@ function RouteLoadingFallback() {
       </div>
     </div>
   );
-}
-
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isLoggedIn, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="h-10 w-10 mx-auto animate-spin mb-4 text-primary" />
-          <p className="text-muted-foreground">加载中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isLoggedIn) {
-    return <LandingPage />;
-  }
-
-  return <>{children}</>;
-}
-
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isLoggedIn, loading, user } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <Crown className="h-10 w-10 mx-auto animate-pulse mb-4 text-yellow-500" />
-          <p className="text-muted-foreground">加载中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isLoggedIn) {
-    return <Navigate to="/login" replace />;
-  }
-
-  if (user?.role !== 'admin') {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <ShieldX className="h-10 w-10 mx-auto mb-4 text-destructive" />
-          <p className="text-muted-foreground">需要管理员权限</p>
-        </div>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
-}
-
-function LoginRoute() {
-  const { isLoggedIn, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <BookOpen className="h-10 w-10 mx-auto animate-pulse mb-4 text-primary" />
-          <p className="text-muted-foreground">加载中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoggedIn) {
-    return <Navigate to="/" replace />;
-  }
-
-  return <LoginPage />;
 }
 
 export default function App() {
@@ -122,10 +46,9 @@ export default function App() {
                 <AppErrorBoundary>
                   <Suspense fallback={<RouteLoadingFallback />}>
                     <Routes>
-                      <Route path="/login" element={<LoginRoute />} />
-                      <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+                      <Route path="/admin" element={<AdminPage />} />
 
-                      <Route element={<ProtectedRoute><ProjectLayout /></ProtectedRoute>}>
+                      <Route element={<ProjectLayout />}>
                         <Route index element={<DashboardPage />} />
                         <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
                         <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
