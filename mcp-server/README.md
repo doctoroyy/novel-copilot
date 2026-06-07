@@ -1,126 +1,79 @@
 # Novel Copilot MCP Server
 
-一个 [Model Context Protocol](https://modelcontextprotocol.io/) server，将 novel-copilot 的创作引擎能力暴露给 Claude Code 或任何 MCP 客户端。
+一个 [Model Context Protocol](https://modelcontextprotocol.io/) server，将 novel-copilot 的创作能力暴露给 Claude Code 或任何 MCP 客户端。
+
+## 设计哲学
+
+**旧方案**（已废弃）：24 个 CRUD 工具，agent 自己拼装上下文 → 工具太碎片化，写不出好小说。
+
+**新方案**：围绕**创作流程**设计工具，每个工具输出可直接用于创作的信息：
+
+```
+prepare (获取上下文) → analyze (分析决策) → [Agent 写作] → evaluate (质量检查) → commit (保存)
+```
+
+核心原则：
+- **一次调用获得完整 briefing** — 不让 agent 自己拼 5 次 CRUD
+- **评估给可操作建议** — 不只是 pass/fail，而是告诉你怎么改
+- **分析提供创作洞察** — 冲突密度、伏笔健康度、节奏诊断
+- **Agent 是创作者** — 工具辅助决策和管理状态，写作本身由 agent 完成
 
 ## 快速开始
 
 ```bash
-# 安装依赖
 cd mcp-server && pnpm install
-
-# 开发模式运行
-pnpm dev
-
-# 构建
-pnpm build
 ```
 
-## 配置 Claude Code
+## 可用工具（15 个）
 
-在项目根目录创建 `.claude/settings.json`（已包含）：
-
-```json
-{
-  "mcpServers": {
-    "novel-copilot": {
-      "command": "node",
-      "args": ["--import", "tsx", "mcp-server/src/index.ts"],
-      "cwd": ".",
-      "env": {
-        "APP_DATA_DIR": "~/.novel-copilot"
-      }
-    }
-  }
-}
-```
-
-## 可用工具（24 个）
-
-### 项目管理
+### 1. Prepare — 获取上下文
 | 工具 | 说明 |
 |------|------|
-| `project_list` | 列出所有小说项目 |
-| `project_get` | 获取项目详情（设定、状态） |
+| `prepare_writing_context` | 获取完整创作 briefing（设定、摘要、伏笔、近章、角色、写作提示） |
+| `list_projects` | 列出所有项目 |
 
-### 大纲
+### 2. Analyze — 创作分析
 | 工具 | 说明 |
 |------|------|
-| `outline_get` | 获取结构化大纲 |
-| `outline_update` | 更新大纲 |
+| `analyze_story_health` | 故事健康度诊断（字数稳定性、伏笔状态、钩子率、节奏） |
+| `analyze_last_chapter_ending` | 分析上一章结尾，建议本章如何承接 |
+| `suggest_chapter_direction` | 给出本章方向建议（场景序列、伏笔操作、钩子方向） |
 
-### 角色
+### 3. Evaluate — 质量评估
 | 工具 | 说明 |
 |------|------|
-| `characters_get` | 获取角色档案 |
-| `characters_update` | 更新角色档案 |
+| `evaluate_chapter` | 6 维度评分（字数/结构/对话/钩子/重复/开头）+ 具体修改建议 |
+| `check_continuity` | 连续性检查（提前完结信号、角色名一致性） |
 
-### 章节
+### 4. Commit — 保存交付
 | 工具 | 说明 |
 |------|------|
-| `chapter_list` | 列出所有章节 |
-| `chapter_read` | 读取指定章节全文 |
-| `chapter_read_recent` | 读取最近 N 章（保持连续性） |
-| `chapter_write` | 保存章节 |
-| `chapter_update_summary` | 更新滚动摘要和伏笔 |
+| `commit_chapter` | 保存章节，自动计字数更新进度 |
+| `commit_summary` | 更新滚动摘要和伏笔状态 |
+| `read_chapter` | 读取指定章节 |
+| `export_novel` | 导出为 TXT 文件 |
 
-### 上下文查询
+### 5. Memory — 跨会话记忆
 | 工具 | 说明 |
 |------|------|
-| `context_get_state` | 获取叙事状态（摘要、伏笔） |
-| `context_plot_graph` | 查询剧情图谱 |
-| `context_character_state` | 查询角色状态 |
-| `context_timeline` | 查询时间线事件 |
+| `remember` | 记录决策/偏好/笔记 |
+| `recall` | 回忆之前的记录 |
+| `update_outline` | 更新大纲 |
+| `update_characters` | 更新角色档案 |
 
-### 质量控制
-| 工具 | 说明 |
-|------|------|
-| `qc_heuristic_check` | 启发式质量检查（字数、重复、钩子等） |
-| `qc_consistency_check` | 一致性检查 |
+## 预设 Prompts（4 个）
 
-### 生成引擎
-| 工具 | 说明 |
-|------|------|
-| `generate_chapter_engine` | 调用完整 AI 引擎生成章节 |
-| `batch_status` | 查看批量生成进度 |
-
-### 记忆
-| 工具 | 说明 |
-|------|------|
-| `memory_save` | 保存笔记/决策到持久记忆 |
-| `memory_search` | 搜索持久记忆 |
-| `memory_delete` | 删除记忆条目 |
-
-### 导出
-| 工具 | 说明 |
-|------|------|
-| `export_txt` | 导出为 TXT 文件 |
-| `export_chapter_list` | 导出章节目录 |
-
-## 预设 Prompts
-
-- `generate_chapter` — 带完整上下文注入的章节生成流程
-- `review_chapter` — 章节审核流程
+- `write_next_chapter` — 完整的写章流程（prepare→analyze→write→evaluate→commit）
+- `review_and_fix` — 审核并修复章节质量
+- `batch_write` — 连续写多章（批量日更）
 - `brainstorm_plot` — 剧情头脑风暴
-
-## Resources
-
-- `novel://project/{project_id}` — 完整项目快照（设定+状态+大纲+角色）
-
-## AI 配置
-
-章节生成引擎需要 AI provider。支持两种方式：
-
-1. **环境变量**（推荐开发用）：
-   ```bash
-   AI_API_KEY=sk-xxx
-   AI_PROVIDER=openai  # openai, anthropic, google
-   AI_MODEL=gpt-4o-mini
-   AI_BASE_URL=https://api.openai.com/v1  # 可选
-   ```
-
-2. **数据库配置**（与 GUI 应用共享）：
-   通过 `provider_registry` + `model_registry` + `feature_model_mappings` 表配置
 
 ## 配套 Skills
 
-项目 `skills/` 目录包含 6 个 Claude Code skill 文件，定义写作方法论和工作流。
+`skills/` 目录包含 6 个 Claude Code skill 文件，定义写作方法论：
+- `novel-writer-core.md` — 核心写作规则
+- `chinese-webnovel.md` — 中文网文方法论
+- `chapter-workflow.md` — 创作 SOP
+- `outline-architect.md` — 大纲设计
+- `consistency-guardian.md` — 连续性守护
+- `batch-production.md` — 批量生产

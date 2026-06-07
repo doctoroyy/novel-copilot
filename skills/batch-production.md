@@ -1,7 +1,7 @@
 ---
 name: Batch Production
 description: 批量日更工作流——高效稳定地连续产出章节
-tools: [project_*, outline_*, chapter_*, context_*, qc_*, batch_*]
+tools: [prepare_writing_context, analyze_story_health, evaluate_chapter, commit_*, read_chapter, remember]
 ---
 
 # 批量生产模式
