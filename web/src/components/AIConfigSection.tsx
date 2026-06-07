@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Check, Loader2, CheckCircle2, AlertCircle, ChevronDown, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { Check, Loader2, CheckCircle2, AlertCircle, ChevronDown, Eye, EyeOff, Sparkles, RefreshCw } from 'lucide-react';
 import {
   useAIConfig,
   PROVIDER_MODELS,
   BUILTIN_PROVIDER_PRESETS,
   type AIProvider
 } from '@/hooks/useAIConfig';
-import { fetchPublicProviderPresets, type ProviderPreset } from '@/lib/api';
+import { fetchPublicProviderPresets, fetchPublicRemoteModels, type ProviderPreset } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/input';
@@ -43,8 +43,44 @@ export function AIConfigSection() {
   }, [providerPresets]);
 
   const currentPreset = providerOptions.find((item) => item.id === config.provider);
-  const currentModels = PROVIDER_MODELS[config.provider] || [];
+  const staticModels = PROVIDER_MODELS[config.provider] || [];
   const isConfigured = !!config.apiKey;
+
+  // Dynamic model fetching
+  const [remoteModels, setRemoteModels] = useState<{ id: string; name: string; displayName: string }[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsFetched, setModelsFetched] = useState<string | null>(null); // tracks provider+key combo
+
+  const fetchModels = useCallback(async () => {
+    if (!config.apiKey || !config.provider) return;
+    setIsLoadingModels(true);
+    try {
+      const models = await fetchPublicRemoteModels(
+        config.provider,
+        config.apiKey,
+        config.baseUrl || currentPreset?.defaultBaseUrl
+      );
+      setRemoteModels(models);
+      setModelsFetched(`${config.provider}:${config.apiKey.slice(-6)}`);
+    } catch {
+      setRemoteModels([]);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [config.provider, config.apiKey, config.baseUrl, currentPreset?.defaultBaseUrl]);
+
+  // Auto-fetch models when API key is set and provider changes
+  useEffect(() => {
+    const key = `${config.provider}:${config.apiKey?.slice(-6) || ''}`;
+    if (config.apiKey && key !== modelsFetched) {
+      fetchModels();
+    }
+  }, [config.provider, config.apiKey, modelsFetched, fetchModels]);
+
+  // Use remote models if available, fall back to static
+  const currentModels = remoteModels.length > 0
+    ? remoteModels.map(m => m.id)
+    : staticModels;
 
   // Auto-test when apiKey changes and is non-empty
   const handleApiKeyChange = useCallback((value: string) => {
@@ -212,17 +248,38 @@ export function AIConfigSection() {
       {/* Step 3: Model (auto-filled, editable) */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            模型
-          </label>
-          {!showAdvanced && config.baseUrl && config.baseUrl !== currentPreset?.defaultBaseUrl && (
-            <button
-              onClick={() => setShowAdvanced(true)}
-              className="text-[10px] text-primary hover:underline"
-            >
-              自定义 URL 已配置
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              模型
+            </label>
+            {remoteModels.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                {remoteModels.length} 个可用
+              </span>
+            )}
+            {isLoadingModels && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+          </div>
+          <div className="flex items-center gap-2">
+            {config.apiKey && (
+              <button
+                onClick={fetchModels}
+                disabled={isLoadingModels}
+                className="text-[10px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 transition-colors"
+                title="从 API 刷新模型列表"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLoadingModels ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+            )}
+            {!showAdvanced && config.baseUrl && config.baseUrl !== currentPreset?.defaultBaseUrl && (
+              <button
+                onClick={() => setShowAdvanced(true)}
+                className="text-[10px] text-primary hover:underline"
+              >
+                自定义 URL 已配置
+              </button>
+            )}
+          </div>
         </div>
 
         {currentModels.length > 0 ? (
@@ -239,25 +296,31 @@ export function AIConfigSection() {
             </button>
 
             {showModelPicker && (
-              <div className="absolute z-20 top-full left-0 right-0 mt-1 rounded-md border bg-popover shadow-lg py-1 max-h-48 overflow-auto">
-                {currentModels.map((model) => (
-                  <button
-                    key={model}
-                    onClick={() => {
-                      saveConfig({ model });
-                      setShowModelPicker(false);
-                      setTestResult(null);
-                    }}
-                    className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors ${
-                      model === config.model
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'hover:bg-muted text-foreground'
-                    }`}
-                  >
-                    {model}
-                    {model === config.model && <Check className="inline h-3 w-3 ml-2" />}
-                  </button>
-                ))}
+              <div className="absolute z-20 top-full left-0 right-0 mt-1 rounded-md border bg-popover shadow-lg py-1 max-h-60 overflow-auto">
+                {currentModels.map((model) => {
+                  const remoteInfo = remoteModels.find(m => m.id === model);
+                  return (
+                    <button
+                      key={model}
+                      onClick={() => {
+                        saveConfig({ model });
+                        setShowModelPicker(false);
+                        setTestResult(null);
+                      }}
+                      className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                        model === config.model
+                          ? 'bg-primary/10 text-primary font-medium'
+                          : 'hover:bg-muted text-foreground'
+                      }`}
+                    >
+                      <span className="font-mono">{remoteInfo?.displayName || model}</span>
+                      {remoteInfo && remoteInfo.displayName !== model && (
+                        <span className="ml-2 text-[10px] text-muted-foreground">{model}</span>
+                      )}
+                      {model === config.model && <Check className="inline h-3 w-3 ml-2" />}
+                    </button>
+                  );
+                })}
                 <div className="border-t mt-1 pt-1 px-3 py-1.5">
                   <Input
                     className="h-7 text-xs font-mono"
