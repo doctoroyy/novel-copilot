@@ -1,7 +1,7 @@
 ---
 name: Novel Writer Core
 description: 核心写作规则与方法论，适用于所有类型的长篇小说创作
-tools: [project_*, outline_*, chapter_*, context_*, qc_*]
+tools: [prepare_writing_context, analyze_*, evaluate_*, commit_*, remember]
 ---
 
 # 角色

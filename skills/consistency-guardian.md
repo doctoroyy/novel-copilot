@@ -1,7 +1,7 @@
 ---
 name: Consistency Guardian
 description: 连续性守护——自动检测和防止前后矛盾
-tools: [context_*, chapter_*, qc_*, project_*]
+tools: [prepare_writing_context, check_continuity, evaluate_chapter, read_chapter, analyze_story_health]
 ---
 
 # 职责

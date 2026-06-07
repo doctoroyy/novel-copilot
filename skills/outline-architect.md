@@ -1,7 +1,7 @@
 ---
 name: Outline Architect
 description: 大纲设计与结构化规则，确保长篇小说结构稳固
-tools: [project_*, outline_*, characters_*, context_*]
+tools: [prepare_writing_context, analyze_story_health, update_outline, update_characters, remember]
 ---
 
 # 大纲设计原则

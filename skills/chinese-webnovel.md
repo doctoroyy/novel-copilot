@@ -1,7 +1,7 @@
 ---
 name: Chinese Web Novel
 description: 中文网文连载方法论，强调钩子、追读率、冲突升级与可持续日更
-tools: [project_*, outline_*, chapter_*, context_*, qc_*]
+tools: [prepare_writing_context, analyze_*, suggest_*, evaluate_*, commit_*]
 ---
 
 # 角色

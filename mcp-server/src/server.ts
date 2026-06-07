@@ -1,47 +1,41 @@
 /**
  * Novel Copilot MCP Server — Server definition
  *
- * Registers tools, resources, and prompts that expose
- * the novel-copilot engine to Claude Code or any MCP client.
+ * 工具设计哲学：
+ * - 不做 CRUD 搬运工，做创作流程的智能助手
+ * - 一次调用获得可用上下文（prepare），不让 agent 自己拼装
+ * - 评估工具给出可操作建议（evaluate），不只是通过/不通过
+ * - 分析工具提供创作洞察（analyze），辅助 agent 决策
+ * - 提交工具管理交付（commit），自动维护状态
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
 import { getDb } from './bridge/db.js';
-import { registerProjectTools } from './tools/project.js';
-import { registerOutlineTools } from './tools/outline.js';
-import { registerCharacterTools } from './tools/characters.js';
-import { registerChapterTools } from './tools/chapter.js';
-import { registerContextTools } from './tools/context.js';
-import { registerQcTools } from './tools/qc.js';
-import { registerBatchTools } from './tools/batch.js';
-import { registerGenerateTools } from './tools/generate.js';
+import { registerPrepareTools } from './tools/prepare.js';
+import { registerAnalyzeTools } from './tools/analyze.js';
+import { registerEvaluateTools } from './tools/evaluate.js';
+import { registerCommitTools } from './tools/commit.js';
 import { registerMemoryTools } from './tools/memory.js';
-import { registerExportTools } from './tools/export.js';
 import { registerResources } from './resources/novel.js';
 import { registerPrompts } from './prompts/templates.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'novel-copilot',
-    version: '0.1.0',
+    version: '0.2.0',
   });
 
   const db = getDb();
 
-  // Register all tool groups
-  registerProjectTools(server, db);
-  registerOutlineTools(server, db);
-  registerCharacterTools(server, db);
-  registerChapterTools(server, db);
-  registerContextTools(server, db);
-  registerQcTools(server, db);
-  registerBatchTools(server, db);
-  registerGenerateTools(server, db);
-  registerMemoryTools(server, db);
-  registerExportTools(server, db);
+  // === 创作流程工具 ===
+  // 1. Prepare: 获取上下文 → 2. Analyze: 分析决策 → 3. Write (agent自身) → 4. Evaluate: 质量检查 → 5. Commit: 保存
+  registerPrepareTools(server, db);   // prepare_writing_context, list_projects
+  registerAnalyzeTools(server, db);   // analyze_story_health, analyze_last_chapter_ending, suggest_chapter_direction
+  registerEvaluateTools(server, db);  // evaluate_chapter, check_continuity
+  registerCommitTools(server, db);    // commit_chapter, commit_summary, read_chapter, export_novel
+  registerMemoryTools(server, db);    // remember, recall, update_outline, update_characters
 
-  // Register resources and prompts
+  // Resources & Prompts
   registerResources(server, db);
   registerPrompts(server);
 
