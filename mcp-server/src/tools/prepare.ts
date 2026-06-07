@@ -1,25 +1,35 @@
 /**
  * 写作准备工具 — 获取 agent 开始写作前需要的一切上下文
  *
- * 设计哲学：一次调用获得完整的创作 briefing，而不是让 agent
- * 自己拼装零散的 CRUD 结果。工具的输出是"可以直接用来写作"的，
- * 不是原始数据。
+ * 设计哲学：一次调用获得完整的创作 briefing，包含：
+ * - 项目状态和设定
+ * - 滚动摘要和伏笔
+ * - 最近章节结尾（承接用）
+ * - 大纲目标
+ * - 角色信息
+ * - 写作规则（根据章节位置动态生成）
+ * - 节奏指导（三幕结构计算）
+ * - 一致性护栏（不可矛盾的事实）
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DbInstance } from '../bridge/db.js';
+import { buildCoreWritingRules, type NarrativeType } from '../bridge/writingRules.js';
+import { getChapterPacingGuidance } from '../bridge/pacing.js';
 
 export function registerPrepareTools(server: McpServer, db: DbInstance) {
 
   server.tool(
     'prepare_writing_context',
-    '获取写下一章所需的完整创作上下文 briefing。输出是经过组织的叙事信息，而非原始数据。一次调用替代多次 CRUD 查询。',
+    '获取写下一章所需的完整创作上下文 briefing。包含设定、摘要、伏笔、规则、节奏指导、一致性护栏。一次调用替代多次查询。',
     {
       project_id: z.string().describe('项目 ID'),
       chapter_index: z.number().optional().describe('要写的章节索引（默认取下一章）'),
+      narrative_type: z.enum(['action', 'climax', 'tension', 'revelation', 'emotional', 'transition'])
+        .optional().describe('叙事类型（不传则自动推导）'),
     },
-    async ({ project_id, chapter_index }) => {
+    async ({ project_id, chapter_index, narrative_type }) => {
       const project = db.prepare(`
         SELECT p.*, s.total_chapters, s.next_chapter_index, s.min_chapter_words,
                s.rolling_summary, s.open_loops, s.need_human, s.need_human_reason
@@ -33,43 +43,57 @@ export function registerPrepareTools(server: McpServer, db: DbInstance) {
       }
 
       const targetIdx = chapter_index || project.next_chapter_index || 1;
+      const totalChapters = project.total_chapters || 100;
+      const minWords = project.min_chapter_words || 2500;
       const openLoops = JSON.parse(project.open_loops || '[]') as string[];
+      const isFinal = targetIdx >= totalChapters;
 
-      // 最近 2 章全文（保持连续性）
-      const recentChapters = db.prepare(`
-        SELECT chapter_index, title, content FROM chapters
-        WHERE project_id = ? AND chapter_index >= ? AND chapter_index < ?
-        ORDER BY chapter_index ASC
-      `).all(project_id, Math.max(1, targetIdx - 2), targetIdx) as any[];
+      // 计算节奏指导
+      const volumeSize = 30;
+      const volumeStart = Math.floor((targetIdx - 1) / volumeSize) * volumeSize + 1;
+      const volumeEnd = Math.min(volumeStart + volumeSize - 1, totalChapters);
 
-      // 大纲
+      // 尝试从大纲获取真实卷范围
+      let realVolumeStart = volumeStart;
+      let realVolumeEnd = volumeEnd;
       const outlineRow = db.prepare(`SELECT outline_json FROM outlines WHERE project_id = ?`).get(project_id) as any;
       let chapterGoal = '';
       let volumeContext = '';
       if (outlineRow) {
         try {
           const outline = JSON.parse(outlineRow.outline_json);
-          // 尝试提取本章的大纲目标
-          if (outline.chapters && outline.chapters[targetIdx - 1]) {
-            const ch = outline.chapters[targetIdx - 1];
-            chapterGoal = ch.goal || ch.summary || ch.title || '';
-          }
           if (outline.volumes) {
-            // 找到本章所在的卷
             for (const vol of outline.volumes) {
               if (vol.startChapter <= targetIdx && vol.endChapter >= targetIdx) {
+                realVolumeStart = vol.startChapter;
+                realVolumeEnd = vol.endChapter;
                 volumeContext = `当前卷: ${vol.title || vol.name} (第${vol.startChapter}~${vol.endChapter}章)\n卷目标: ${vol.goal || vol.summary || ''}`;
                 break;
               }
             }
           }
+          if (outline.chapters && outline.chapters[targetIdx - 1]) {
+            const ch = outline.chapters[targetIdx - 1];
+            chapterGoal = ch.goal || ch.summary || ch.title || '';
+          }
         } catch { /* ignore */ }
       }
+
+      const pacingGuidance = getChapterPacingGuidance(targetIdx, realVolumeStart, realVolumeEnd, minWords);
+      const resolvedNarrative = (narrative_type || pacingGuidance.pacingType) as NarrativeType;
+      const isArcOpening = (targetIdx - 1) % volumeSize === 0 && targetIdx > 3;
+
+      // 最近 2 章（保持连续性）
+      const recentChapters = db.prepare(`
+        SELECT chapter_index, title, content FROM chapters
+        WHERE project_id = ? AND chapter_index >= ? AND chapter_index < ?
+        ORDER BY chapter_index ASC
+      `).all(project_id, Math.max(1, targetIdx - 2), targetIdx) as any[];
 
       // 角色
       const charsRow = db.prepare(`SELECT characters_json FROM characters WHERE project_id = ?`).get(project_id) as any;
 
-      // 组装 briefing
+      // === 组装 Briefing ===
       const sections: string[] = [];
 
       sections.push(`# 创作 Briefing — 第${targetIdx}章\n`);
@@ -77,24 +101,31 @@ export function registerPrepareTools(server: McpServer, db: DbInstance) {
       // 基本信息
       sections.push(`## 项目概况`);
       sections.push(`- 书名: ${project.name}`);
-      sections.push(`- 进度: 第${targetIdx}章 / 共${project.total_chapters}章 (${Math.round((targetIdx - 1) / project.total_chapters * 100)}%)`);
-      sections.push(`- 最低字数: ${project.min_chapter_words || 2500} 字`);
-      sections.push(`- 风格模板: ${project.chapter_prompt_profile || 'web_novel_light'}`);
+      sections.push(`- 进度: 第${targetIdx}章 / 共${totalChapters}章 (${Math.round((targetIdx - 1) / totalChapters * 100)}%)`);
+      sections.push(`- 最低字数: ${minWords} 字`);
+      sections.push(`- 建议字数: ${pacingGuidance.wordCountRange[0]}~${pacingGuidance.wordCountRange[1]} 字`);
       if (project.need_human) {
         sections.push(`\n⚠️ **需要人工决策**: ${project.need_human_reason}`);
       }
 
-      // 核心设定（精简版）
-      if (project.bible) {
-        const bible = project.bible.length > 3000 ? project.bible.slice(0, 3000) + '\n...(设定过长已截断)' : project.bible;
-        sections.push(`\n## 核心设定\n${bible}`);
+      // 节奏指导
+      sections.push(`\n## 节奏指导`);
+      sections.push(pacingGuidance.guidance);
+      if (pacingGuidance.isClimaxChapter) {
+        sections.push(`⚡ **本卷高潮章** — 伏笔集中触发，爆点最大化！`);
       }
 
-      // 本章目标
+      // 本章定位
       if (chapterGoal || volumeContext) {
         sections.push(`\n## 本章定位`);
         if (volumeContext) sections.push(volumeContext);
         if (chapterGoal) sections.push(`本章目标: ${chapterGoal}`);
+      }
+
+      // 核心设定
+      if (project.bible) {
+        const bible = project.bible.length > 2500 ? project.bible.slice(0, 2500) + '\n...(设定过长已截断)' : project.bible;
+        sections.push(`\n## 核心设定\n${bible}`);
       }
 
       // 滚动摘要
@@ -111,18 +142,30 @@ export function registerPrepareTools(server: McpServer, db: DbInstance) {
         }
       }
 
-      // 最近章节
+      // 一致性护栏
+      const guardrails: string[] = [];
       if (recentChapters.length > 0) {
-        sections.push(`\n## 最近章节`);
+        const lastContent = recentChapters[recentChapters.length - 1].content as string;
+        const lastEnding = lastContent.slice(-300).trim();
+        guardrails.push(`[上章结尾锚点] ${lastEnding}`);
+        guardrails.push('[衔接自检] 本章第1段必须从这个结尾的状态/位置/情绪继续，不得跳转或复原');
+      }
+      if (guardrails.length > 0) {
+        sections.push(`\n## 一致性护栏 — 不可矛盾`);
+        guardrails.forEach((g, i) => sections.push(`${i + 1}. ${g}`));
+      }
+
+      // 最近章节结尾
+      if (recentChapters.length > 0) {
+        sections.push(`\n## 最近章节结尾`);
         for (const ch of recentChapters) {
-          // 只保留章节的结尾段落（为连续性）和标题
           const content = ch.content as string;
-          const lastPortion = content.length > 1500 ? '...\n\n' + content.slice(-1500) : content;
+          const lastPortion = content.length > 1200 ? '...\n\n' + content.slice(-1200) : content;
           sections.push(`\n### 第${ch.chapter_index}章 ${ch.title}\n${lastPortion}`);
         }
       }
 
-      // 角色信息（简要）
+      // 角色信息
       if (charsRow) {
         try {
           const chars = JSON.parse(charsRow.characters_json);
@@ -132,24 +175,22 @@ export function registerPrepareTools(server: McpServer, db: DbInstance) {
             for (const c of (charList as any[]).slice(0, 8)) {
               const name = c.name || c.characterName || '?';
               const desc = c.description || c.role || c.personality || '';
-              sections.push(`- **${name}**: ${typeof desc === 'string' ? desc.slice(0, 100) : JSON.stringify(desc).slice(0, 100)}`);
+              sections.push(`- **${name}**: ${typeof desc === 'string' ? desc.slice(0, 120) : JSON.stringify(desc).slice(0, 120)}`);
             }
           }
         } catch { /* ignore */ }
       }
 
-      // 写作提示
-      sections.push(`\n## 写作提示`);
-      const progress = targetIdx / project.total_chapters;
-      if (targetIdx <= 3) {
-        sections.push(`📌 黄金三章阶段 — 必须在 500 字内引爆读者好奇心，禁止大段设定介绍`);
-      } else if (progress < 0.25) {
-        sections.push(`📌 开局铺垫阶段 — 建立角色和冲突，每章必须有进展`);
-      } else if (progress > 0.9) {
-        sections.push(`📌 收尾阶段 — 回收伏笔，收束主线，不要引入新的长线`);
-      } else {
-        sections.push(`📌 正常推进 — 保持冲突密度和节奏变化`);
-      }
+      // 写作规则（根据章节位置动态生成）
+      const rules = buildCoreWritingRules({
+        chapterIndex: targetIdx,
+        totalChapters,
+        isFinalChapter: isFinal,
+        narrativeType: resolvedNarrative,
+        pacingTarget: pacingGuidance.pacingTarget,
+        isArcOpening,
+      });
+      sections.push(`\n## 写作规则\n${rules}`);
 
       return { content: [{ type: 'text' as const, text: sections.join('\n') }] };
     },
