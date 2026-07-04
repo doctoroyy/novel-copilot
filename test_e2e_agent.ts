@@ -6,11 +6,16 @@ import { writeChapterWithAgent } from './src/agent/agentChapterEngine.js';
 import type { AIConfig } from './src/services/aiClient.js';
 import * as fs from 'fs';
 
+const apiKey = process.env.AGENT_E2E_API_KEY;
+if (!apiKey) {
+  throw new Error('AGENT_E2E_API_KEY is required to run test_e2e_agent.ts');
+}
+
 const AI_CONFIG: AIConfig = {
-  provider: 'custom-1772719742120' as any,
-  model: 'DeepSeek-V3',
-  apiKey: 'sk-ln8DQygJDI3EgNCB202045A900Ef41Cf99D829653fA25911',
-  baseUrl: 'https://api.edgefn.net/v1',
+  provider: (process.env.AGENT_E2E_PROVIDER || 'custom') as any,
+  model: process.env.AGENT_E2E_MODEL || 'DeepSeek-V3',
+  apiKey,
+  baseUrl: process.env.AGENT_E2E_BASE_URL || 'https://api.edgefn.net/v1',
 };
 
 async function main() {
