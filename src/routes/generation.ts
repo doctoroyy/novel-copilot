@@ -83,10 +83,10 @@ async function getAIConfig(c: any, db: Database, featureKey?: string): Promise<A
   //    If the request supplies a complete custom provider header set, use it.
   if (userId) {
     const headers = c.req.header();
-    const customProvider = headers['x-custom-provider'];
-    const customModel = headers['x-custom-model'];
-    const customBaseUrl = headers['x-custom-base-url'];
-    const customApiKey = headers['x-custom-api-key'];
+    const customProvider = headers['x-ai-provider'] || headers['x-custom-provider'];
+    const customModel = headers['x-ai-model'] || headers['x-custom-model'];
+    const customBaseUrl = headers['x-ai-baseurl'] || headers['x-custom-base-url'];
+    const customApiKey = headers['x-ai-key'] || headers['x-custom-api-key'];
 
     if (customProvider && customModel && customApiKey) {
       return {

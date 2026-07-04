@@ -27,8 +27,8 @@ importers:
         specifier: ^7.0.1
         version: 7.0.1
       better-sqlite3:
-        specifier: ^11.8.1
-        version: 11.10.0
+        specifier: ^12.10.0
+        version: 12.11.1
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -58,7 +58,7 @@ importers:
         specifier: ^4.2.0
         version: 4.2.0
       '@types/better-sqlite3':
-        specifier: ^7.6.12
+        specifier: ^7.6.13
         version: 7.6.13
       '@types/node':
         specifier: ^22.10.2
@@ -902,8 +902,9 @@ packages:
     resolution: {integrity: sha512-bopVNp6ugyA150DDuZfPFdt1KZ5a94ZDiwX4hMgZDzF+GttD80lEy8kj98kbyhLXnPvhtIo93mdnLIjpCAeeOw==}
     engines: {node: '>=10.0.0'}
 
-  better-sqlite3@11.10.0:
-    resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
+  better-sqlite3@12.11.1:
+    resolution: {integrity: sha512-dq9AtApgg5PGFtBzPFSBl3HZQjHok5gaQCM6zh2Yk0aSmDCs1CbnVI8/HgASQkNKsWFpseIO9beg5xxpYhbIfA==}
+    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
 
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
@@ -3258,7 +3259,7 @@ snapshots:
 
   basic-ftp@5.3.1: {}
 
-  better-sqlite3@11.10.0:
+  better-sqlite3@12.11.1:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3

@@ -3,6 +3,7 @@ const API_BASE = '/api';
 
 import type { CharacterRelationGraph } from '../types/characters';
 import { getAuthHeaders } from './auth';
+import { getAIConfigHeaders } from '@/contexts/AIConfigContext';
 
 export type ProjectSummary = {
   id: string;
@@ -514,9 +515,9 @@ function parseAgentSessionDetail(raw: any): AgentSessionDetail {
   };
 }
 
-// Helper to merge headers with auth
+// Helper to merge headers with auth and local AI config
 function mergeHeaders(base: Record<string, string>, extra?: Record<string, string>): Record<string, string> {
-  return { ...getAuthHeaders(), ...base, ...extra };
+  return { ...getAuthHeaders(), ...getAIConfigHeaders(), ...base, ...extra };
 }
 
 // Helper to get default headers with auth
