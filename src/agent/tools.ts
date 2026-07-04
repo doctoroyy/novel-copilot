@@ -1,173 +1,71 @@
-/**
- * ReAct Agent 工具定义
- */
+import { z } from 'zod';
+import type { ToolDefinition } from './adapters/types.js';
 
-import type { ToolDefinition } from './types.js';
-import type { PlotGraph } from '../types/plotGraph.js';
-import type { CharacterStateRegistry } from '../types/characterState.js';
-import type { TimelineState } from '../types/timeline.js';
-import type { NarrativeGuide, EnhancedChapterOutline } from '../types/narrative.js';
-
-/** 工具执行上下文 — 传入现有的各种状态 */
-export type ToolContext = {
-  bible: string;
-  plotGraph?: PlotGraph;
-  characterStates?: CharacterStateRegistry;
-  timeline?: TimelineState;
-  narrativeGuide?: NarrativeGuide;
-  rollingSummary: string;
-  openLoops: string[];
-  lastChapters: string[];
-  chapterIndex: number;
-  totalChapters: number;
-  enhancedOutline?: EnhancedChapterOutline;
-  /** 每章最少字数（中文字），默认 2500 */
-  minChapterWords?: number;
-  /** 章节 prompt 风格 profile 名 */
-  chapterPromptProfile?: string;
-  /** 章节自定义 prompt */
-  chapterPromptCustom?: string;
-  /** 自定义系统级规则提示词 */
-  customSystemPrompt?: string | null;
+export const ToolSchemas = {
+  read_story_vault: z.object({
+    aspect: z.enum(['active_plots', 'pending_foreshadowing', 'causal_chains', 'recent_events', 'full_summary'])
+      .describe('要查询的资料库方面'),
+  }),
+  
+  read_chapter: z.object({
+    chapter_index: z.number().describe('要读取的章节序号'),
+  }),
+  
+  read_summary: z.object({
+    scope: z.enum(['recent_3', 'recent_10', 'all_major']).describe('要读取的摘要范围'),
+  }),
+  
+  submit_proposal: z.object({
+    scene_plan: z.array(z.object({
+      purpose: z.string(),
+      conflict: z.string(),
+      new_info: z.string(),
+    })).describe('场景规划序列'),
+    chapter_text: z.string().describe('本章草稿文本'),
+    review_notes: z.string().describe('需要作者注意的审阅备注'),
+  }),
+  
+  run_qc: z.object({
+    chapter_text: z.string().describe('需要进行质量检查的章节文本'),
+  }),
+  
+  search_references: z.object({
+    query: z.string().describe('要在设定集和参考资料中搜索的关键词'),
+  })
 };
 
-/** AI 增强工具名称列表（消耗 AI 调用预算） */
-export const AI_TOOLS = new Set([
-  'query_reader_expectations',
-  'design_scene_sequence',
-  'evaluate_draft',
-  'write_chapter',
-  'rewrite_section',
-]);
+// Helper to convert Zod schema to JSON Schema for the LLM
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [
+export const AgentTools: ToolDefinition[] = [
   {
-    name: 'query_plot_graph',
-    description: '查询剧情图谱。获取活跃主线/支线剧情、待回收伏笔、因果链、近期重要事件。用于理解当前故事状态。',
-    parameters: {
-      aspect: {
-        type: 'string',
-        description: '要查询的方面',
-        enum: ['active_plots', 'pending_foreshadowing', 'causal_chains', 'recent_events', 'full_summary'],
-        required: true,
-      },
-    },
+    name: 'read_story_vault',
+    description: '查询故事资料库。获取活跃主线/支线剧情、待回收伏笔、因果链、近期重要事件。用于理解当前故事状态。',
+    parameters: zodToJsonSchema(ToolSchemas.read_story_vault) as Record<string, any>,
   },
   {
-    name: 'query_character_state',
-    description: '查询角色当前状态。包括位置、身体状况、情绪、动机、近期变化。',
-    parameters: {
-      character_name: {
-        type: 'string',
-        description: '角色名称，传 "all" 查询所有活跃角色',
-        required: true,
-      },
-    },
+    name: 'read_chapter',
+    description: '读取某一特定章节的原文内容，以获取局部细节。不要一次性请求太多章节。',
+    parameters: zodToJsonSchema(ToolSchemas.read_chapter) as Record<string, any>,
   },
   {
-    name: 'query_timeline',
-    description: '查询时间线上的已发生事件。用于避免重复和保持连续性。',
-    parameters: {
-      scope: {
-        type: 'string',
-        description: '查询范围',
-        enum: ['recent_5', 'recent_10', 'all_major'],
-        required: true,
-      },
-    },
+    name: 'read_summary',
+    description: '读取章节滚动摘要，用于了解最近几章的发展或全书大纲概要，比读取原文更省 token。',
+    parameters: zodToJsonSchema(ToolSchemas.read_summary) as Record<string, any>,
   },
   {
-    name: 'query_reader_expectations',
-    description: '模拟读者视角，分析读者此刻的预期、疑问和情感状态。基于已有的摘要和伏笔推断。',
-    parameters: {},
+    name: 'submit_proposal',
+    description: '提交章节草稿和结构化提案。这会结束你的写作任务并向作者请求审查确认。',
+    parameters: zodToJsonSchema(ToolSchemas.submit_proposal) as Record<string, any>,
   },
   {
-    name: 'analyze_conflict_density',
-    description: '分析最近 N 章的冲突密度和类型分布，判断是否需要升级冲突或引入新冲突。',
-    parameters: {
-      lookback_chapters: {
-        type: 'number',
-        description: '回看章数，默认5',
-      },
-    },
+    name: 'run_qc',
+    description: '对生成的草稿进行质量检查，从冲突强度、角色一致性、节奏等维度打分并给出修改建议。',
+    parameters: zodToJsonSchema(ToolSchemas.run_qc) as Record<string, any>,
   },
   {
-    name: 'check_foreshadowing_opportunities',
-    description: '检查当前章节有哪些伏笔可以回收，以及是否需要植入新伏笔。',
-    parameters: {},
-  },
-  {
-    name: 'design_scene_sequence',
-    description: '设计本章的场景序列。输入整体目标，输出场景级的详细计划。',
-    parameters: {
-      goal: {
-        type: 'string',
-        description: '本章的核心目标',
-        required: true,
-      },
-      constraints: {
-        type: 'string',
-        description: '额外约束（如节奏要求、必须包含的元素等）',
-      },
-    },
-  },
-  {
-    name: 'evaluate_draft',
-    description: '评估已生成的草稿。从冲突强度、角色行为一致性、节奏、读者体验等维度打分。',
-    parameters: {
-      focus: {
-        type: 'string',
-        description: '重点评估维度',
-        enum: ['conflict', 'character_consistency', 'pacing', 'reader_engagement', 'all'],
-      },
-    },
-  },
-  {
-    name: 'soft_validate',
-    description: '快速校验草稿格式和字数（不消耗 AI 预算）。返回字数统计和格式问题。写完章节后务必调用。',
-    parameters: {},
-  },
-  {
-    name: 'rewrite_section',
-    description: '定向重写草稿中的某个片段，而不是整章重写。',
-    parameters: {
-      section: {
-        type: 'string',
-        description: '要重写的片段标识（如 "opening", "climax", "ending", 或具体的场景编号）',
-        required: true,
-      },
-      guidance: {
-        type: 'string',
-        description: '重写指引',
-        required: true,
-      },
-    },
-  },
-  {
-    name: 'write_chapter',
-    description: '执行实际的章节写作。在你完成了足够的调研和规划后调用此工具。',
-    parameters: {
-      scene_plan: {
-        type: 'string',
-        description: '详细的场景计划（JSON 格式）',
-        required: true,
-      },
-      writing_notes: {
-        type: 'string',
-        description: '写作注意事项和特别指示',
-        required: true,
-      },
-    },
-  },
-  {
-    name: 'finish',
-    description: '确认最终输出。当你对章节质量满意时调用此工具提交最终版本。',
-    parameters: {
-      chapter_text: {
-        type: 'string',
-        description: '最终章节文本',
-        required: true,
-      },
-    },
-  },
+    name: 'search_references',
+    description: '搜索项目中的设定集和参考资料（如角色设定、世界观词典）。',
+    parameters: zodToJsonSchema(ToolSchemas.search_references) as Record<string, any>,
+  }
 ];
