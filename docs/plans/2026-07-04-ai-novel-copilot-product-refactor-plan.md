@@ -19,10 +19,11 @@ Novel Copilot 不应该继续定位成“能生成大纲和章节的工具集合
 3. 网文导向：支持总纲、卷纲、章节蓝图、爽点、钩子、追读节奏。
 4. 成本透明：本地优先，支持 BYOK，也支持可选托管模型额度。
 5. 能交付：导入旧稿，持续生成，质量扫描，导出发布稿。
+6. 运行时不绑定：产品层不耦合 OpenAI Codex 或任何单一 Agent Runtime，默认优先套壳 Claude Code，后续通过适配器支持其他运行时。
 
 ## 社区与竞品信号
 
-### 1. Story Bible / Codex 是核心资产
+### 1. Story Bible / Story Vault 是核心资产
 
 Sudowrite 的 Story Bible 把故事核心元素放到一个地方，让作者和 AI 都能引用，目标是组织叙事并让 AI 保持方向；它还支持从想法逐步推进到 synopsis、outline、scenes、chapter prose。  
 来源：[Sudowrite Story Bible 文档](https://docs.sudowrite.com/using-sudowrite/1ow1qkGqof9rtcyGnrWUBS/what-is-story-bible/jmWepHcQdJetNrE991fjJC)
@@ -30,11 +31,11 @@ Sudowrite 的 Story Bible 把故事核心元素放到一个地方，让作者和
 Novelcrafter 的 Codex 是角色、地点、物品等故事元素的中心资料库。社区讨论里反复提到，Codex 和 scene summaries 能让 AI 更理解故事，不像通用聊天工具那样需要作者反复重述上下文。  
 来源：[Novelcrafter Codex 文档](https://www.novelcrafter.com/help/docs/codex/the-codex)、[Reddit: NovelAI vs Sudowrite vs NovelCrafter](https://www.reddit.com/r/WritingWithAI/comments/1akj00y/novelai_vs_sudowrite_vs_novelcrafter/)
 
-对 Novel Copilot 的启示：现有 `bible`、`outlines`、`characters`、`character_states`、`plot_graphs`、`narrative_config`、`summary_memories` 已经有雏形，但它们还是后端数据表和分散页面，不是作者日常工作的“故事资产中心”。
+对 Novel Copilot 的启示：现有 `bible`、`outlines`、`characters`、`character_states`、`plot_graphs`、`narrative_config`、`summary_memories` 已经有雏形，但它们还是后端数据表和分散页面，不是作者日常工作的“故事资产中心”。为了避免和 OpenAI Codex / Codex CLI 混淆，产品内建议命名为 `Story Vault` 或“故事资料库”，不叫 Codex。
 
 ### 2. 生成不是一次性按钮，而是 scene beats + 导演式控制
 
-社区里有作者描述自己的工作流：用 Story Bible/Codex 维持故事骨架，然后像导演一样构造场景节拍、安排角色行动；生成不合适就改 prompt 或重来。UI 是否顺手会直接影响是否继续使用。  
+社区里有作者描述自己的工作流：用 Story Bible / 故事资料库维持故事骨架，然后像导演一样构造场景节拍、安排角色行动；生成不合适就改 prompt 或重来。UI 是否顺手会直接影响是否继续使用。  
 来源：[Reddit: Sudowrite is better than Novelcrafter](https://www.reddit.com/r/WritingWithAI/comments/1sczcs4/sudowrite_is_better_than_novelcrafter/)
 
 Novelcrafter 的 Extract 能把聊天里的想法提取成 Codex entries、chapters 或 scene beats。  
@@ -92,11 +93,12 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 主要问题：
 
 1. 作者视角不统一：功能散在 Dashboard、Bible、Outline、Generate、Summary、Quality、Characters、Copilot 等页面，缺少一个持续写作主流程。
-2. 故事资产没有产品化：很多结构存在于 JSON 或表里，但作者不能像管理 Codex 那样直接维护、抽取、引用和审查。
+2. 故事资产没有产品化：很多结构存在于 JSON 或表里，但作者不能像管理故事资料库那样直接维护、抽取、引用和审查。
 3. 生成链路不可解释：作者很难知道每次生成用了哪些设定、摘要、人物状态和限制。
 4. Agent 能力还像聊天助手：应该升级为“项目编辑部”，输出可审阅、可回滚、可批量执行的改动方案。
 5. 商业化边界不清：云端积分、登录、移动端、动漫生成、桌面本地优先混在一起，第一版可售产品应该更聚焦。
-6. 打包和运行可靠性仍需工程化：当前 Node 26 + pnpm build approval 对 `better-sqlite3` 有运行时风险，sidecar smoke test 需要纳入 CI。
+6. Agent Runtime 边界不清：产品层不能绑定 Codex 或其他单一运行时。应把 Claude Code 作为默认可替换运行时，通过适配器连接。
+7. 打包和运行可靠性仍需工程化：当前 Node 26 + pnpm build approval 对 `better-sqlite3` 有运行时风险，sidecar smoke test 需要纳入 CI。
 
 ## 产品定位
 
@@ -127,12 +129,12 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 把当前页面重组成一个主工作台：
 
-1. 左侧：作品树，包含总纲、卷纲、章节、Codex、素材、导出。
+1. 左侧：作品树，包含总纲、卷纲、章节、故事资料库、素材、导出。
 2. 中间：当前任务区，支持编辑章节、章节蓝图、场景节拍、质量报告。
 3. 右侧：Project Copilot，负责解释、建议、生成 proposal 和执行已确认操作。
 4. 顶部：当前项目健康状态，显示连续性、未闭环伏笔、今日产出、模型成本。
 
-### 2. Story Bible 2.0 / Codex
+### 2. Story Bible 2.0 / Story Vault
 
 把现有 `bible` 从单个文本升级为结构化故事资产：
 
@@ -146,9 +148,9 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 新增能力：
 
-1. 从聊天、章节、导入稿中 Extract 为 Codex 条目。
-2. 每条 Codex 有触发词、重要性、适用范围、最近引用章节。
-3. 每次生成后自动建议更新 Codex，但必须由作者确认。
+1. 从聊天、章节、导入稿中 Extract 为 Story Vault 条目。
+2. 每条 Story Vault 条目有触发词、重要性、适用范围、最近引用章节。
+3. 每次生成后自动建议更新 Story Vault，但必须由作者确认。
 
 ### 3. Context Builder
 
@@ -158,7 +160,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 1. 当前任务：生成章节、修订段落、补人物、质量扫描。
 2. 当前章节蓝图和 scene beats。
-3. Story Bible / Codex 条目。
+3. Story Bible / Story Vault 条目。
 4. 角色状态、时间线、地点状态、伏笔。
 5. 最近章节、滚动摘要、卷级桥接摘要。
 6. 作者笔记和本章禁忌。
@@ -202,7 +204,34 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 实现上不需要同时并发多个大模型。第一版应使用确定性的 orchestration，让每一步输入输出可审查。
 
-### 6. Commercial Shell
+### 6. Agent Runtime Adapter
+
+不要把 Novel Copilot 做成 Codex 的强绑定外壳。更合适的方式是把 Claude Code 当作默认 Agent Runtime，但产品层拥有完整的领域模型、上下文构建、proposal、审查、回滚和商业逻辑。
+
+建议架构：
+
+1. `Novel Copilot Core`：负责 SQLite、Story Vault、Context Builder、章节蓝图、质量扫描、导出、license。
+2. `Runtime Adapter`：负责启动和管理外部 Agent Runtime，第一版实现 `ClaudeCodeAdapter`。
+3. `Virtual Project Workspace`：把项目数据物化成 Claude Code 容易理解的文件结构，例如 `story-bible.md`、`story-vault/*.md`、`outline.json`、`chapters/*.md`、`blueprints/*.json`。
+4. `Tool Contract`：Claude Code 只能调用受控工具，例如读取故事资料库、生成上下文包、提交 proposal、运行 QC。不能直接写数据库。
+5. `Proposal Importer`：Claude Code 修改虚拟工作区或输出结构化 proposal 后，产品层做 schema 校验、diff 预览、风险评级和作者确认。
+6. `Runtime Registry`：后续可接其他 CLI/SDK Agent、本地模型 agent 或团队自研运行时，但 UI 和业务逻辑不改。
+
+为什么 Claude Code 优先：
+
+1. 它已经有成熟的长任务规划、工具调用、文件编辑和上下文工作流。
+2. 小说项目天然可以映射成文件工作区，适合让 Claude Code 读写 Markdown/JSON。
+3. 产品可以把 AI 写作能力包装成“可审查的项目改动”，而不是把所有智能都写死在应用后端。
+4. 这样能更快做出能卖的版本：先卖工作流和体验，再逐步沉淀自有 agent runtime。
+
+边界：
+
+1. Claude Code 是默认运行时，不是产品身份。
+2. 所有项目数据仍由 Novel Copilot Core 管理。
+3. 所有变更必须经过 proposal 和作者确认。
+4. 不能把 license、计费、导出、Story Vault、Context Builder 做进 Claude Code prompt 里。
+
+### 7. Commercial Shell
 
 桌面版第一阶段：
 
@@ -231,8 +260,9 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 2. 修复 `better-sqlite3` native build 和 sidecar smoke test。
 3. 移除或隐藏桌面版不需要的登录、积分、云端 admin 入口。
 4. 保留 BYOK 设置，移除所有硬编码 key 风险。
-5. 新增 `pnpm smoke:desktop`：启动 sidecar，访问 `/api/health`，创建临时项目，写入 SQLite，再关闭。
-6. 新增桌面开发说明和打包说明。
+5. 新增 `ClaudeCodeAdapter` 的技术 spike：能启动 Claude Code，读取一个虚拟作品工作区，并输出结构化 proposal。
+6. 新增 `pnpm smoke:desktop`：启动 sidecar，访问 `/api/health`，创建临时项目，写入 SQLite，再关闭。
+7. 新增桌面开发说明和打包说明。
 
 验收：
 
@@ -249,8 +279,8 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 1. 新增 Story Workspace layout，整合章节树、编辑器、Copilot 和项目健康状态。
 2. 新增 `story_entities`、`story_threads`、`story_notes`、`context_packages` 表，或在现有表上加兼容层。
 3. 把 `bible` 文本迁移为结构化 Story Bible 2.0，同时保留 raw text。
-4. 新增 Codex 管理视图：人物、地点、物品、势力、规则、伏笔。
-5. 新增 Extract 功能：从章节/聊天结果中提取 Codex 条目和 scene beats。
+4. 新增 Story Vault 管理视图：人物、地点、物品、势力、规则、伏笔。
+5. 新增 Extract 功能：从章节/聊天结果中提取 Story Vault 条目和 scene beats。
 6. 旧项目自动迁移，不能丢现有 bible、outline、characters。
 
 验收：
@@ -314,7 +344,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 建议定价：
 
-1. Free：1 个项目，BYOK，基础生成，基础 Codex。
+1. Free：1 个项目，BYOK，基础生成，基础故事资料库。
 2. Pro：人民币 49 到 79 元/月，或 399 到 599 元/年。本地无限项目、Context Inspector、高级 QC、批量生成、导出。
 3. Studio：人民币 129 到 199 元/月。托管模型额度、云备份、多设备、模板市场优先。
 4. Token Pack：只给不想配置 API 的用户，作为可选项。
@@ -382,6 +412,25 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
    - 可复用或扩展现有 `agent_proposals`
    - 需要支持 diff、批量动作、回滚和作者确认。
 
+6. `runtime_sessions`
+   - `id`
+   - `project_id`
+   - `runtime`: claude_code / custom_cli / sdk_agent
+   - `virtual_workspace_path`
+   - `status`
+   - `last_error`
+   - `created_at`
+   - `updated_at`
+
+7. `virtual_workspace_snapshots`
+   - `id`
+   - `runtime_session_id`
+   - `context_package_id`
+   - `manifest_json`
+   - `input_hash`
+   - `output_hash`
+   - `created_at`
+
 ## 工程原则
 
 1. 先本地稳定，再云端增值。
@@ -398,16 +447,18 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 1. 修复 workspace 依赖和 `better-sqlite3` native build。
 2. 增加 desktop smoke test。
 3. 定义 Story Bible 2.0 和 Context Package TypeScript 类型。
-4. 新增 Context Builder 的空实现和单元测试。
-5. 写迁移草案，不直接删旧字段。
+4. 定义 `ClaudeCodeAdapter` 接口和 Virtual Project Workspace 文件 manifest。
+5. 新增 Context Builder 的空实现和单元测试。
+6. 写迁移草案，不直接删旧字段。
 
 ### Week 2
 
 1. 新建 Story Workspace 产品壳。
-2. 接入 Codex 列表和编辑。
+2. 接入 Story Vault 列表和编辑。
 3. 把章节生成改为先生成 Chapter Blueprint。
 4. 在生成前展示 Context Inspector。
-5. 用一个示例项目跑通“生成蓝图 -> 生成草稿 -> 审查 -> 提交记忆”。
+5. 用 Claude Code 跑通一个只读示例任务：读取虚拟作品工作区并输出章节修订 proposal。
+6. 用一个示例项目跑通“生成蓝图 -> 生成草稿 -> 审查 -> 提交记忆”。
 
 ## 成功指标
 
