@@ -19,7 +19,7 @@ Novel Copilot 不应该继续定位成“能生成大纲和章节的工具集合
 3. 网文导向：支持总纲、卷纲、章节蓝图、爽点、钩子、追读节奏。
 4. 成本透明：本地优先，支持 BYOK，也支持可选托管模型额度。
 5. 能交付：导入旧稿，持续生成，质量扫描，导出发布稿。
-6. 运行时不绑定：产品层不耦合 OpenAI Codex 或任何单一 Agent Runtime，默认优先套壳 Claude Code，后续通过适配器支持其他运行时。
+6. 运行时不绑定：产品层不耦合任何单一 Agent Runtime，默认通过 Anthropic API 直调精简自定义 Agent（省 89-95% 固定 token 开销），后续通过适配器支持其他运行时。
 
 ## 社区与竞品信号
 
@@ -97,7 +97,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 3. 生成链路不可解释：作者很难知道每次生成用了哪些设定、摘要、人物状态和限制。
 4. Agent 能力还像聊天助手：应该升级为“项目编辑部”，输出可审阅、可回滚、可批量执行的改动方案。
 5. 商业化边界不清：云端积分、登录、移动端、动漫生成、桌面本地优先混在一起，第一版可售产品应该更聚焦。
-6. Agent Runtime 边界不清：产品层不能绑定 Codex 或其他单一运行时。应把 Claude Code 作为默认可替换运行时，通过适配器连接。
+6. Agent Runtime 成本不可控：套壳 Claude Code 每 turn 有 ~45K tokens 固定开销（system prompt + 工具定义），其中 90% 能力对写作无用。应改为直调 API 的精简自定义 Agent，通过适配器保留可替换性。
 7. 打包和运行可靠性仍需工程化：当前 Node 26 + pnpm build approval 对 `better-sqlite3` 有运行时风险，sidecar smoke test 需要纳入 CI。
 
 ## 产品定位
@@ -206,30 +206,59 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 
 ### 6. Agent Runtime Adapter
 
-不要把 Novel Copilot 做成 Codex 的强绑定外壳。更合适的方式是把 Claude Code 当作默认 Agent Runtime，但产品层拥有完整的领域模型、上下文构建、proposal、审查、回滚和商业逻辑。
+不套壳 Claude Code。直接调 Anthropic Messages API（或 Claude Agent SDK），用精简的自定义 Agent 替代。产品层拥有完整的领域模型、上下文构建、proposal、审查、回滚和商业逻辑。
 
-建议架构：
+#### 为什么不套壳 Claude Code
+
+Claude Code 的 system prompt + 工具定义每 turn 有 ~45,000 tokens 固定开销，其中 90% 的能力（Bash、Grep、代码编辑、浏览器、MCP）对小说写作完全无用。一章生成（~8 轮交互）仅固定开销就要消耗 360K 输入 tokens，是实际任务上下文的 2.5-4 倍。
+
+自定义精简 Agent 每 turn 固定开销仅 ~3,500 tokens，省 89-95%。加上 prompt caching（缓存命中率 95%+），实际成本可再降 60-90%。性能保留率 ~95%——底层模型能力完全一样，写作质量取决于 prompt 和上下文，不取决于编程相关的 system prompt。
+
+#### 建议架构
 
 1. `Novel Copilot Core`：负责 SQLite、Story Vault、Context Builder、章节蓝图、质量扫描、导出、license。
-2. `Runtime Adapter`：负责启动和管理外部 Agent Runtime，第一版实现 `ClaudeCodeAdapter`。
-3. `Virtual Project Workspace`：把项目数据物化成 Claude Code 容易理解的文件结构，例如 `story-bible.md`、`story-vault/*.md`、`outline.json`、`chapters/*.md`、`blueprints/*.json`。
-4. `Tool Contract`：Claude Code 只能调用受控工具，例如读取故事资料库、生成上下文包、提交 proposal、运行 QC。不能直接写数据库。
-5. `Proposal Importer`：Claude Code 修改虚拟工作区或输出结构化 proposal 后，产品层做 schema 校验、diff 预览、风险评级和作者确认。
-6. `Runtime Registry`：后续可接其他 CLI/SDK Agent、本地模型 agent 或团队自研运行时，但 UI 和业务逻辑不改。
+2. `Runtime Adapter`：负责管理 AI 调用，第一版实现 `AnthropicDirectAdapter`。
+3. `Agent Loop`：自建轻量 agent loop，支持多步推理、工具调用、重试和流式输出。
+4. `Tool Contract`：注册 4-6 个领域工具：`read_story_vault`、`read_chapter`、`read_summary`、`submit_proposal`、`run_qc`、`search_references`。不能直接写数据库。
+5. `Proposal Importer`：Agent 输出结构化 proposal 后，产品层做 schema 校验、diff 预览、风险评级和作者确认。
+6. `Runtime Registry`：后续可接 Gemini、本地模型、Claude Code（可选给订阅用户）等，UI 和业务逻辑不改。
 
-为什么 Claude Code 优先：
+#### 精简 System Prompt 结构（~1,500 tokens）
 
-1. 它已经有成熟的长任务规划、工具调用、文件编辑和上下文工作流。
-2. 小说项目天然可以映射成文件工作区，适合让 Claude Code 读写 Markdown/JSON。
-3. 产品可以把 AI 写作能力包装成“可审查的项目改动”，而不是把所有智能都写死在应用后端。
-4. 这样能更快做出能卖的版本：先卖工作流和体验，再逐步沉淀自有 agent runtime。
+1. 身份：中文长篇小说创作助手，100 tokens。
+2. 工作流程：章节蓝图 -> 场景节拍 -> 草稿 -> 审查 -> 修补 -> 记忆提交，200 tokens。
+3. 写作风格规范：文风、禁用表达、对话偏好、视角规则，300 tokens。
+4. 输出格式要求：proposal 结构、JSON schema、diff 格式，300 tokens。
+5. 上下文使用规则：按需读取、不重复请求、token 预算意识，200 tokens。
+6. 安全约束：不改核心设定、不跳过作者确认、不输出敏感内容，200 tokens。
+7. 重申关键规则（利用 recency bias），100 tokens。
 
-边界：
+#### Prompt Caching 策略
 
-1. Claude Code 是默认运行时，不是产品身份。
+1. 工具定义放在请求最前面，标记 `cache_control: {"type": "ephemeral"}`。
+2. System prompt 保持静态，不注入动态内容（时间戳、用户信息等追加到末尾）。
+3. 会话内不增减工具，避免缓存失效。
+4. 监控 `cache_read_input_tokens`，确保命中率 > 90%。
+5. 对同一项目的连续任务保持 5 分钟内的调用节奏，维持缓存 warm。
+
+#### Token 经济约束
+
+1. 不允许把整本书、全量章节、全量 Story Vault 直接放进上下文。
+2. 每次任务由 Context Builder 先裁剪出 `context_package`，再传给 Agent。
+3. 默认上下文包只包含当前任务、当前章节蓝图、最近 1 到 3 章摘要、相关角色状态、相关伏笔、必要风格规则。
+4. 长篇历史内容优先用 rolling summary、chapter digest、thread state、character state 表达，只有定位到具体风险时才通过工具按需读取原文片段。
+5. 工具调用要返回小块内容，例如"第 42 章相关段落"而不是"第 1 到 80 章全文"。
+6. `ai_job_ledger` 必须记录每次任务的输入 token 估算（含缓存命中）、工具读取量、输出 token 估算和成本，用数据倒逼上下文预算。
+7. 对常见任务设置硬预算：章节蓝图 8k 到 15k 输入 token，局部改写 6k 到 12k，整章草稿 20k 到 40k，项目级审查可更高但必须显式确认。
+
+#### 边界
+
+1. 默认 runtime 是直调 API 的精简自定义 Agent，不是 Claude Code。
 2. 所有项目数据仍由 Novel Copilot Core 管理。
 3. 所有变更必须经过 proposal 和作者确认。
-4. 不能把 license、计费、导出、Story Vault、Context Builder 做进 Claude Code prompt 里。
+4. 不能把 license、计费、导出、Story Vault、Context Builder 做进 Agent prompt 里。
+5. Agent 拿到的是任务级上下文，不是完整数据库和完整作品库。
+6. Claude Code 可作为可选 runtime（`ClaudeCodeAdapter`），给已有 Claude 订阅的用户，但不是默认路径。
 
 ### 7. Commercial Shell
 
@@ -260,7 +289,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 2. 修复 `better-sqlite3` native build 和 sidecar smoke test。
 3. 移除或隐藏桌面版不需要的登录、积分、云端 admin 入口。
 4. 保留 BYOK 设置，移除所有硬编码 key 风险。
-5. 新增 `ClaudeCodeAdapter` 的技术 spike：能启动 Claude Code，读取一个虚拟作品工作区，并输出结构化 proposal。
+5. 新增 `AnthropicDirectAdapter` 的技术 spike：直调 Anthropic Messages API，注册 4-6 个领域工具，自建 agent loop，启用 prompt caching，跑通一个章节蓝图生成任务并输出结构化 proposal。
 6. 新增 `pnpm smoke:desktop`：启动 sidecar，访问 `/api/health`，创建临时项目，写入 SQLite，再关闭。
 7. 新增桌面开发说明和打包说明。
 
@@ -392,6 +421,8 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
    - `chapter_index`
    - `input_refs_json`
    - `package_json`
+   - `token_budget_json`
+   - `estimated_tokens`
    - `prompt_hash`
    - `created_at`
 
@@ -403,6 +434,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
    - `phase`
    - `estimated_input_tokens`
    - `estimated_output_tokens`
+   - `tool_read_tokens`
    - `estimated_cost`
    - `duration_ms`
    - `status`
@@ -415,21 +447,14 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 6. `runtime_sessions`
    - `id`
    - `project_id`
-   - `runtime`: claude_code / custom_cli / sdk_agent
-   - `virtual_workspace_path`
+   - `runtime`: anthropic_direct / claude_code / gemini / local_model
+   - `model`
+   - `system_prompt_hash`
+   - `cache_hit_rate`
    - `status`
    - `last_error`
    - `created_at`
    - `updated_at`
-
-7. `virtual_workspace_snapshots`
-   - `id`
-   - `runtime_session_id`
-   - `context_package_id`
-   - `manifest_json`
-   - `input_hash`
-   - `output_hash`
-   - `created_at`
 
 ## 工程原则
 
@@ -438,7 +463,8 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 3. 任何生成都必须有上下文包和任务记录。
 4. 任何长期记忆更新都必须来自明确来源，不允许模型随意改核心设定。
 5. 生成引擎要可测试，至少能用假模型跑完整 10 章流程。
-6. UI 不堆功能入口，所有能力围绕“下一步写什么、怎么写好、哪里有风险”组织。
+6. Agent Runtime 默认直调 API，精简 system prompt（~1,500 tokens），只注册领域工具，启用 prompt caching。不套壳 Claude Code。
+7. UI 不堆功能入口，所有能力围绕“下一步写什么、怎么写好、哪里有风险”组织。
 
 ## 最近两周建议排期
 
@@ -447,9 +473,10 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 1. 修复 workspace 依赖和 `better-sqlite3` native build。
 2. 增加 desktop smoke test。
 3. 定义 Story Bible 2.0 和 Context Package TypeScript 类型。
-4. 定义 `ClaudeCodeAdapter` 接口和 Virtual Project Workspace 文件 manifest。
+4. 定义 `AnthropicDirectAdapter` 接口、精简 system prompt（~1,500 tokens）和 4-6 个领域工具 schema。
 5. 新增 Context Builder 的空实现和单元测试。
-6. 写迁移草案，不直接删旧字段。
+6. 新增 token budget 单元测试，验证不同任务不会把全量章节或全量 Story Vault 塞进上下文。
+7. 写迁移草案，不直接删旧字段。
 
 ### Week 2
 
@@ -457,7 +484,7 @@ NovelAI 用订阅层级区分上下文能力和图像额度，强调“更大 Co
 2. 接入 Story Vault 列表和编辑。
 3. 把章节生成改为先生成 Chapter Blueprint。
 4. 在生成前展示 Context Inspector。
-5. 用 Claude Code 跑通一个只读示例任务：读取虚拟作品工作区并输出章节修订 proposal。
+5. 用 `AnthropicDirectAdapter` + prompt caching 跑通一个示例任务：读取上下文包、调用领域工具、输出章节修订 proposal，并验证缓存命中率 > 90%。
 6. 用一个示例项目跑通“生成蓝图 -> 生成草稿 -> 审查 -> 提交记忆”。
 
 ## 成功指标
