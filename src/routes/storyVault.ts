@@ -7,6 +7,7 @@ import {
   deleteStoryEntity,
   deleteStoryThread,
   extractFromText,
+  extractFromTextWithLLM,
   getStoryVault,
   listExtractProposals,
   updateStoryEntity,
@@ -147,12 +148,25 @@ storyVaultRoutes.post('/:name/vault/extract', async (c) => {
   if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const body = await c.req.json();
+    // If AI config headers are present, use LLM-powered extract
+    const provider = c.req.header('X-AI-Provider');
+    const model = c.req.header('X-AI-Model');
+    const apiKey = c.req.header('X-AI-Key');
+    const baseUrl = c.req.header('X-AI-BaseUrl');
+    if (provider && model && apiKey) {
+      const proposal = await extractFromTextWithLLM(
+        c.req.param('name'), userId,
+        { text: String(body.text || ''), sourceType: body.sourceType, sourceRef: body.sourceRef },
+        { provider: provider as any, model, apiKey, baseUrl },
+      );
+      return c.json({ success: true, proposal, method: 'llm' });
+    }
     const proposal = await extractFromText(c.req.param('name'), userId, {
       text: String(body.text || ''),
       sourceType: body.sourceType,
       sourceRef: body.sourceRef != null ? String(body.sourceRef) : undefined,
     });
-    return c.json({ success: true, proposal });
+    return c.json({ success: true, proposal, method: 'rule' });
   } catch (error) {
     const message = (error as Error).message;
     return c.json({ success: false, error: message }, mapErrorStatus(message));

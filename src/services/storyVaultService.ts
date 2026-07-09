@@ -868,6 +868,89 @@ export async function acceptExtractProposal(
   };
 }
 
+/**
+ * LLM-powered extract: uses a single AI call to identify entities, threads and
+ * notes from text, returning a structured proposal. Falls back to the rule-based
+ * extractor if the AI call fails.
+ */
+export async function extractFromTextWithLLM(
+  projectRef: string,
+  userId: string,
+  input: {
+    text: string;
+    sourceType?: StoryExtractProposal['sourceType'];
+    sourceRef?: string;
+  },
+  aiConfig: import('../services/aiClient.js').AIConfig,
+): Promise<StoryExtractProposal> {
+  const db = getDb();
+  const project = await resolveProjectForUser(db, projectRef, userId);
+  if (!project) throw new Error('Project not found');
+  const text = (input.text || '').trim();
+  if (!text) throw new Error('Text is required');
+
+  const system = `你是小说设定提取助手。从给定的章节文本中提取结构化故事资产。
+只输出严格的 JSON，不要有任何其他文字。
+
+输出格式：
+{
+  "entities": [
+    { "type": "character|location|item|faction|rule|world", "name": "名称", "content": "简短设定描述", "importance": 1-5 }
+  ],
+  "threads": [
+    { "name": "线索名", "kind": "main|sub|foreshadow|mystery", "summary": "简述", "status": "open|active" }
+  ],
+  "notes": [
+    { "title": "笔记标题", "content": "笔记内容" }
+  ]
+}
+
+规则：
+- 只提取文本中明确出现的内容，不要编造。
+- 角色名要准确，包含别名。
+- 伏笔/悬念标记为 foreshadow。
+- importance: 主角=5, 重要配角=4, 次要=3, 背景=2。
+- 如果文本太短或没有可提取内容，返回空数组。`.trim();
+
+  const prompt = `【待提取文本】\n${text.slice(0, 8000)}`.trim();
+
+  let extracted: { entities: any[]; threads: any[]; notes: any[] };
+
+  try {
+    const { generateTextWithRetry } = await import('../services/aiClient.js');
+    const raw = await generateTextWithRetry(
+      aiConfig,
+      { system, prompt, temperature: 0.2, maxTokens: 2000 },
+      1,
+      { phase: 'other' },
+    );
+    // Extract JSON from the response (handle markdown code fences)
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('LLM 未返回有效 JSON');
+    extracted = JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.warn('[extractLLM] falling back to rule-based:', (e as Error).message);
+    extracted = extractCandidatesFromText(text);
+  }
+
+  const id = randomUUID();
+  const ts = nowMs();
+  const summary = `[LLM] 提取到 ${extracted.entities.length} 个实体、${extracted.threads.length} 条线索、${extracted.notes.length} 条笔记`;
+
+  db.prepare(`
+    INSERT INTO story_extract_proposals (
+      id, project_id, source_type, source_ref, summary,
+      entities_json, threads_json, notes_json, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(
+    id, project.id, input.sourceType || 'chapter', input.sourceRef || null, summary,
+    JSON.stringify(extracted.entities), JSON.stringify(extracted.threads), JSON.stringify(extracted.notes),
+    ts, ts,
+  );
+
+  return mapProposal(db.prepare(`SELECT * FROM story_extract_proposals WHERE id = ?`).get(id));
+}
+
 export async function listExtractProposals(projectRef: string, userId: string): Promise<StoryExtractProposal[]> {
   const db = getDb();
   const project = await resolveProjectForUser(db, projectRef, userId);

@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ProjectDetail } from '@/lib/api';
+import { ProjectHealthBoard } from './ProjectHealthBoard';
 
 interface DashboardViewProps {
   project: ProjectDetail;
@@ -277,6 +278,9 @@ export function DashboardView({ project, onGenerateOutline, onGenerateChapters, 
           </CardContent>
         </Card>
       </div>
+
+      {/* Phase 3: Project Health Board */}
+      <ProjectHealthBoard projectName={project.name} />
     </div>
   );
 }
