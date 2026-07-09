@@ -56,12 +56,41 @@ pnpm --dir web build
 pnpm --dir electron build
 ```
 
+`test:agent` 覆盖：adapter 格式化、agent loop、ContextBuilder 规则选择与预算、10 章连续生成 fixture（状态机 + 持久化 + 可复现性）。
+
 `smoke:desktop` 会：
 
 1. 用临时目录启动 sidecar
 2. 检查 `/api/health`
 3. 创建/读取/删除临时项目（验证 SQLite）
-4. 退出并清理
+4. Story Vault 创建实体 + extract 提取接受
+5. Chapter Blueprint 保存/读取（状态机）
+6. Context Package 构建 + 持久化（Context Inspector）
+7. AI Job Ledger summary
+8. Project Health Board（5 维度）
+9. Genre Templates（3 个题材模板）
+10. License 激活 + 状态
+11. 退出并清理
+
+## Phase 2-4 能力
+
+### Phase 2: Context Builder + 章节流水线
+
+- **ContextBuilder** (`src/agent/contextBuilder.ts`)：每次 AI 调用前从 Story Vault 按触发词匹配选实体/线索，带来源和理由，token 预算硬控，hash 可复现，持久化到 `context_packages` 表。
+- **AI Job Ledger** (`src/services/aiJobLedger.ts`)：每次 AI 调用记录 provider/model/phase/token/cost/duration/status，按项目和模型聚合。
+- **Chapter Blueprint** (`src/services/chapterBlueprintService.ts`)：章节蓝图编辑（目标/冲突/钩子/场景节拍/验收标准/作者备注），状态机 draft→ready→generating→drafted→reviewing→committed。
+- **Context Inspector**：前端 `ChapterBlueprintView` 内置上下文预览，展示选中条目及理由 + 成本面板。
+- **10 章 fixture** (`src/agent/chapterFixture.test.ts`)：验证连续 10 章不丢章节索引、蓝图状态机、context package 持久化、ledger 记录、prompt hash 可复现。
+
+### Phase 3: QC 产品化
+
+- **Project Health Board** (`src/services/projectHealthService.ts`)：聚合 QC + Story Vault + 生成状态为作者可理解维度（设定一致性、伏笔库存、节奏与爽点、人物弧线、AI 成本），嵌入 Dashboard。
+
+### Phase 4: 商业化最小版本
+
+- **License** (`src/services/licenseService.ts`)：授权码激活、tier 检测（free/pro/studio）、14 天离线宽限期、机器绑定，不上传正文。
+- **导出**：TXT / Markdown / ZIP 三种格式。
+- **题材模板** (`src/services/genreTemplates.ts`)：玄幻升级、都市系统、古言宅斗 3 个模板，新项目对话框一键填充设定。
 
 ## 打包
 
