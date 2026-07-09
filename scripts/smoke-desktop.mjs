@@ -143,6 +143,54 @@ async function main() {
     }
     log('SQLite 读写正常');
 
+    // Story Vault
+    const vaultRes = await fetch(`${BASE}/api/projects/${created.project.id}/vault`);
+    const vaultJson = await vaultRes.json();
+    if (!vaultRes.ok || !vaultJson.success || !vaultJson.vault) {
+      throw new Error(`vault 加载失败: ${JSON.stringify(vaultJson).slice(0, 400)}`);
+    }
+    log(`Story Vault ok: entities=${vaultJson.vault.entities.length}, threads=${vaultJson.vault.threads.length}`);
+
+    const entityRes = await fetch(`${BASE}/api/projects/${created.project.id}/vault/entities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'character',
+        name: '烟雾测试角色',
+        content: '用于 smoke test 的角色设定',
+        importance: 4,
+      }),
+    });
+    const entityJson = await entityRes.json();
+    if (!entityRes.ok || !entityJson.success) {
+      throw new Error(`创建 vault entity 失败: ${JSON.stringify(entityJson)}`);
+    }
+    log(`Vault entity created: ${entityJson.entity.id}`);
+
+    const extractRes = await fetch(`${BASE}/api/projects/${created.project.id}/vault/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: '角色：林远，青云城少主。\n伏笔：血玉下落不明。\n地点：青云城东市。',
+        sourceType: 'manual',
+      }),
+    });
+    const extractJson = await extractRes.json();
+    if (!extractRes.ok || !extractJson.success || !extractJson.proposal?.id) {
+      throw new Error(`extract 失败: ${JSON.stringify(extractJson)}`);
+    }
+    const acceptRes = await fetch(`${BASE}/api/projects/${created.project.id}/vault/extract/${extractJson.proposal.id}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const acceptJson = await acceptRes.json();
+    if (!acceptRes.ok || !acceptJson.success) {
+      throw new Error(`accept extract 失败: ${JSON.stringify(acceptJson)}`);
+    }
+    log(`Vault extract accepted: entities=${acceptJson.entities.length}, threads=${acceptJson.threads.length}`);
+
+
     const delRes = await fetch(`${BASE}/api/projects/${created.project.id}`, {
       method: 'DELETE',
     });

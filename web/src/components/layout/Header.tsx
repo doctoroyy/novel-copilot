@@ -10,6 +10,7 @@ import {
   Wand2,
   BookOpen,
   BookMarked,
+  Library,
   Newspaper,
   Network,
   ShieldCheck,
@@ -39,6 +40,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
   { id: 'settings', label: '项目设定', icon: ScrollText },
   { id: 'bible', label: '设定预览', icon: BookMarked },
+  { id: 'vault', label: '资料库', icon: Library },
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
@@ -120,13 +122,20 @@ export function Header({
               <span className="shrink-0">{generated} / {project.state.totalChapters} 章</span>
               <span className="hidden sm:inline" aria-hidden="true">•</span>
               <span className="hidden sm:inline shrink-0">{Math.round(progress)}% 完成</span>
-              {project.outline && (
+              <span className="hidden md:inline" aria-hidden="true">•</span>
+              <span className="hidden md:inline shrink-0">
+                开放线索 {Array.isArray(project.state.openLoops) ? project.state.openLoops.length : 0}
+              </span>
+              {project.outline ? (
                 <>
                   <span className="hidden lg:inline" aria-hidden="true">•</span>
                   <Badge variant="secondary" className="text-[10px] lg:text-xs hidden lg:inline-flex px-1.5 py-0">
-                    {project.outline.targetWordCount} 万字
+                    {project.outline?.targetWordCount ? `${project.outline.targetWordCount} 万字` : '有大纲'}
                   </Badge>
                 </>
+              ) : null}
+              {project.state.needHuman && (
+                <Badge variant="destructive" className="text-[10px] px-1.5 py-0">需人工</Badge>
               )}
             </div>
           </div>
@@ -156,8 +165,6 @@ export function Header({
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline lg:hidden xl:inline">设置</span>
           </Button>
-          <ThemeToggle />
-          
           <Button
             variant={activityPanelOpen ? 'secondary' : 'ghost'}
             size="icon"
@@ -167,7 +174,6 @@ export function Header({
           >
             <Sparkles className="h-4 w-4" />
           </Button>
-          
           <ThemeToggle />
         </div>
       </div>

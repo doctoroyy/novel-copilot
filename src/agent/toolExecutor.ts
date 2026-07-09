@@ -235,9 +235,12 @@ export class ToolExecutor {
   }
 
   private queryPlotGraph(aspect: string): string {
-    const { plotGraph, chapterIndex, totalChapters } = this.ctx;
+    const { plotGraph, chapterIndex, totalChapters, bible } = this.ctx;
     if (!plotGraph || plotGraph.nodes.length === 0) {
-      return '剧情图谱为空，这可能是故事的开头部分。';
+      return [
+        '剧情图谱为空，这可能是故事的开头部分。',
+        bible ? `【Story Bible 摘要】\n${bible.slice(0, 2000)}` : '',
+      ].filter(Boolean).join('\n\n');
     }
 
     switch (aspect) {
