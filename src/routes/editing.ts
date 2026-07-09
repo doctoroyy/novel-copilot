@@ -1,3 +1,4 @@
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, getAIConfigFromRegistry, type AIConfig } from '../services/aiClient.js';
@@ -20,13 +21,13 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
     }
 
     // Get project
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, s.next_chapter_index FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -44,9 +45,9 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
       
       // Check if the position is valid (insertAfter chapter must exist or be 0)
       if (insertAfter > 0) {
-        const prevChapter = await c.env.DB.prepare(`
+        const prevChapter = getDb().prepare(`
           SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-        `).bind(projectId, insertAfter).first();
+        `).get(projectId, insertAfter);
         
         if (!prevChapter) {
           return c.json({ success: false, error: `Chapter ${insertAfter} does not exist` }, 400);
@@ -58,18 +59,18 @@ editingRoutes.post('/projects/:name/chapters', async (c) => {
     }
 
     // Check if chapter already exists (might happen if inserting)
-    const existing = await c.env.DB.prepare(`
+    const existing = getDb().prepare(`
       SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(projectId, chapterIndex).first();
+    `).get(projectId, chapterIndex);
 
     if (existing) {
       return c.json({ success: false, error: `Chapter ${chapterIndex} already exists` }, 400);
     }
 
     // Insert the new chapter
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-    `).bind(projectId, chapterIndex, content).run();
+    `).run(projectId, chapterIndex, content);
 
     await rebaseProjectStateToContinuity(c.env.DB, projectId);
 
@@ -97,13 +98,13 @@ editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
     }
 
     // Get project
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT id
       FROM projects
       WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -112,18 +113,18 @@ editingRoutes.put('/projects/:name/chapters/:index', async (c) => {
     const projectId = (project as any).id;
 
     // Check if chapter exists
-    const chapter = await c.env.DB.prepare(`
+    const chapter = getDb().prepare(`
       SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(projectId, index).first();
+    `).get(projectId, index);
 
     if (!chapter) {
       return c.json({ success: false, error: 'Chapter not found' }, 404);
     }
 
     // Update chapter content
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE chapters SET content = ?, updated_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index = ?
-    `).bind(content, projectId, index).run();
+    `).run(content, projectId, index);
 
     return c.json({ success: true });
   } catch (error) {
@@ -159,12 +160,12 @@ editingRoutes.post('/projects/:name/chapters/:index/refine', async (c) => {
     }
 
     // Get project bible for context
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, p.bible FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -226,13 +227,13 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
     }
 
     // Get project
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT id
       FROM projects
       WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -249,18 +250,18 @@ editingRoutes.put('/projects/:name/outline', async (c) => {
     }
 
     // Check if outline exists
-    const existing = await c.env.DB.prepare(`
+    const existing = getDb().prepare(`
       SELECT project_id FROM outlines WHERE project_id = ?
-    `).bind(projectId).first();
+    `).get(projectId);
 
     if (existing) {
       // Update
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE outlines SET outline_json = ? WHERE project_id = ?
       `).bind(JSON.stringify(normalizedOutline), projectId).run();
     } else {
       // Insert (should strictly not happen if calling update, but good fallback)
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         INSERT INTO outlines (project_id, outline_json) VALUES (?, ?)
       `).bind(projectId, JSON.stringify(normalizedOutline)).run();
     }
@@ -292,12 +293,12 @@ editingRoutes.post('/projects/:name/chapters/:index/suggest', async (c) => {
     }
 
     // Get project bible for context
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.bible FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -357,12 +358,12 @@ editingRoutes.post('/projects/:name/chapters/:index/chat', async (c) => {
     }
 
     // Get project details
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.bible, p.background, p.role_settings, p.custom_system_prompt FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -446,13 +447,13 @@ editingRoutes.put('/projects/:name', async (c) => {
     }
     
     // Get project
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT id
       FROM projects
       WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -463,7 +464,7 @@ editingRoutes.put('/projects/:name', async (c) => {
     // But since we might only update settings, we should be careful about outline (outline is separate table? No, outline is in `outlines` table, but bible/bg is in `projects`)
     // The request body might contain bible, background, role_settings.
     
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE projects 
       SET 
         bible = COALESCE(?, bible), 
@@ -487,7 +488,7 @@ editingRoutes.put('/projects/:name', async (c) => {
     ).run();
 
     if (hasMinChapterWords && parsedMinChapterWords !== undefined) {
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE states
         SET min_chapter_words = ?
         WHERE project_id = ?
@@ -523,12 +524,12 @@ editingRoutes.post('/projects/:name/chapters/:index/consistency', async (c) => {
     }
 
     // Get project details
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.bible, p.background, p.role_settings, p.custom_system_prompt FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first();
+    `).get(name, name, userId, name);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);

@@ -75,14 +75,14 @@ export class ExploreToolExecutor {
       LIMIT 5
     `).all();
 
-    if (!rows.results?.length) {
+    if (!rows?.length) {
       return '没有找到已缓存的模板快照数据。';
     }
 
     const matchedTemplates: Array<{ date: string; template: ImagineTemplate }> = [];
     const matchedRankings: Array<{ date: string; item: FanqieHotItem }> = [];
 
-    for (const row of rows.results as any[]) {
+    for (const row of rows as any[]) {
       const date = row.snapshot_date as string;
 
       // 搜索模板
@@ -135,7 +135,7 @@ export class ExploreToolExecutor {
 
     if (parts.length === 0) {
       // 关键词无匹配时，降级返回最新快照的通用数据供 Agent 参考
-      const latestRow = rows.results[0] as any;
+      const latestRow = rows[0] as any;
       try {
         const fallbackParts: string[] = [];
 

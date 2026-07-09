@@ -142,6 +142,8 @@ export type EnhancedGenerationDiagnostics = {
 export type EnhancedWriteChapterParams = {
   /** AI 配置 */
   aiConfig: AIConfig;
+  /** 项目 ID（用于 ContextBuilder 接入 Story Vault 和 ledger 记录） */
+  projectId?: string;
   /** 备用 AI 配置列表 */
   fallbackConfigs?: AIConfig[];
   /** 摘要更新专用 AI 配置 */

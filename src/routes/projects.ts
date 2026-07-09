@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { normalizeNovelOutline } from '../utils/outline.js';
@@ -22,20 +24,20 @@ function normalizeMinChapterWords(value: unknown): number | null {
 }
 
 async function getProjectIdentityByRef(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string | null
 ): Promise<{ id: string; name: string } | null> {
   if (!userId) {
     return null;
   }
-  const project = await db.prepare(`
+  const project = db.prepare(`
     SELECT id, name
     FROM projects
     WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectRef, projectRef, userId, projectRef).first() as { id: string; name: string } | null;
+  `).get(projectRef, projectRef, userId, projectRef) as { id: string; name: string } | null;
   return project ?? null;
 }
 
@@ -44,7 +46,7 @@ projectsRoutes.get('/', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT 
         p.id, p.name, p.created_at,
         s.book_title, s.total_chapters, s.min_chapter_words,
@@ -55,7 +57,7 @@ projectsRoutes.get('/', async (c) => {
       LEFT JOIN outlines o ON p.id = o.project_id
       WHERE p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY p.created_at DESC
-    `).bind(userId).all();
+    `).all(userId);
 
     const projects = await Promise.all(results.map(async (row: any) => {
       const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, row.id);
@@ -92,7 +94,7 @@ projectsRoutes.get('/:name', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.*, s.*, o.outline_json
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
@@ -100,14 +102,14 @@ projectsRoutes.get('/:name', async (c) => {
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(projectRef, projectRef, userId, projectRef).first();
+    `).get(projectRef, projectRef, userId, projectRef);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
     const rebasedState = await rebaseProjectStateToContinuity(c.env.DB, (project as any).id);
-    const { results: chapters } = await c.env.DB.prepare(`
+    const chapters = getDb().prepare(`
       SELECT chapter_index FROM chapters
       WHERE project_id = ?
         AND deleted_at IS NULL
@@ -179,13 +181,13 @@ projectsRoutes.post('/', async (c) => {
 
     const id = crypto.randomUUID();
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO projects (id, name, bible, user_id, enable_agent_mode) VALUES (?, ?, ?, ?, 1)
-    `).bind(id, trimmedName, trimmedBible, userId).run();
+    `).run(id, trimmedName, trimmedBible, userId);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO states (project_id, book_title, total_chapters, min_chapter_words) VALUES (?, ?, ?, ?)
-    `).bind(id, trimmedName, parsedTotalChapters, parsedMinChapterWords).run();
+    `).run(id, trimmedName, parsedTotalChapters, parsedMinChapterWords);
 
     return c.json({ success: true, project: { id, name: trimmedName } });
   } catch (error) {
@@ -206,7 +208,7 @@ projectsRoutes.delete('/:name', async (c) => {
     }
 
     // Soft delete: set deleted_at timestamp
-    await c.env.DB.prepare(`UPDATE projects SET deleted_at = (unixepoch() * 1000) WHERE id = ?`).bind(project.id).run();
+    getDb().prepare(`UPDATE projects SET deleted_at = (unixepoch() * 1000) WHERE id = ?`).run(project.id);
 
     return c.json({ success: true });
   } catch (error) {
@@ -227,9 +229,9 @@ projectsRoutes.put('/:name/bible', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE projects SET bible = ? WHERE id = ? AND user_id = ?
-    `).bind(bible, project.id, userId).run();
+    `).run(bible, project.id, userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -251,7 +253,7 @@ projectsRoutes.put('/:name/reset', async (c) => {
 
     const id = project.id;
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE states SET 
         next_chapter_index = 1,
         rolling_summary = '',
@@ -259,10 +261,10 @@ projectsRoutes.put('/:name/reset', async (c) => {
         need_human = 0,
         need_human_reason = NULL
       WHERE project_id = ?
-    `).bind(id).run();
+    `).run(id);
 
     // Soft delete all chapters
-    await c.env.DB.prepare(`UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND deleted_at IS NULL`).bind(id).run();
+    getDb().prepare(`UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND deleted_at IS NULL`).run(id);
 
     return c.json({ success: true });
   } catch (error) {
@@ -277,13 +279,13 @@ projectsRoutes.get('/:name/chapters/:index', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const chapter = await c.env.DB.prepare(`
+    const chapter = getDb().prepare(`
       SELECT c.content FROM chapters c
       JOIN projects p ON c.project_id = p.id
       WHERE (p.id = ? OR p.name = ?) AND c.chapter_index = ? AND c.deleted_at IS NULL AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(projectRef, projectRef, index, userId, projectRef).first();
+    `).get(projectRef, projectRef, index, userId, projectRef);
 
     if (!chapter) {
       return c.json({ success: false, error: 'Chapter not found' }, 404);
@@ -311,18 +313,18 @@ projectsRoutes.delete('/:name/chapters/:index', async (c) => {
     const projectId = project.id;
 
     // Check if chapter exists (and not deleted)
-    const chapter = await c.env.DB.prepare(`
+    const chapter = getDb().prepare(`
       SELECT id FROM chapters WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
-    `).bind(projectId, index).first();
+    `).get(projectId, index);
 
     if (!chapter) {
       return c.json({ success: false, error: 'Chapter not found' }, 404);
     }
 
     // Soft delete the chapter
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index = ?
-    `).bind(projectId, index).run();
+    `).run(projectId, index);
 
     const rebasedState = await trimProjectToContinuity(c.env.DB, projectId);
 
@@ -358,9 +360,9 @@ projectsRoutes.post('/:name/chapters/batch-delete', async (c) => {
 
     // Soft delete chapters in batch
     const placeholders = indices.map(() => '?').join(', ');
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE chapters SET deleted_at = (unixepoch() * 1000) WHERE project_id = ? AND chapter_index IN (${placeholders}) AND deleted_at IS NULL
-    `).bind(projectId, ...indices).run();
+    `).run(projectId, ...indices);
 
     const rebasedState = await trimProjectToContinuity(c.env.DB, projectId);
 
@@ -387,9 +389,9 @@ projectsRoutes.delete('/:name/volumes/:volumeIndex', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const outline = await c.env.DB.prepare(
+    const outline = getDb().prepare(
       'SELECT outline_json FROM outlines WHERE project_id = ?'
-    ).bind(project.id).first<{ outline_json: string }>();
+    ).bind(project.id).get() as any;
     if (!outline?.outline_json) {
       return c.json({ success: false, error: 'No outline found' }, 404);
     }
@@ -428,14 +430,14 @@ projectsRoutes.get('/:name/download', async (c) => {
 
   try {
     // 1. Fetch project details, bible, and outline
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, p.name, p.bible, o.outline_json
       FROM projects p
       LEFT JOIN outlines o ON p.id = o.project_id
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(projectRef, projectRef, userId, projectRef).first();
+    `).get(projectRef, projectRef, userId, projectRef);
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -447,11 +449,11 @@ projectsRoutes.get('/:name/download', async (c) => {
     const outlineJson = (project as any).outline_json;
 
     // 2. Fetch all non-deleted chapters
-    const { results: chapters } = await c.env.DB.prepare(`
+    const chapters = getDb().prepare(`
       SELECT chapter_index, content FROM chapters 
       WHERE project_id = ? AND deleted_at IS NULL
       ORDER BY chapter_index
-    `).bind(projectId).all();
+    `).all(projectId);
 
     if (chapters.length === 0) {
       return c.json({ success: false, error: 'No chapters to download' }, 400);
@@ -519,7 +521,7 @@ projectsRoutes.get('/:name/download', async (c) => {
     const content = await zip.generateAsync({ type: 'uint8array' });
     const filename = `${projectName}.zip`;
 
-    return new Response(content, {
+    return new Response(content as BodyInit, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
@@ -528,4 +530,70 @@ projectsRoutes.get('/:name/download', async (c) => {
   } catch (error) {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
+});
+
+// Phase 4: Single-file export (TXT or Markdown)
+projectsRoutes.get('/:name/export', async (c) => {
+  const projectRef = c.req.param('name');
+  const userId = c.get('userId');
+  const format = (c.req.query('format') || 'txt').toLowerCase();
+
+  try {
+    const project = getDb().prepare(`
+      SELECT id, name FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC LIMIT 1
+    `).get(projectRef, projectRef, userId, projectRef) as { id: string; name: string } | null;
+
+    if (!project) return c.json({ success: false, error: 'Project not found' }, 404);
+
+    const chapters = getDb().prepare(`
+      SELECT chapter_index, content FROM chapters
+      WHERE project_id = ? AND deleted_at IS NULL ORDER BY chapter_index
+    `).all(project.id) as any[];
+
+    if (chapters.length === 0) {
+      return c.json({ success: false, error: 'No chapters to export' }, 400);
+    }
+
+    let body: string;
+    let contentType: string;
+    let ext: string;
+
+    if (format === 'md') {
+      body = `# ${project.name}\n\n`;
+      for (const ch of chapters) {
+        const content = ch.content as string;
+        const firstLine = content.split('\n')[0] || `第${ch.chapter_index}章`;
+        const title = firstLine.replace(/^#+\s*/, '').trim() || `第${ch.chapter_index}章`;
+        body += `---\n\n## ${title}\n\n${content}\n\n`;
+      }
+      contentType = 'text/markdown; charset=utf-8';
+      ext = 'md';
+    } else {
+      body = `${project.name}\n${'='.repeat(50)}\n\n`;
+      for (const ch of chapters) {
+        const content = ch.content as string;
+        body += `${'='.repeat(50)}\n第${ch.chapter_index}章\n${'='.repeat(50)}\n\n${content}\n\n`;
+      }
+      contentType = 'text/plain; charset=utf-8';
+      ext = 'txt';
+    }
+
+    const filename = `${project.name}.${ext}`;
+    return new Response(body, {
+      headers: {
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Phase 4: Genre templates list
+projectsRoutes.get('/templates/genres', async (c) => {
+  const { GENRE_TEMPLATES } = await import('../services/genreTemplates.js');
+  return c.json({ success: true, templates: GENRE_TEMPLATES });
 });

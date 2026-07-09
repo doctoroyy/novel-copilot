@@ -1,4 +1,5 @@
-import { launch } from '@cloudflare/playwright';
+import type { Database } from 'better-sqlite3';
+
 import { generateTextWithRetry, getAIConfigFromRegistry, type AIConfig } from './aiClient.js';
 import { parse as parsePartialJson } from 'partial-json';
 
@@ -83,7 +84,7 @@ export interface ImagineTemplateSnapshotSummary {
 }
 
 export interface ImagineTemplateEnv {
-  DB: D1Database;
+  DB: Database;
   FANQIE_BROWSER?: Fetcher;
 }
 
@@ -230,6 +231,7 @@ async function launchBrowserWithRetry(browserBinding: Fetcher): Promise<any> {
 
   for (let attempt = 0; attempt <= PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
+      const { launch } = await import('@cloudflare/playwright');
       return await launch(browserBinding);
     } catch (error) {
       lastError = error as Error;
@@ -619,15 +621,15 @@ export async function scrapeFanqieHotListWithPlaywright(
   }
 }
 
-async function getLatestSnapshotWithRanking(db: D1Database, limit = 10): Promise<ImagineTemplateSnapshot | null> {
-  const rows = await db.prepare(`
+async function getLatestSnapshotWithRanking(db: Database, limit = 10): Promise<ImagineTemplateSnapshot | null> {
+  const rows = db.prepare(`
     SELECT *
     FROM ai_imagine_template_snapshots
     ORDER BY snapshot_date DESC
     LIMIT ?
   `).bind(Math.max(1, Math.min(60, limit))).all();
 
-  for (const row of (rows.results || []) as any[]) {
+  for (const row of (rows) as any[]) {
     const snapshot = parseSnapshotRow(row);
     if (snapshot && Array.isArray(snapshot.ranking) && snapshot.ranking.length > 0) {
       return snapshot;
@@ -1053,11 +1055,11 @@ export async function extractImagineTemplatesFromHotList(params: {
 }
 
 export async function upsertImagineTemplateSnapshot(
-  db: D1Database,
+  db: Database,
   snapshot: ImagineTemplateSnapshot
 ): Promise<void> {
   const now = Date.now();
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO ai_imagine_template_snapshots (
       snapshot_date,
       source,
@@ -1158,43 +1160,43 @@ function parseSnapshotRow(row: any): ImagineTemplateSnapshot | null {
 }
 
 export async function getImagineTemplateSnapshot(
-  db: D1Database,
+  db: Database,
   snapshotDate?: string
 ): Promise<ImagineTemplateSnapshot | null> {
   let row: any = null;
 
   if (snapshotDate) {
-    row = await db.prepare(`
+    row = db.prepare(`
       SELECT *
       FROM ai_imagine_template_snapshots
       WHERE snapshot_date = ?
       LIMIT 1
-    `).bind(snapshotDate).first();
+    `).get(snapshotDate);
   } else {
-    row = await db.prepare(`
+    row = db.prepare(`
       SELECT *
       FROM ai_imagine_template_snapshots
       WHERE status = 'ready'
       ORDER BY snapshot_date DESC
       LIMIT 1
-    `).first();
+    `).get();
   }
 
   return parseSnapshotRow(row);
 }
 
 export async function listImagineTemplateSnapshotDates(
-  db: D1Database,
+  db: Database,
   limit = 30
 ): Promise<ImagineTemplateSnapshotSummary[]> {
-  const rows = await db.prepare(`
+  const rows = db.prepare(`
     SELECT snapshot_date, status, templates_json, created_at, updated_at
     FROM ai_imagine_template_snapshots
     ORDER BY snapshot_date DESC
     LIMIT ?
   `).bind(Math.max(1, Math.min(365, limit))).all();
 
-  return ((rows.results || []) as any[]).map((row) => {
+  return ((rows) as any[]).map((row) => {
     let templateCount = 0;
     try {
       const parsed = JSON.parse(row.templates_json || '[]');
@@ -1214,7 +1216,7 @@ export async function listImagineTemplateSnapshotDates(
 }
 
 export async function resolveImagineTemplateById(
-  db: D1Database,
+  db: Database,
   templateId: string,
   snapshotDate?: string
 ): Promise<{ template: ImagineTemplate; snapshotDate: string } | null> {
@@ -1227,7 +1229,7 @@ export async function resolveImagineTemplateById(
     const snapshot = await getImagineTemplateSnapshot(db, snapshotDate);
     if (snapshot) snapshots.push(snapshot);
   } else {
-    const rows = await db.prepare(`
+    const rows = db.prepare(`
       SELECT *
       FROM ai_imagine_template_snapshots
       WHERE status = 'ready'
@@ -1235,7 +1237,7 @@ export async function resolveImagineTemplateById(
       LIMIT 10
     `).all();
 
-    for (const row of (rows.results || []) as any[]) {
+    for (const row of (rows) as any[]) {
       const snapshot = parseSnapshotRow(row);
       if (snapshot) snapshots.push(snapshot);
     }

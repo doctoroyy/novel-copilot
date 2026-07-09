@@ -2,7 +2,7 @@
  * Web Search Service — 使用 Cloudflare Browser Rendering (Playwright) 抓取 Bing 搜索结果
  */
 
-import { launch } from '@cloudflare/playwright';
+
 
 export interface WebSearchResult {
   title: string;
@@ -23,6 +23,7 @@ async function launchWithRetry(browserBinding: Fetcher): Promise<any> {
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= BROWSER_LAUNCH_RETRY_DELAYS_MS.length; attempt++) {
     try {
+      const { launch } = await import('@cloudflare/playwright');
       return await launch(browserBinding);
     } catch (err) {
       lastErr = err as Error;

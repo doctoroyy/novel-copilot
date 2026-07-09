@@ -15,8 +15,10 @@ interface SidebarProps {
 export function Sidebar({ projects, selectedProjectId, onSelectProject, onNewProject, onToggle }: SidebarProps) {
   return (
     <aside className="w-72 h-dvh flex flex-col border-r border-border bg-sidebar">
+      {/* Titlebar drag region (Electron safe area) */}
+      <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
       {/* Logo */}
-      <div className="p-4 border-b border-border flex items-center justify-between">
+      <div className="px-4 pb-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center shrink-0">
             <BookOpen className="h-5 w-5 text-white" />

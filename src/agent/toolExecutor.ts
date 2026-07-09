@@ -47,6 +47,19 @@ export class ToolExecutor {
 
   async execute(call: ToolCall): Promise<string> {
     switch (call.tool) {
+      // ---- Native agent tools (Phase 0 Direct Adapter) ----
+      case 'read_story_vault':
+        return this.queryPlotGraph(call.args.aspect || 'full_summary');
+      case 'read_chapter':
+        return this.readChapter(call.args.chapter_index);
+      case 'read_summary':
+        return this.readSummary(call.args.scope || 'recent_3');
+      case 'run_qc':
+        return this.runQc(call.args.chapter_text);
+      case 'search_references':
+        return this.searchReferences(call.args.query || '');
+
+      // ---- Legacy ReAct tools (kept for explore / compatibility) ----
       case 'query_plot_graph':
         return this.queryPlotGraph(call.args.aspect);
       case 'query_character_state':
@@ -78,10 +91,156 @@ export class ToolExecutor {
 
   // ========== 纯数据查询工具（不消耗 AI 调用） ==========
 
+  private readChapter(chapterIndex: number): string {
+    const { lastChapters, chapterIndex: currentIndex } = this.ctx;
+    if (!Number.isFinite(chapterIndex) || chapterIndex < 1) {
+      return '章节序号无效。请传入 >= 1 的整数。';
+    }
+
+    // lastChapters 通常是最近 N 章正文，按章节号倒推定位
+    if (lastChapters.length > 0) {
+      const offsetFromCurrent = currentIndex - chapterIndex;
+      const idxFromEnd = offsetFromCurrent - 1;
+      if (idxFromEnd >= 0 && idxFromEnd < lastChapters.length) {
+        const text = lastChapters[lastChapters.length - 1 - idxFromEnd];
+        return JSON.stringify({
+          chapter_index: chapterIndex,
+          available: true,
+          text: text.slice(0, 12000),
+          truncated: text.length > 12000,
+        }, null, 2);
+      }
+    }
+
+    return JSON.stringify({
+      chapter_index: chapterIndex,
+      available: false,
+      message: `当前上下文中没有第 ${chapterIndex} 章原文。可用最近章节序号大致范围：${Math.max(1, currentIndex - lastChapters.length)} ~ ${currentIndex - 1}`,
+    }, null, 2);
+  }
+
+  private readSummary(scope: string): string {
+    const { rollingSummary, openLoops, chapterIndex } = this.ctx;
+    const summary = rollingSummary || '（暂无滚动摘要）';
+
+    if (scope === 'all_major') {
+      return JSON.stringify({
+        scope,
+        chapterIndex,
+        rollingSummary: summary,
+        openLoops,
+      }, null, 2);
+    }
+
+    // recent_3 / recent_10：摘要本身已是压缩记忆，直接返回并附带 open loops
+    return JSON.stringify({
+      scope,
+      chapterIndex,
+      rollingSummary: summary,
+      openLoops: openLoops.slice(0, scope === 'recent_10' ? 12 : 6),
+      note: '滚动摘要已按近详远略压缩；如需原文细节请调用 read_chapter。',
+    }, null, 2);
+  }
+
+  private async runQc(chapterText: string): Promise<string> {
+    if (!chapterText || chapterText.replace(/\s/g, '').length < 20) {
+      return '章节文本过短，无法进行质量检查。';
+    }
+
+    this.setCurrentDraft(chapterText);
+    const heuristicRaw = this.softValidate();
+    let heuristic: unknown = heuristicRaw;
+    try {
+      heuristic = JSON.parse(heuristicRaw);
+    } catch {
+      // keep raw string
+    }
+
+    try {
+      const llmEval = await this.evaluateDraft('all');
+      return JSON.stringify({
+        heuristic,
+        llmEvaluation: llmEval,
+      }, null, 2);
+    } catch (error) {
+      return JSON.stringify({
+        heuristic,
+        llmEvaluationError: (error as Error).message,
+      }, null, 2);
+    }
+  }
+
+  private searchReferences(query: string): string {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) return '请提供搜索关键词。';
+
+    const hits: Array<{ source: string; snippet: string }> = [];
+    const { bible, characterStates, plotGraph, enhancedOutline } = this.ctx;
+
+    if (bible) {
+      const lines = bible.split('\n').filter(line => line.toLowerCase().includes(q));
+      for (const line of lines.slice(0, 8)) {
+        hits.push({ source: 'bible', snippet: line.trim().slice(0, 300) });
+      }
+    }
+
+    if (characterStates) {
+      for (const snap of Object.values(characterStates.snapshots || {})) {
+        const blob = `${snap.characterName} ${snap.physical?.location || ''} ${snap.psychological?.motivation || ''}`.toLowerCase();
+        if (blob.includes(q) || snap.characterName.toLowerCase().includes(q)) {
+          hits.push({
+            source: 'character_state',
+            snippet: `${snap.characterName}: ${snap.physical?.location || '?'} / ${snap.psychological?.mood || '?'} / ${snap.psychological?.motivation || '?'}`,
+          });
+        }
+      }
+    }
+
+    if (plotGraph) {
+      for (const node of plotGraph.nodes || []) {
+        if ((node.content || '').toLowerCase().includes(q)) {
+          hits.push({
+            source: 'plot_graph',
+            snippet: `[${node.type}] ${node.content}`.slice(0, 300),
+          });
+        }
+      }
+      for (const f of plotGraph.pendingForeshadowing || []) {
+        const text = f.summary || '';
+        if (text.toLowerCase().includes(q)) {
+          hits.push({
+            source: 'foreshadowing',
+            snippet: `[${f.urgency}] ${text}`.slice(0, 300),
+          });
+        }
+      }
+    }
+
+    if (enhancedOutline) {
+      const outlineText = JSON.stringify(enhancedOutline);
+      if (outlineText.toLowerCase().includes(q)) {
+        hits.push({
+          source: 'chapter_outline',
+          snippet: `本章大纲命中关键词「${query}」：goal=${enhancedOutline.goal?.primary || ''} hook=${enhancedOutline.hook?.content || ''}`.slice(0, 300),
+        });
+      }
+    }
+
+    return JSON.stringify({
+      query,
+      hitCount: hits.length,
+      hits: hits.slice(0, 20),
+      message: hits.length === 0 ? '未找到匹配参考资料。可尝试更短关键词，或改用 read_story_vault。' : undefined,
+    }, null, 2);
+  }
+
   private queryPlotGraph(aspect: string): string {
-    const { plotGraph, chapterIndex, totalChapters } = this.ctx;
+    const { plotGraph, chapterIndex, totalChapters, bible } = this.ctx;
     if (!plotGraph || plotGraph.nodes.length === 0) {
-      return '剧情图谱为空，这可能是故事的开头部分。';
+      return [
+        '剧情图谱为空，这可能是故事的开头部分。',
+        bible ? `【Story Bible 摘要】\n${bible.slice(0, 2000)}` : '',
+      ].filter(Boolean).join('\n\n');
     }
 
     switch (aspect) {

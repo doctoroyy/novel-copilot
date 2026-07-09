@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { generateText, generateTextWithRetry, getAIConfigFromRegistry, getFallbackAIConfigsFromRegistry, type AIConfig } from '../services/aiClient.js';
@@ -74,17 +76,17 @@ function normalizeMinChapterWords(value: unknown): number | null {
 
 // Helper to get AI config from Model Registry (server-side)
 // Helper to get AI config from Model Registry (server-side) or Custom Headers
-async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise<AIConfig | null> {
+async function getAIConfig(c: any, db: Database, featureKey?: string): Promise<AIConfig | null> {
   const userId = c.get('userId');
 
   // 1. Custom provider is open to all authenticated users.
   //    If the request supplies a complete custom provider header set, use it.
   if (userId) {
     const headers = c.req.header();
-    const customProvider = headers['x-custom-provider'];
-    const customModel = headers['x-custom-model'];
-    const customBaseUrl = headers['x-custom-base-url'];
-    const customApiKey = headers['x-custom-api-key'];
+    const customProvider = headers['x-ai-provider'] || headers['x-custom-provider'];
+    const customModel = headers['x-ai-model'] || headers['x-custom-model'];
+    const customBaseUrl = headers['x-ai-baseurl'] || headers['x-custom-base-url'];
+    const customApiKey = headers['x-ai-key'] || headers['x-custom-api-key'];
 
     if (customProvider && customModel && customApiKey) {
       return {
@@ -100,16 +102,16 @@ async function getAIConfig(c: any, db: D1Database, featureKey?: string): Promise
   return getAIConfigFromRegistry(db, featureKey || 'generate_chapter');
 }
 
-async function getFeatureMappedAIConfig(db: D1Database, featureKey: string): Promise<AIConfig | null> {
+async function getFeatureMappedAIConfig(db: Database, featureKey: string): Promise<AIConfig | null> {
   try {
-    const mapping = await db.prepare(`
+    const mapping = db.prepare(`
       SELECT m.model_name, p.api_key_encrypted, p.base_url, p.id as provider_id
       FROM feature_model_mappings fmm
       JOIN model_registry m ON fmm.model_id = m.id
       JOIN provider_registry p ON m.provider_id = p.id
       WHERE fmm.feature_key = ? AND m.is_active = 1
       LIMIT 1
-    `).bind(featureKey).first() as {
+    `).get(featureKey) as {
       model_name: string;
       api_key_encrypted: string | null;
       base_url: string | null;
@@ -202,9 +204,9 @@ function isSameAIConfig(a: AIConfig, b: AIConfig): boolean {
   );
 }
 
-async function getNonGeminiFallbackAIConfig(db: D1Database, primary: AIConfig): Promise<AIConfig | null> {
+async function getNonGeminiFallbackAIConfig(db: Database, primary: AIConfig): Promise<AIConfig | null> {
   try {
-    const { results } = await db.prepare(`
+    const results = db.prepare(`
       SELECT p.id as provider, m.model_name, p.api_key_encrypted, p.base_url, m.is_default, m.updated_at
       FROM model_registry m
       JOIN provider_registry p ON m.provider_id = p.id
@@ -526,13 +528,13 @@ export async function runOutlineGenerationTaskInBackground(params: {
       return;
     }
 
-    const project = await env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, p.bible, p.name, s.min_chapter_words
       FROM projects p
       LEFT JOIN states s ON p.id = s.project_id
       WHERE p.id = ? AND p.user_id = ? AND p.deleted_at IS NULL
       LIMIT 1
-    `).bind(projectId, userId).first() as {
+    `).get(projectId, userId) as {
       id: string;
       bible: string;
       name: string;
@@ -582,9 +584,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
       bible = `${bible}\n\n## 用户自定义要求\n${customPrompt}`;
     }
 
-    const charRecord = await env.DB.prepare(`
+    const charRecord = getDb().prepare(`
       SELECT characters_json FROM characters WHERE project_id = ?
-    `).bind(project.id).first() as { characters_json?: string } | null;
+    `).get(project.id) as { characters_json?: string } | null;
     const characters = charRecord?.characters_json ? JSON.parse(charRecord.characters_json) : undefined;
 
     // ---- 追加卷模式 ----
@@ -601,9 +603,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
     let resumedVolumes: any[] = [];
     let masterOutline: any;
 
-    const existingOutlineRow = await env.DB.prepare(`
+    const existingOutlineRow = getDb().prepare(`
       SELECT outline_json FROM outlines WHERE project_id = ?
-    `).bind(project.id).first() as { outline_json?: string } | null;
+    `).get(project.id) as { outline_json?: string } | null;
 
     const existingSnapshot = existingOutlineRow?.outline_json
       ? JSON.parse(existingOutlineRow.outline_json)
@@ -631,9 +633,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
           console.warn('Outline validation issues:', validation.issues);
         }
 
-        await env.DB.prepare(`
+        getDb().prepare(`
           UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
-        `).bind(targetChapters, effectiveMinChapterWords, project.id).run();
+        `).run(targetChapters, effectiveMinChapterWords, project.id);
 
         await updateTaskMessage(env.DB, taskId, '大纲生成完成', OUTLINE_TASK_PROGRESS_TOTAL);
         await completeTask(env.DB, taskId, true, undefined);
@@ -748,7 +750,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
       volumes.push(normalizedVolume);
 
       const snapshotOutline = ensureUniqueChapterTitlesInOutline(buildOutlineSnapshot(volumes));
-      await env.DB.prepare(`
+      getDb().prepare(`
         INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
       `).bind(project.id, JSON.stringify(snapshotOutline)).run();
 
@@ -769,13 +771,13 @@ export async function runOutlineGenerationTaskInBackground(params: {
       console.warn('Outline validation issues:', validation.issues);
     }
 
-    await env.DB.prepare(`
+    getDb().prepare(`
       INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
     `).bind(project.id, JSON.stringify(outline)).run();
 
-    await env.DB.prepare(`
+    getDb().prepare(`
       UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
-    `).bind(targetChapters, effectiveMinChapterWords, project.id).run();
+    `).run(targetChapters, effectiveMinChapterWords, project.id);
 
     await updateTaskMessage(env.DB, taskId, '大纲生成完成', OUTLINE_TASK_PROGRESS_TOTAL);
     await completeTask(env.DB, taskId, true, undefined);
@@ -801,9 +803,9 @@ async function runAppendVolumesMode(params: {
   const { env, taskId, project, bible, aiConfig, effectiveMinChapterWords, newVolumeCount, chaptersPerVolume } = params;
 
   // 读取现有大纲
-  const outlineRecord = await env.DB.prepare(`
+  const outlineRecord = getDb().prepare(`
     SELECT outline_json FROM outlines WHERE project_id = ?
-  `).bind(project.id).first() as { outline_json?: string } | null;
+  `).get(project.id) as { outline_json?: string } | null;
 
   if (!outlineRecord?.outline_json) {
     await completeTask(env.DB, taskId, false, '当前项目没有大纲，无法追加卷。请先生成大纲。');
@@ -814,9 +816,9 @@ async function runAppendVolumesMode(params: {
   const existingVolumes = existingOutline.volumes || [];
 
   // 获取实际剧情摘要（rolling_summary），用于确保新卷与实际内容对齐
-  const stateRecord = await env.DB.prepare(`
+  const stateRecord = getDb().prepare(`
     SELECT rolling_summary FROM states WHERE project_id = ?
-  `).bind(project.id).first() as { rolling_summary?: string } | null;
+  `).get(project.id) as { rolling_summary?: string } | null;
   const actualStorySummary = stateRecord?.rolling_summary || undefined;
 
   await updateTaskMessage(env.DB, taskId, `正在基于已有 ${existingVolumes.length} 卷生成 ${newVolumeCount} 个新卷的骨架...`, 10);
@@ -904,7 +906,7 @@ async function runAppendVolumesMode(params: {
       totalChapters: existingOutline.totalChapters + filledVolumes.reduce((sum: number, v: any) => sum + (v.chapters?.length || 0), 0),
       volumes: [...existingVolumes, ...filledVolumes],
     });
-    await env.DB.prepare(`
+    getDb().prepare(`
       UPDATE outlines SET outline_json = ? WHERE project_id = ?
     `).bind(JSON.stringify(updatedOutline), project.id).run();
 
@@ -925,13 +927,13 @@ async function runAppendVolumesMode(params: {
     volumes: [...existingVolumes, ...filledVolumes],
   });
 
-  await env.DB.prepare(`
+  getDb().prepare(`
     UPDATE outlines SET outline_json = ? WHERE project_id = ?
   `).bind(JSON.stringify(finalOutline), project.id).run();
 
-  await env.DB.prepare(`
+  getDb().prepare(`
     UPDATE states SET total_chapters = ? WHERE project_id = ?
-  `).bind(newTotalChapters, project.id).run();
+  `).run(newTotalChapters, project.id);
 
   await updateTaskMessage(env.DB, taskId, `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`, OUTLINE_TASK_PROGRESS_TOTAL);
   await completeTask(env.DB, taskId, true, undefined);
@@ -948,9 +950,9 @@ async function runRefineOutlineMode(params: {
 }) {
   const { env, taskId, project, bible, aiConfig, effectiveMinChapterWords, refineVolumeIndices } = params;
 
-  const outlineRecord = await env.DB.prepare(`
+  const outlineRecord = getDb().prepare(`
     SELECT outline_json FROM outlines WHERE project_id = ?
-  `).bind(project.id).first() as { outline_json?: string } | null;
+  `).get(project.id) as { outline_json?: string } | null;
 
   if (!outlineRecord?.outline_json) {
     await completeTask(env.DB, taskId, false, 'Outline not found');
@@ -1024,7 +1026,7 @@ async function runRefineOutlineMode(params: {
       volumes: [...volumes],
     });
 
-    await env.DB.prepare(`
+    getDb().prepare(`
       UPDATE outlines SET outline_json = ? WHERE project_id = ?
     `).bind(JSON.stringify(outline), project.id).run();
 
@@ -1064,13 +1066,13 @@ generationRoutes.post('/projects/:name/outline', async (c) => {
       }, 400);
     }
 
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id
       FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.deleted_at IS NULL AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first() as { id: string } | null;
+    `).get(name, name, userId, name) as { id: string } | null;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -1142,7 +1144,7 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
     }
 
     // Get project with state and outline
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json
       FROM projects p
       JOIN states s ON p.id = s.project_id
@@ -1151,18 +1153,18 @@ generationRoutes.post('/projects/:name/generate', async (c) => {
       WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first() as any;
+    `).get(name, name, userId, name) as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
     if (hasMinChapterWords && parsedMinChapterWords !== null) {
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE states
         SET min_chapter_words = ?
         WHERE project_id = ?
-      `).bind(parsedMinChapterWords, project.id).run();
+      `).run(parsedMinChapterWords, project.id);
       project.min_chapter_words = parsedMinChapterWords;
     }
 
@@ -1270,7 +1272,7 @@ async function emitProgressEvent(data: {
 
 
 async function handleTaskCancellationIfNeeded(params: {
-  db: D1Database;
+  db: Database;
   taskId: number;
   userId: string;
   projectName: string;
@@ -1320,18 +1322,18 @@ type HistoricalGenerationContext = {
 };
 
 async function hasPendingSummaryRetry(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number
 ): Promise<boolean> {
   try {
-    const row = await db.prepare(`
+    const row = db.prepare(`
       SELECT chapter_index, summary_updated, update_reason
       FROM summary_memories
       WHERE project_id = ?
       ORDER BY chapter_index DESC, id DESC
       LIMIT 1
-    `).bind(projectId).first() as {
+    `).get(projectId) as {
       chapter_index?: number;
       summary_updated?: number;
       update_reason?: string;
@@ -1359,14 +1361,14 @@ function normalizeSummaryUpdateInterval(value: unknown): number | null {
   return parsed;
 }
 
-async function getSummaryUpdateInterval(db: D1Database, env: Env): Promise<number> {
+async function getSummaryUpdateInterval(db: Database, env: Env): Promise<number> {
   try {
-    const row = await db.prepare(`
+    const row = db.prepare(`
       SELECT setting_value
       FROM system_settings
       WHERE setting_key = ?
       LIMIT 1
-    `).bind(SUMMARY_UPDATE_INTERVAL_KEY).first() as { setting_value?: string } | null;
+    `).get(SUMMARY_UPDATE_INTERVAL_KEY) as { setting_value?: string } | null;
 
     const fromDb = normalizeSummaryUpdateInterval(row?.setting_value);
     if (fromDb !== null) {
@@ -1384,7 +1386,7 @@ async function getSummaryUpdateInterval(db: D1Database, env: Env): Promise<numbe
 }
 
 async function loadHistoricalGenerationContext(
-  db: D1Database,
+  db: Database,
   projectId: string,
   chapterIndex: number
 ): Promise<HistoricalGenerationContext> {
@@ -1493,7 +1495,7 @@ function formatDurationMs(ms: number): string {
 }
 
 async function appendSummaryMemorySnapshot(params: {
-  db: D1Database;
+  db: Database;
   projectId: string;
   chapterIndex: number;
   rollingSummary: string;
@@ -1620,12 +1622,14 @@ export async function runChapterGenerationTaskInBackground(params: {
   // getNextTurn, post-processing parallel calls) is automatically covered
   // regardless of whether it has its own progress callback.
   const heartbeatId = setInterval(() => {
-    env.DB.prepare(
-      `UPDATE generation_tasks SET updated_at = (unixepoch() * 1000)
-       WHERE id = ? AND status = 'running'`
-    ).bind(taskId).run().catch((err) => {
+    try {
+      getDb().prepare(
+        `UPDATE generation_tasks SET updated_at = (unixepoch() * 1000)
+         WHERE id = ? AND status = 'running'`
+      ).run(taskId);
+    } catch (err) {
       console.warn(`[Heartbeat] Task ${taskId} updated_at refresh failed:`, (err as Error).message);
-    });
+    }
   }, 30_000);
 
   try {
@@ -1637,7 +1641,7 @@ export async function runChapterGenerationTaskInBackground(params: {
     }
 
     // 2. Load Project (fresh each iteration for updated rolling_summary)
-    const project = await env.DB.prepare(`
+    const project = getDb().prepare(`
         SELECT
           p.id,
           p.name,
@@ -1659,7 +1663,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         LEFT JOIN plot_graphs pg ON p.id = pg.project_id
         LEFT JOIN narrative_config nc ON p.id = nc.project_id
         WHERE p.id = ? AND p.user_id = ?
-      `).bind(task.projectId, userId).first() as any;
+      `).get(task.projectId, userId) as any;
 
     if (!project) {
       await completeTask(env.DB, taskId, false, 'Project not found');
@@ -1773,19 +1777,19 @@ export async function runChapterGenerationTaskInBackground(params: {
       }
 
       // 6.1 Prepare Context
-      const { results: lastChapters } = await env.DB.prepare(`
+      const lastChapters = getDb().prepare(`
             SELECT content FROM chapters
             WHERE project_id = ? AND chapter_index >= ? AND deleted_at IS NULL
               AND chapter_index < ?
             ORDER BY chapter_index DESC LIMIT 2
           `).bind(project.id, Math.max(1, chapterIndex - 2), chapterIndex).all();
 
-      const existingChapterRecord = await env.DB.prepare(`
+      const existingChapterRecord = getDb().prepare(`
             SELECT id
             FROM chapters
             WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
             LIMIT 1
-          `).bind(project.id, chapterIndex).first() as {
+          `).get(project.id, chapterIndex) as {
             id?: string | null;
           } | null;
       const isHistoricalRewrite = Boolean(existingChapterRecord?.id);
@@ -2033,16 +2037,16 @@ export async function runChapterGenerationTaskInBackground(params: {
       if (!chapterText || chapterText.replace(/\s/g, '').length < 50) {
         throw new Error(`第 ${chapterIndex} 章内容为空，拒绝写入数据库`);
       }
-      await env.DB.prepare(`
+      getDb().prepare(`
             INSERT OR REPLACE INTO chapters (project_id, chapter_index, content) VALUES (?, ?, ?)
-          `).bind(project.id, chapterIndex, chapterText).run();
+          `).run(project.id, chapterIndex, chapterText);
 
       const nextSummaryBaseChapterIndex = !result.skippedSummary
         ? chapterIndex
         : runtimeContext.summaryBaseChapterIndex;
 
       if (!isHistoricalRewrite) {
-        await env.DB.prepare(`
+        getDb().prepare(`
               UPDATE states SET
                 next_chapter_index = ?,
                 rolling_summary = ?,
@@ -2058,7 +2062,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         ).run();
 
         if (result.updatedCharacterStates) {
-          await env.DB.prepare(`
+          getDb().prepare(`
             INSERT INTO character_states (project_id, registry_json, last_updated_chapter)
             VALUES (?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
@@ -2073,7 +2077,7 @@ export async function runChapterGenerationTaskInBackground(params: {
         }
 
         if (result.updatedPlotGraph) {
-          await env.DB.prepare(`
+          getDb().prepare(`
             INSERT INTO plot_graphs (project_id, graph_json, last_updated_chapter)
             VALUES (?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
@@ -2089,7 +2093,7 @@ export async function runChapterGenerationTaskInBackground(params: {
       }
 
       if (result.qcResult) {
-        await env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO chapter_qc (project_id, chapter_index, qc_json, passed, score)
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(project_id, chapter_index) DO UPDATE SET
@@ -2123,7 +2127,7 @@ export async function runChapterGenerationTaskInBackground(params: {
 
       // 持久化性能日志
       try {
-        await env.DB.prepare(`
+        getDb().prepare(`
           INSERT INTO generation_perf_logs (
             task_id, project_id, chapter_index, provider, model,
             total_duration_ms, context_build_ms, planning_ms, main_draft_ms,
@@ -2315,14 +2319,14 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     }, 400);
   }
 
-  const project = await c.env.DB.prepare(`
+  const project = getDb().prepare(`
     SELECT p.id, p.name, s.next_chapter_index, s.total_chapters
     FROM projects p
     JOIN states s ON p.id = s.project_id
     WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
     ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
     LIMIT 1
-  `).bind(name, name, userId, name).first() as {
+  `).get(name, name, userId, name) as {
     id: string;
     name: string;
     next_chapter_index: number;
@@ -2334,11 +2338,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
   }
 
   if (hasMinChapterWords && parsedMinChapterWords !== null) {
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE states
       SET min_chapter_words = ?
       WHERE project_id = ?
-    `).bind(parsedMinChapterWords, project.id).run();
+    `).run(parsedMinChapterWords, project.id);
     (project as any).min_chapter_words = parsedMinChapterWords;
   }
 
@@ -2360,12 +2364,12 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     if (targetIndex > actualMaxChapter + 1) {
       return c.json({ success: false, error: `无法跳过生成。当前最大章节为第 ${actualMaxChapter} 章，必须先生成第 ${actualMaxChapter + 1} 章。` }, 400);
     }
-    const existingTargetChapter = await c.env.DB.prepare(`
+    const existingTargetChapter = getDb().prepare(`
       SELECT id
       FROM chapters
       WHERE project_id = ? AND chapter_index = ? AND deleted_at IS NULL
       LIMIT 1
-    `).bind(project.id, targetIndex).first();
+    `).get(project.id, targetIndex);
     if (existingTargetChapter && !regenerate) {
       return c.json({ success: false, error: `第 ${targetIndex} 章已存在。如需重写，请使用重新生成功能。` }, 409);
     }
@@ -2375,9 +2379,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
     if (!regenerate && firstMissingChapter !== null) {
       startingIndex = firstMissingChapter;
       chaptersToGenerate = 1;
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-      `).bind(firstMissingChapter, project.id).run();
+      `).run(firstMissingChapter, project.id);
       project.next_chapter_index = firstMissingChapter;
       console.warn(
         `[Gap Repair] project=${project.id} detected missing chapter ${firstMissingChapter}, forcing single-chapter repair`
@@ -2389,9 +2393,9 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
       if (project.next_chapter_index !== expectedNextIndex) {
         project.next_chapter_index = expectedNextIndex;
         startingIndex = expectedNextIndex;
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE states SET next_chapter_index = ? WHERE project_id = ?
-        `).bind(expectedNextIndex, project.id).run();
+        `).run(expectedNextIndex, project.id);
       }
 
       const remaining = Math.max(0, project.total_chapters - actualMaxChapter);
@@ -2449,11 +2453,11 @@ generationRoutes.post('/projects/:name/generate-stream', async (c) => {
 
   // Smart Resume Logic: If no running task, check if we should resume a recently failed one
   if (!runningTaskCheck.isRunning) {
-    const latestTask = await c.env.DB.prepare(`
+    const latestTask = getDb().prepare(`
           SELECT * FROM generation_tasks 
           WHERE project_id = ? AND user_id = ? 
           ORDER BY created_at DESC LIMIT 1
-      `).bind(project.id, userId).first() as any;
+      `).get(project.id, userId) as any;
 
     if (latestTask && (latestTask.status === 'failed' || latestTask.status === 'error')) {
       const completed = Array.from(new Set(JSON.parse(latestTask.completed_chapters || '[]') as number[])).length;
@@ -2694,7 +2698,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
     } = await c.req.json();
 
     // Get project with state and outline (user-scoped)
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id, p.name, p.bible, s.*, o.outline_json, c.characters_json,
              cs.registry_json as character_states_json, cs.last_updated_chapter as states_chapter,
              pg.graph_json as plot_graph_json, pg.last_updated_chapter as plot_chapter,
@@ -2709,7 +2713,7 @@ generationRoutes.post('/projects/:name/generate-enhanced', async (c) => {
       WHERE (p.id = ? OR p.name = ?) AND p.user_id = ?
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first() as any;
+    `).get(name, name, userId, name) as any;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
@@ -3292,14 +3296,14 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
       let taskId: number | undefined;
       try {
         // 获取项目
-        const project = await c.env.DB.prepare(`
+        const project = getDb().prepare(`
           SELECT p.id, p.bible, p.name, s.min_chapter_words
           FROM projects p
           LEFT JOIN states s ON p.id = s.project_id
           WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
           ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
           LIMIT 1
-        `).bind(name, name, userId, name).first();
+        `).get(name, name, userId, name);
 
         if (!project) {
           sendEvent('error', { error: 'Project not found' });
@@ -3316,9 +3320,9 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
             : DEFAULT_MIN_CHAPTER_WORDS);
 
         // 读取现有大纲
-        const outlineRecord = await c.env.DB.prepare(`
+        const outlineRecord = getDb().prepare(`
           SELECT outline_json FROM outlines WHERE project_id = ?
-        `).bind(projectId).first();
+        `).get(projectId);
 
         if (!outlineRecord) {
           sendEvent('error', { error: '当前项目没有大纲，无法追加卷。请先生成大纲。' });
@@ -3331,9 +3335,9 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
         const existingVolumes = existingOutline.volumes || [];
 
         // 获取实际剧情摘要
-        const sseStateRecord = await c.env.DB.prepare(`
+        const sseStateRecord = getDb().prepare(`
           SELECT rolling_summary FROM states WHERE project_id = ?
-        `).bind(projectId).first() as { rolling_summary?: string } | null;
+        `).get(projectId) as { rolling_summary?: string } | null;
         const actualStorySummary = sseStateRecord?.rolling_summary || undefined;
 
         // 注册到任务中心
@@ -3460,13 +3464,13 @@ generationRoutes.post('/projects/:name/outline/add-volumes', async (c) => {
           volumes: [...existingVolumes, ...filledVolumes],
         };
 
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE outlines SET outline_json = ? WHERE project_id = ?
         `).bind(JSON.stringify(finalOutline), projectId).run();
 
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE states SET total_chapters = ? WHERE project_id = ?
-        `).bind(newTotalChapters, projectId).run();
+        `).run(newTotalChapters, projectId);
 
         const doneMsg = `追加 ${filledVolumes.length} 卷完成，共新增 ${addedChapters} 章`;
         await updateTaskMessage(c.env.DB, taskId!, doneMsg, newVolumeCount);
@@ -3523,21 +3527,21 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
       volumeIndex = undefined;
     }
 
-    const project = await c.env.DB.prepare(`
+    const project = getDb().prepare(`
       SELECT p.id
       FROM projects p
       WHERE (p.id = ? OR p.name = ?) AND p.user_id = ? AND p.deleted_at IS NULL
       ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT 1
-    `).bind(name, name, userId, name).first() as { id: string } | null;
+    `).get(name, name, userId, name) as { id: string } | null;
 
     if (!project) {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const outlineRecord = await c.env.DB.prepare(`
+    const outlineRecord = getDb().prepare(`
       SELECT outline_json FROM outlines WHERE project_id = ?
-    `).bind(project.id).first() as { outline_json?: string } | null;
+    `).get(project.id) as { outline_json?: string } | null;
 
     if (!outlineRecord?.outline_json) {
       return c.json({ success: false, error: 'Outline not found' }, 404);
@@ -3599,7 +3603,7 @@ generationRoutes.post('/projects/:name/outline/refine', async (c) => {
 generationRoutes.post('/migrate-outlines', async (c) => {
   try {
     // Get all outlines from database
-    const { results } = await c.env.DB.prepare(`
+    const results = getDb().prepare(`
       SELECT o.project_id, o.outline_json, p.name as project_name
       FROM outlines o
       JOIN projects p ON o.project_id = p.id
@@ -3631,7 +3635,7 @@ generationRoutes.post('/migrate-outlines', async (c) => {
         };
 
         // Update the database
-        await c.env.DB.prepare(`
+        getDb().prepare(`
           UPDATE outlines SET outline_json = ? WHERE project_id = ?
         `).bind(JSON.stringify(normalizedOutline), (row as any).project_id).run();
 

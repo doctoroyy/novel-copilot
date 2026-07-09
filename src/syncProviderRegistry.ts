@@ -8,7 +8,7 @@ function runWrangler(args: string[]): unknown[] {
     maxBuffer: 64 * 1024 * 1024,
   });
   const parsed = JSON.parse(raw);
-  return Array.isArray(parsed) ? parsed.flatMap((entry) => entry.results || []) : [];
+  return Array.isArray(parsed) ? parsed.flatMap((entry) => entry) : [];
 }
 
 function remoteQuery(sql: string): Row[] {

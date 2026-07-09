@@ -29,7 +29,9 @@ import {
   fetchBibleTemplates,
   refreshBibleTemplates,
   generateBibleExplore,
+  fetchGenreTemplates,
   type BibleImagineTemplate,
+  type GenreTemplate,
 } from '@/lib/api';
 
 function ProjectLayoutInner() {
@@ -62,6 +64,8 @@ function ProjectLayoutInner() {
   const [newProjectBible, setNewProjectBible] = useState('');
   const [newProjectChapters, setNewProjectChapters] = useState('400');
   const [newProjectMinChapterWords, setNewProjectMinChapterWords] = useState('2500');
+  const [genreTemplates, setGenreTemplates] = useState<GenreTemplate[]>([]);
+  const [selectedGenre, setSelectedGenre] = useState('');
   const [aiGenre, setAiGenre] = useState('');
   const [aiTheme, setAiTheme] = useState('');
   const [aiKeywords, setAiKeywords] = useState('');
@@ -339,7 +343,20 @@ function ProjectLayoutInner() {
     if (!showNewProjectDialog) return;
     setTemplateHint(null);
     void loadTemplates();
+    // Phase 4: load genre templates for quick start
+    if (genreTemplates.length === 0) {
+      fetchGenreTemplates().then(setGenreTemplates).catch(() => {});
+    }
   }, [showNewProjectDialog]);
+
+  const applyGenreTemplate = (templateId: string) => {
+    setSelectedGenre(templateId);
+    const tpl = genreTemplates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    if (!newProjectBible.trim()) setNewProjectBible(tpl.bible);
+    setNewProjectChapters(String(tpl.suggestedTotalChapters));
+    setNewProjectMinChapterWords(String(tpl.suggestedMinWords));
+  };
 
   return (
     <div className="h-dvh flex overflow-hidden bg-background text-foreground">
@@ -436,6 +453,33 @@ function ProjectLayoutInner() {
           </DialogHeader>
           
           <div className="space-y-4 py-4">
+            {genreTemplates.length > 0 && (
+              <div className="space-y-2">
+                <Label>题材模板（快速开始）</Label>
+                <div className="flex flex-wrap gap-2">
+                  {genreTemplates.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => applyGenreTemplate(tpl.id)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                        selectedGenre === tpl.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border hover:border-primary/50'
+                      }`}
+                    >
+                      {tpl.name}
+                    </button>
+                  ))}
+                </div>
+                {selectedGenre && genreTemplates.find((t) => t.id === selectedGenre)?.description && (
+                  <p className="text-xs text-muted-foreground">
+                    {genreTemplates.find((t) => t.id === selectedGenre)?.description}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="projectName">项目名称</Label>
               <Input

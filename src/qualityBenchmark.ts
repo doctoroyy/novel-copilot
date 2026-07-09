@@ -63,7 +63,7 @@ function d1(sql: string): any {
     { maxBuffer: 64 * 1024 * 1024 },
   ).toString();
   const parsed = JSON.parse(raw);
-  return parsed[0]?.results || [];
+  return (parsed && parsed.length > 0) ? parsed[0] : null;
 }
 
 function sqlEscape(s: string): string {

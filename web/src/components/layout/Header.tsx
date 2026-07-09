@@ -1,30 +1,27 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ThemeToggle } from './ThemeToggle';
-import { CreditDisplay } from '@/components/CreditDisplay';
 import type { ProjectDetail } from '@/lib/api';
 import {
   PanelLeftOpen,
-  LogOut,
   LayoutDashboard,
   ScrollText,
   FileText,
   Wand2,
   BookOpen,
   BookMarked,
+  Library,
   Newspaper,
   Network,
-  Clapperboard,
   ShieldCheck,
   Settings,
   RefreshCw,
   Download,
   Trash2,
-  User,
   Sparkles,
+  ClipboardList,
   type LucideIcon
 } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
   project: ProjectDetail | null;
@@ -44,13 +41,15 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
   { id: 'settings', label: '项目设定', icon: ScrollText },
   { id: 'bible', label: '设定预览', icon: BookMarked },
+  { id: 'vault', label: '资料库', icon: Library },
+  { id: 'blueprint', label: '蓝图', icon: ClipboardList },
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
   { id: 'summary', label: '剧情摘要', icon: Newspaper },
   { id: 'characters', label: '人物关系', icon: Network },
   { id: 'quality', label: '质量检测', icon: ShieldCheck },
-  { id: 'anime', label: 'AI动漫', icon: Clapperboard },
+  // Local-first Phase 0: Anime 暂沉 Labs，不进入主导航
 ];
 
 export function Header({ 
@@ -66,12 +65,12 @@ export function Header({
   sidebarOpen = true,
   activityPanelOpen = true
 }: HeaderProps) {
-  const { user, logout } = useAuth();
 
   if (!project) {
     return (
-      <header className="h-16 border-b border-border flex items-center justify-between px-4 lg:px-6">
-        {/* Mobile menu button */}
+      <header className="border-b border-border flex flex-col">
+        <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
+        <div className="h-16 flex items-center justify-between px-4 lg:px-6">
         {!sidebarOpen && (
             <Button 
             variant="ghost" 
@@ -84,31 +83,12 @@ export function Header({
         )}
         <div className="text-muted-foreground text-sm lg:text-base">选择一个项目开始</div>
         <div className="flex items-center gap-1 lg:gap-2">
-          {user && (
-            <>
-              <span className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
-                <User className="h-4 w-4 text-muted-foreground" />
-                <span className="max-w-[110px] truncate">{user.username}</span>
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={logout}
-                title="退出登录"
-                className="text-sm font-medium text-foreground"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline ml-1">退出</span>
-              </Button>
-              <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
-            </>
-          )}
-          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm">
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline ml-1">设置</span>
           </Button>
           <ThemeToggle />
+        </div>
         </div>
       </header>
     );
@@ -121,6 +101,8 @@ export function Header({
 
   return (
     <header className="border-b border-border">
+      {/* Titlebar drag region (Electron safe area) */}
+      <div className="titlebar-drag-region" style={{ height: 'var(--titlebar-height)' }} />
       {/* Top Bar */}
       <div className="h-16 flex items-center justify-between px-4 lg:px-6 gap-2">
         {/* Sidebar Toggle (Only show if closed) */}
@@ -142,13 +124,20 @@ export function Header({
               <span className="shrink-0">{generated} / {project.state.totalChapters} 章</span>
               <span className="hidden sm:inline" aria-hidden="true">•</span>
               <span className="hidden sm:inline shrink-0">{Math.round(progress)}% 完成</span>
-              {project.outline && (
+              <span className="hidden md:inline" aria-hidden="true">•</span>
+              <span className="hidden md:inline shrink-0">
+                开放线索 {Array.isArray(project.state.openLoops) ? project.state.openLoops.length : 0}
+              </span>
+              {project.outline ? (
                 <>
                   <span className="hidden lg:inline" aria-hidden="true">•</span>
                   <Badge variant="secondary" className="text-[10px] lg:text-xs hidden lg:inline-flex px-1.5 py-0">
-                    {project.outline.targetWordCount} 万字
+                    {project.outline?.targetWordCount ? `${project.outline.targetWordCount} 万字` : '有大纲'}
                   </Badge>
                 </>
+              ) : null}
+              {project.state.needHuman && (
+                <Badge variant="destructive" className="text-[10px] px-1.5 py-0">需人工</Badge>
               )}
             </div>
           </div>
@@ -174,33 +163,10 @@ export function Header({
             <span className="hidden xl:inline">删除</span>
           </Button>
           <div className="w-px h-6 bg-border mx-0.5 hidden sm:block" />
-          <CreditDisplay />
           <Button variant="ghost" size="sm" onClick={onSettings} className="text-xs lg:text-sm items-center gap-1 px-2">
             <Settings className="h-4 w-4" />
             <span className="hidden sm:inline lg:hidden xl:inline">设置</span>
           </Button>
-          
-          {/* User info and logout */}
-          {user && (
-            <>
-              <div className="w-px h-6 bg-border mx-0.5 hidden md:block" />
-              <div className="hidden lg:flex items-center gap-1.5 text-sm font-medium text-foreground px-1">
-                <User className="h-4 w-4 text-muted-foreground" />
-                <span className="max-w-[110px] truncate">{user.username}</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={logout}
-                title="退出登录"
-                className="text-sm font-medium text-foreground px-2"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="hidden lg:inline ml-1">退出</span>
-              </Button>
-            </>
-          )}
-          
           <Button
             variant={activityPanelOpen ? 'secondary' : 'ghost'}
             size="icon"
@@ -210,7 +176,6 @@ export function Header({
           >
             <Sparkles className="h-4 w-4" />
           </Button>
-          
           <ThemeToggle />
         </div>
       </div>
