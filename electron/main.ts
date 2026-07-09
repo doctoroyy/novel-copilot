@@ -75,13 +75,20 @@ app.whenReady().then(async () => {
   console.log(`[Main] 开发模式: ${isDev}`);
 
   // 启动后端 HTTP 服务器
-  try {
-    serverPort = await startServer();
-    console.log(`[Main] 后端服务器已启动: http://localhost:${serverPort}`);
-  } catch (error) {
-    console.error('[Main] 后端服务器启动失败:', error);
-    app.quit();
-    return;
+  // 开发模式下，dev 脚本已用系统 Node 启动了 sidecar（standalone.ts），
+  // Electron 主进程不需要再起一个（避免 native 模块 ABI 冲突和端口冲突）。
+  if (isDev) {
+    serverPort = 8787;
+    console.log(`[Main] 开发模式：使用已运行的 sidecar http://localhost:${serverPort}`);
+  } else {
+    try {
+      serverPort = await startServer();
+      console.log(`[Main] 后端服务器已启动: http://localhost:${serverPort}`);
+    } catch (error) {
+      console.error('[Main] 后端服务器启动失败:', error);
+      app.quit();
+      return;
+    }
   }
 
   // 创建窗口
