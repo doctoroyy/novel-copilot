@@ -1,5 +1,6 @@
 import { AIConfigSection } from './AIConfigSection';
 import { ModelFeatureConfig } from './admin/ModelFeatureConfig';
+import { LicenseExportSection } from './LicenseExportSection';
 import {
   Dialog,
   DialogContent,
@@ -8,7 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Cpu } from 'lucide-react';
+import { Settings, Cpu, KeyRound } from 'lucide-react';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -30,9 +31,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         </DialogHeader>
 
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="general">AI 服务商</TabsTrigger>
             <TabsTrigger value="models">模型路由</TabsTrigger>
+            <TabsTrigger value="license">授权与导出</TabsTrigger>
           </TabsList>
           
           <TabsContent value="general" className="space-y-4 py-4">
@@ -50,6 +52,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               </p>
             </div>
             <ModelFeatureConfig />
+          </TabsContent>
+
+          <TabsContent value="license" className="space-y-4 py-4">
+            <div className="flex items-center gap-3 mb-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              <span className="font-medium text-sm">License 与导出</span>
+            </div>
+            <LicenseExportSection />
           </TabsContent>
         </Tabs>
       </DialogContent>

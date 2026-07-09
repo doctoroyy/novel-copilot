@@ -531,3 +531,69 @@ projectsRoutes.get('/:name/download', async (c) => {
     return c.json({ success: false, error: (error as Error).message }, 500);
   }
 });
+
+// Phase 4: Single-file export (TXT or Markdown)
+projectsRoutes.get('/:name/export', async (c) => {
+  const projectRef = c.req.param('name');
+  const userId = c.get('userId');
+  const format = (c.req.query('format') || 'txt').toLowerCase();
+
+  try {
+    const project = getDb().prepare(`
+      SELECT id, name FROM projects
+      WHERE (id = ? OR name = ?) AND deleted_at IS NULL AND user_id = ?
+      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC LIMIT 1
+    `).get(projectRef, projectRef, userId, projectRef) as { id: string; name: string } | null;
+
+    if (!project) return c.json({ success: false, error: 'Project not found' }, 404);
+
+    const chapters = getDb().prepare(`
+      SELECT chapter_index, content FROM chapters
+      WHERE project_id = ? AND deleted_at IS NULL ORDER BY chapter_index
+    `).all(project.id) as any[];
+
+    if (chapters.length === 0) {
+      return c.json({ success: false, error: 'No chapters to export' }, 400);
+    }
+
+    let body: string;
+    let contentType: string;
+    let ext: string;
+
+    if (format === 'md') {
+      body = `# ${project.name}\n\n`;
+      for (const ch of chapters) {
+        const content = ch.content as string;
+        const firstLine = content.split('\n')[0] || `第${ch.chapter_index}章`;
+        const title = firstLine.replace(/^#+\s*/, '').trim() || `第${ch.chapter_index}章`;
+        body += `---\n\n## ${title}\n\n${content}\n\n`;
+      }
+      contentType = 'text/markdown; charset=utf-8';
+      ext = 'md';
+    } else {
+      body = `${project.name}\n${'='.repeat(50)}\n\n`;
+      for (const ch of chapters) {
+        const content = ch.content as string;
+        body += `${'='.repeat(50)}\n第${ch.chapter_index}章\n${'='.repeat(50)}\n\n${content}\n\n`;
+      }
+      contentType = 'text/plain; charset=utf-8';
+      ext = 'txt';
+    }
+
+    const filename = `${project.name}.${ext}`;
+    return new Response(body, {
+      headers: {
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      },
+    });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+// Phase 4: Genre templates list
+projectsRoutes.get('/templates/genres', async (c) => {
+  const { GENRE_TEMPLATES } = await import('../services/genreTemplates.js');
+  return c.json({ success: true, templates: GENRE_TEMPLATES });
+});

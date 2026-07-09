@@ -188,3 +188,36 @@ async function testAIConnection(config: {
     return { success: false, message: `连接失败: ${msg}` };
   }
 }
+
+// ==================== License (Phase 4) ====================
+
+configRoutes.get('/license', async (c) => {
+  try {
+    const { getLicenseStatus } = await import('../services/licenseService.js');
+    const status = getLicenseStatus();
+    return c.json({ success: true, license: status });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+configRoutes.post('/license/activate', async (c) => {
+  try {
+    const { activateLicense } = await import('../services/licenseService.js');
+    const body = await c.req.json();
+    const record = activateLicense(String(body.key || ''));
+    return c.json({ success: true, license: record });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 400);
+  }
+});
+
+configRoutes.delete('/license', async (c) => {
+  try {
+    const { deactivateLicense } = await import('../services/licenseService.js');
+    deactivateLicense();
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});

@@ -2834,3 +2834,63 @@ export async function fetchProjectHealth(projectRef: string): Promise<ProjectHea
   if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load project health');
   return data.health as ProjectHealth;
 }
+
+// ==================== License & Export (Phase 4) ====================
+
+export type LicenseRecord = {
+  key: string;
+  tier: 'free' | 'pro' | 'studio';
+  status: 'active' | 'expired' | 'revoked' | 'grace';
+  activatedAt: number;
+  expiresAt: number | null;
+  machineId: string;
+  lastCheckedAt: number;
+};
+
+export type GenreTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  bible: string;
+  suggestedTotalChapters: number;
+  suggestedMinWords: number;
+  outlineTemplate?: {
+    mainGoal: string;
+    milestones: string[];
+    volumes: Array<{ title: string; startChapter: number; endChapter: number; goal: string; conflict: string }>;
+  };
+};
+
+export async function fetchLicense(): Promise<LicenseRecord | null> {
+  const res = await fetch(`${API_BASE}/config/license`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error);
+  return data.license as LicenseRecord | null;
+}
+
+export async function activateLicense(key: string): Promise<LicenseRecord> {
+  const res = await fetch(`${API_BASE}/config/license/activate`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Activation failed');
+  return data.license as LicenseRecord;
+}
+
+export async function deactivateLicense(): Promise<void> {
+  await fetch(`${API_BASE}/config/license`, { method: 'DELETE', headers: getAuthHeaders() });
+}
+
+export async function fetchGenreTemplates(): Promise<GenreTemplate[]> {
+  const res = await fetch(`${API_BASE}/projects/templates/genres`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error);
+  return data.templates as GenreTemplate[];
+}
+
+export function exportProjectUrl(projectRef: string, format: 'txt' | 'md'): string {
+  return `${API_BASE}/projects/${encodeURIComponent(projectRef)}/export?format=${format}`;
+}

@@ -251,6 +251,39 @@ async function main() {
     }
     log(`Ledger summary ok: totalJobs=${ledgerJson.summary.totalJobs}`);
 
+    // Phase 3: Project Health Board
+    const healthRes = await fetch(`${BASE}/api/projects/${created.project.id}/health`);
+    const healthJson = await healthRes.json();
+    if (!healthRes.ok || !healthJson.success || !healthJson.health?.dimensions) {
+      throw new Error(`health 异常: ${JSON.stringify(healthJson).slice(0, 400)}`);
+    }
+    log(`Project Health ok: score=${healthJson.health.overallScore}, status=${healthJson.health.overallStatus}, dims=${healthJson.health.dimensions.length}`);
+
+    // Phase 4: Genre templates
+    const tplRes = await fetch(`${BASE}/api/projects/templates/genres`);
+    const tplJson = await tplRes.json();
+    if (!tplRes.ok || !tplJson.success || tplJson.templates.length < 3) {
+      throw new Error(`genre templates 异常: ${JSON.stringify(tplJson)}`);
+    }
+    log(`Genre templates ok: ${tplJson.templates.length} templates`);
+
+    // Phase 4: License activate + status
+    const licActRes = await fetch(`${BASE}/api/config/license/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'NCP-P123-ABCD-EFGH-TEST' }),
+    });
+    const licActJson = await licActRes.json();
+    if (!licActRes.ok || !licActJson.success || licActJson.license.tier !== 'pro') {
+      throw new Error(`license 激活失败: ${JSON.stringify(licActJson)}`);
+    }
+    const licGetRes = await fetch(`${BASE}/api/config/license`);
+    const licGetJson = await licGetRes.json();
+    if (!licGetRes.ok || !licGetJson.success || licGetJson.license?.status !== 'active') {
+      throw new Error(`license 状态异常: ${JSON.stringify(licGetJson)}`);
+    }
+    log(`License ok: tier=${licGetJson.license.tier}, status=${licGetJson.license.status}`);
+
     const delRes = await fetch(`${BASE}/api/projects/${created.project.id}`, {
       method: 'DELETE',
     });
