@@ -2793,3 +2793,44 @@ export async function fetchLedgerSummary(projectRef: string): Promise<LedgerSumm
   if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load ledger summary');
   return data.summary as LedgerSummary;
 }
+
+// ==================== Project Health Board (Phase 3) ====================
+
+export type HealthDimension = {
+  key: string;
+  label: string;
+  status: 'healthy' | 'warning' | 'critical';
+  score: number;
+  summary: string;
+  details: Array<{ label: string; value: string; severity?: 'info' | 'warning' | 'critical' }>;
+};
+
+export type ProjectHealth = {
+  projectId: string;
+  projectName: string;
+  overallScore: number;
+  overallStatus: 'healthy' | 'warning' | 'critical';
+  dimensions: HealthDimension[];
+  recentQcIssues: Array<{
+    chapterIndex: number;
+    type: string;
+    severity: string;
+    description: string;
+    suggestion?: string;
+  }>;
+  foreshadowInventory: {
+    total: number;
+    open: number;
+    resolved: number;
+    overdue: number;
+    items: Array<{ name: string; status: string; kind: string; summary: string }>;
+  };
+  generatedAt: number;
+};
+
+export async function fetchProjectHealth(projectRef: string): Promise<ProjectHealth> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/health`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load project health');
+  return data.health as ProjectHealth;
+}

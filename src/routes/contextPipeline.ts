@@ -24,6 +24,7 @@ import {
   listLedgerJobs,
   getLedgerSummary,
 } from '../services/aiJobLedger.js';
+import { getProjectHealth } from '../services/projectHealthService.js';
 import { resolveProjectForUser } from '../services/storyVaultService.js';
 
 export const contextPipelineRoutes = new Hono<{ Bindings: Env }>();
@@ -203,5 +204,18 @@ contextPipelineRoutes.get('/:name/ledger/summary', async (c) => {
     if (!project) return c.json({ success: false, error: 'Project not found' }, 404);
     const summary = getLedgerSummary(project.id);
     return c.json({ success: true, summary });
+  } catch (e) { return c.json({ success: false, error: (e as Error).message }, errStatus((e as Error).message)); }
+});
+
+// ---------------------------------------------------------------------------
+// Project Health Board (Phase 3: QC productization)
+// ---------------------------------------------------------------------------
+
+contextPipelineRoutes.get('/:name/health', async (c) => {
+  const userId = requireUser(c);
+  if (!userId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  try {
+    const health = await getProjectHealth(c.req.param('name'), userId);
+    return c.json({ success: true, health });
   } catch (e) { return c.json({ success: false, error: (e as Error).message }, errStatus((e as Error).message)); }
 });
