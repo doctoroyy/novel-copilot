@@ -1,7 +1,7 @@
 import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, AIProvider } from '../services/aiClient';
+import { generateText, AIProvider } from '../services/aiClient.js';
 import { getProviderPresets, getProviderPreset, normalizeProviderId, normalizeGeminiBaseUrl, buildOpenAiModelsUrl } from '../services/providerCatalog.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();

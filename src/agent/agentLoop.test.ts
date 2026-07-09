@@ -59,6 +59,7 @@ test('agentLoop handles tool execution and termination', async () => {
   assert.strictEqual(result.usage.cacheHitTokens, 100);
 
   // Executor should have been called once for read_chapter
-  assert.strictEqual(executor.mock.calls.length, 1);
-  assert.strictEqual(executor.mock.calls[0].arguments[0], 'read_chapter');
+  const executorMock = executor as any;
+  assert.strictEqual(executorMock.mock.calls.length, 1);
+  assert.strictEqual(executorMock.mock.calls[0].arguments[0], 'read_chapter');
 });

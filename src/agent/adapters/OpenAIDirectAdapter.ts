@@ -146,7 +146,8 @@ export class OpenAIDirectAdapter implements AgentRuntimeAdapter {
     }
 
     if (message.tool_calls && message.tool_calls.length > 0) {
-      for (const tc of message.tool_calls) {
+      for (const tcRaw of message.tool_calls) {
+        const tc = tcRaw as any;
         let parsedArgs = {};
         try {
           parsedArgs = JSON.parse(tc.function.arguments);

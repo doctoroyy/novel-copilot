@@ -1,5 +1,27 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './adapters/types.js';
+import type { CharacterStateRegistry } from '../types/characterState.js';
+import type { PlotGraph } from '../types/plotGraph.js';
+import type { TimelineState } from '../types/timeline.js';
+import type { NarrativeGuide, EnhancedChapterOutline } from '../types/narrative.js';
+
+export interface ToolContext {
+  bible: string;
+  plotGraph?: PlotGraph;
+  characterStates?: CharacterStateRegistry;
+  timeline?: TimelineState;
+  narrativeGuide?: NarrativeGuide;
+  rollingSummary: string;
+  openLoops: string[];
+  lastChapters: string[];
+  chapterIndex: number;
+  totalChapters: number;
+  enhancedOutline?: EnhancedChapterOutline;
+  minChapterWords?: number;
+  chapterPromptProfile?: string;
+  chapterPromptCustom?: string;
+  customSystemPrompt?: string | null;
+}
 
 export const ToolSchemas = {
   read_story_vault: z.object({
