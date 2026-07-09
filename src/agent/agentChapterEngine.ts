@@ -4,7 +4,7 @@
  * 通过纯本地 Agent 循环替代沉重的 LangGraph
  */
 
-import { buildContextPackage, serializeContextPackage } from './contextBuilder.js';
+import { buildContextPackage, serializeContextPackage, type ContextPackage } from './contextBuilder.js';
 import { runAgentLoop } from './agentLoop.js';
 import { importProposal } from './proposalImporter.js';
 import { AGENT_SYSTEM_PROMPT } from './systemPrompt.js';
@@ -13,6 +13,7 @@ import { OpenAIDirectAdapter } from './adapters/OpenAIDirectAdapter.js';
 import type { AgentRuntimeAdapter } from './adapters/types.js';
 import { ToolExecutor } from './toolExecutor.js';
 import type { ToolContext } from './tools.js';
+import { startLedgerJob } from '../services/aiJobLedger.js';
 
 import type {
   EnhancedWriteChapterParams,
@@ -91,10 +92,10 @@ export async function writeChapterWithAgent(
     );
   }
 
-  // 3. 构建 Context Package
+  // 3. 构建 Context Package (接入 Story Vault + 持久化 + hash)
   params.onProgress?.('正在构建精简上下文...', 'analyzing');
   const contextBuildStartedAt = Date.now();
-  
+
   let writingStyleRules = '';
   if (params.chapterPromptProfile) {
     writingStyleRules = `请遵循风格模板: ${params.chapterPromptProfile}\n${params.chapterPromptCustom || ''}`;
@@ -102,16 +103,26 @@ export async function writeChapterWithAgent(
     writingStyleRules = params.customSystemPrompt;
   }
 
-  const contextPkg = buildContextPackage({
+  let dbForContext: import('better-sqlite3').Database | undefined;
+  try {
+    const { getDb } = await import('../db/db.js');
+    dbForContext = getDb();
+  } catch { /* tests / no-db env */ }
+
+  const contextPkg: ContextPackage = buildContextPackage({
     taskId: `gen-chapter-${chapterIndex}`,
-    projectId: 'current',
+    projectId: params.projectId || 'current',
     chapterIndex,
+    taskType: 'chapter_draft',
     rollingSummary: params.rollingSummary,
     currentBlueprint: enhancedOutline ? JSON.stringify(enhancedOutline) : params.chapterGoalHint,
+    goalHint: params.chapterGoalHint,
     writingStyleRules,
     totalChapters,
+    db: dbForContext,
+    persist: Boolean(dbForContext),
   });
-  
+
   const serializedContext = serializeContextPackage(contextPkg);
   const fullSystemPrompt = `${AGENT_SYSTEM_PROMPT}\n\n${serializedContext}`;
   const contextBuildDurationMs = Date.now() - contextBuildStartedAt;
@@ -136,10 +147,10 @@ export async function writeChapterWithAgent(
   };
   const executor = new ToolExecutor(toolContext, aiConfig, { tracer, phase: 'other' });
 
-  // 5. 启动 Agent Loop
+  // 5. 启动 Agent Loop (包裹 ledger 记录)
   params.onProgress?.('Agent 开始创作 (Native Loop)...', 'generating');
   const agentStartedAt = Date.now();
-  
+
   const goalBits = [
     params.chapterGoalHint ? `本章目标提示：${params.chapterGoalHint}` : '',
     enhancedOutline?.title ? `章节标题：${enhancedOutline.title}` : '',
@@ -147,22 +158,51 @@ export async function writeChapterWithAgent(
     params.minChapterWords ? `目标字数不少于约 ${params.minChapterWords} 字` : '',
   ].filter(Boolean).join('\n');
 
-  const loopResult = await runAgentLoop({
-    adapter,
-    systemPrompt: fullSystemPrompt,
-    executor: async (name: string, args: any) => {
-      return executor.execute({ tool: name, args: args || {} });
-    },
-    maxIterations: params.agentMaxTurns || 10,
-    initialUserMessage: [
-      `请创作第 ${chapterIndex} 章（共 ${totalChapters} 章）。`,
-      goalBits,
-      '按需调用 read_story_vault / read_summary / read_chapter / search_references 获取上下文。',
-      '完成后必须调用 submit_proposal，提交 scene_plan、chapter_text、review_notes。',
-    ].filter(Boolean).join('\n'),
+  const ledger = startLedgerJob({
+    provider: aiConfig.provider,
+    model: aiConfig.model,
+    phase: 'drafting',
+    taskType: 'chapter_draft',
+    chapterIndex,
+    projectId: params.projectId,
+    contextPackageId: contextPkg.id,
+    db: dbForContext,
   });
 
+  let loopResult;
+  try {
+    loopResult = await runAgentLoop({
+      adapter,
+      systemPrompt: fullSystemPrompt,
+      executor: async (name: string, args: any) => {
+        return executor.execute({ tool: name, args: args || {} });
+      },
+      maxIterations: params.agentMaxTurns || 10,
+      initialUserMessage: [
+        `请创作第 ${chapterIndex} 章（共 ${totalChapters} 章）。`,
+        goalBits,
+        '按需调用 read_story_vault / read_summary / read_chapter / search_references 获取上下文。',
+        '完成后必须调用 submit_proposal，提交 scene_plan、chapter_text、review_notes。',
+      ].filter(Boolean).join('\n'),
+    });
+  } catch (e) {
+    ledger.finish({
+      status: 'failed',
+      error: (e as Error).message,
+      durationMs: Date.now() - agentStartedAt,
+    });
+    throw e;
+  }
+
   const agentDurationMs = Date.now() - agentStartedAt;
+  ledger.finish({
+    inputTokens: loopResult.usage.inputTokens,
+    outputTokens: loopResult.usage.outputTokens,
+    durationMs: agentDurationMs,
+    agentTurns: loopResult.messages.length,
+    status: loopResult.status === 'error' ? 'failed' : 'completed',
+    error: loopResult.status === 'error' ? loopResult.error : undefined,
+  });
 
   if (loopResult.status === 'error') {
     throw new Error(`Agent execution failed: ${loopResult.error}`);
@@ -258,6 +298,10 @@ export async function writeChapterWithAgent(
       mainInput: loopResult.usage.inputTokens,
       mainOutput: loopResult.usage.outputTokens,
     },
+    // @ts-ignore — context package traceability (Phase 2)
+    contextPackageId: contextPkg.id,
+    // @ts-ignore
+    ledgerJobId: ledger.id,
     phaseDurationsMs: {
       contextBuild: contextBuildDurationMs,
       planning: 0,

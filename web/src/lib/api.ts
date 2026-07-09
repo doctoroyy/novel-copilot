@@ -2603,3 +2603,193 @@ export async function acceptStoryExtract(
   if (!res.ok || !data.success) throw new Error(data.error || 'Failed to accept extract');
   return data;
 }
+
+// ==================== Context Pipeline (Phase 2) ====================
+
+export type SceneBeat = {
+  id: string;
+  summary: string;
+  action: string;
+  emotion: string;
+  infoReveal: string;
+  characters: string[];
+};
+
+export type ChapterGoal = {
+  primary: string;
+  secondary?: string;
+  emotional?: string;
+};
+
+export type ChapterBlueprint = {
+  id: string;
+  projectId: string;
+  chapterIndex: number;
+  title: string;
+  goal: ChapterGoal;
+  conflict: string;
+  hook: string;
+  sceneBeats: SceneBeat[];
+  stateDeltaPlan: Array<{ target: string; change: string; reason: string }>;
+  acceptanceCriteria: string[];
+  authorNotes: string;
+  status: 'draft' | 'ready' | 'generating' | 'drafted' | 'reviewing' | 'committed' | 'archived';
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SelectedContextItem = {
+  kind: 'entity' | 'thread' | 'style' | 'summary' | 'blueprint';
+  refId: string;
+  name: string;
+  type?: string;
+  snippet: string;
+  importance: number;
+  reason: string;
+  reasonDetail: string;
+  tokenEstimate: number;
+};
+
+export type ContextPackage = {
+  id: string;
+  taskId: string;
+  projectId: string;
+  chapterIndex: number;
+  taskType: string;
+  essentials: {
+    rollingSummary: string;
+    currentBlueprint?: string;
+    writingStyleRules: string;
+    goalHint?: string;
+  };
+  selectedItems: SelectedContextItem[];
+  availableResources: { chapters: number[]; vaultEntityCount: number; vaultThreadCount: number };
+  tokenBudget: { inputBudget: number; estimatedTokens: number; withinBudget: boolean };
+  promptHash: string;
+  createdAt: number;
+};
+
+export type LedgerJob = {
+  id: string;
+  provider: string;
+  model: string;
+  phase: string;
+  taskType?: string;
+  chapterIndex?: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  cacheReadTokens: number;
+  estimatedCost: number;
+  durationMs: number;
+  status: string;
+  errorMessage?: string;
+  agentTurns: number;
+  createdAt: number;
+};
+
+export type LedgerSummary = {
+  totalJobs: number;
+  completed: number;
+  failed: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCost: number;
+  totalDurationMs: number;
+  byPhase: Record<string, { count: number; cost: number; tokens: number }>;
+  byModel: Record<string, { count: number; cost: number; tokens: number }>;
+};
+
+export async function fetchBlueprints(projectRef: string): Promise<ChapterBlueprint[]> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/blueprints`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load blueprints');
+  return data.blueprints as ChapterBlueprint[];
+}
+
+export async function fetchBlueprint(projectRef: string, chapter: number): Promise<ChapterBlueprint | null> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/blueprints/${chapter}`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load blueprint');
+  return data.blueprint as ChapterBlueprint | null;
+}
+
+export async function saveBlueprint(
+  projectRef: string,
+  chapter: number,
+  input: Partial<Omit<ChapterBlueprint, 'id' | 'projectId' | 'chapterIndex' | 'createdAt' | 'updatedAt'>>,
+): Promise<ChapterBlueprint> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/blueprints/${chapter}`, {
+    method: 'PUT',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save blueprint');
+  return data.blueprint as ChapterBlueprint;
+}
+
+export async function setBlueprintStatus(
+  projectRef: string,
+  chapter: number,
+  status: ChapterBlueprint['status'],
+): Promise<ChapterBlueprint> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/blueprints/${chapter}/status`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update blueprint status');
+  return data.blueprint as ChapterBlueprint;
+}
+
+export async function buildContextPackage(
+  projectRef: string,
+  input: {
+    chapterIndex: number;
+    taskType?: string;
+    rollingSummary?: string;
+    blueprint?: string;
+    goalHint?: string;
+    writingStyleRules?: string;
+    totalChapters?: number;
+  },
+): Promise<{ package: ContextPackage; serialized: string }> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/context-package`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to build context package');
+  return { package: data.package as ContextPackage, serialized: data.serialized as string };
+}
+
+export async function fetchContextPackages(
+  projectRef: string,
+  options?: { chapter?: number; taskType?: string; limit?: number },
+): Promise<ContextPackage[]> {
+  const params = new URLSearchParams();
+  if (options?.chapter != null) params.set('chapter', String(options.chapter));
+  if (options?.taskType) params.set('taskType', options.taskType);
+  if (options?.limit) params.set('limit', String(options.limit));
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/context-packages?${params}`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load context packages');
+  return data.packages as ContextPackage[];
+}
+
+export async function fetchLedgerJobs(projectRef: string, limit = 50): Promise<LedgerJob[]> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/ledger?limit=${limit}`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load ledger');
+  return data.jobs as LedgerJob[];
+}
+
+export async function fetchLedgerSummary(projectRef: string): Promise<LedgerSummary> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/ledger/summary`, { headers: getAuthHeaders() });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load ledger summary');
+  return data.summary as LedgerSummary;
+}

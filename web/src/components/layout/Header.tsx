@@ -19,6 +19,7 @@ import {
   Download,
   Trash2,
   Sparkles,
+  ClipboardList,
   type LucideIcon
 } from 'lucide-react';
 
@@ -41,6 +42,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'settings', label: '项目设定', icon: ScrollText },
   { id: 'bible', label: '设定预览', icon: BookMarked },
   { id: 'vault', label: '资料库', icon: Library },
+  { id: 'blueprint', label: '蓝图', icon: ClipboardList },
   { id: 'outline', label: '大纲', icon: FileText },
   { id: 'generate', label: '生成', icon: Wand2 },
   { id: 'chapters', label: '章节', icon: BookOpen },
