@@ -190,6 +190,66 @@ async function main() {
     }
     log(`Vault extract accepted: entities=${acceptJson.entities.length}, threads=${acceptJson.threads.length}`);
 
+    // Phase 2: Chapter Blueprint
+    const bpRes = await fetch(`${BASE}/api/projects/${created.project.id}/blueprints/1`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: '第一章 启程',
+        goal: { primary: '主角踏上修行之路' },
+        conflict: '宗门试炼',
+        hook: '神秘祖符',
+        sceneBeats: [{ id: 'beat-1', summary: '开场', action: '登场', emotion: '紧张', infoReveal: '身世', characters: ['林远'] }],
+        acceptanceCriteria: ['字数达标', '钩子明确'],
+        authorNotes: '不要出现后期才有的设定',
+      }),
+    });
+    const bpJson = await bpRes.json();
+    if (!bpRes.ok || !bpJson.success || !bpJson.blueprint?.id) {
+      throw new Error(`blueprint 保存失败: ${JSON.stringify(bpJson)}`);
+    }
+    log(`Chapter Blueprint saved: chapter ${bpJson.blueprint.chapterIndex}, status=${bpJson.blueprint.status}`);
+
+    const bpGetRes = await fetch(`${BASE}/api/projects/${created.project.id}/blueprints/1`);
+    const bpGetJson = await bpGetRes.json();
+    if (!bpGetRes.ok || !bpGetJson.success || bpGetJson.blueprint?.title !== '第一章 启程') {
+      throw new Error(`blueprint 读取失败: ${JSON.stringify(bpGetJson)}`);
+    }
+    log('Chapter Blueprint 读写正常');
+
+    // Phase 2: Context Package (Context Inspector)
+    const ctxRes = await fetch(`${BASE}/api/projects/${created.project.id}/context-package`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chapterIndex: 1,
+        taskType: 'chapter_draft',
+        rollingSummary: '主角林远在青云城',
+        goalHint: '林远',
+        totalChapters: 10,
+      }),
+    });
+    const ctxJson = await ctxRes.json();
+    if (!ctxRes.ok || !ctxJson.success || !ctxJson.package?.id) {
+      throw new Error(`context package 构建失败: ${JSON.stringify(ctxJson).slice(0, 400)}`);
+    }
+    log(`Context Package built: hash=${ctxJson.package.promptHash}, tokens=${ctxJson.package.tokenBudget.estimatedTokens}/${ctxJson.package.tokenBudget.inputBudget}, items=${ctxJson.package.selectedItems.length}`);
+
+    // Verify the context package was persisted
+    const ctxListRes = await fetch(`${BASE}/api/projects/${created.project.id}/context-packages`);
+    const ctxListJson = await ctxListRes.json();
+    if (!ctxListRes.ok || !ctxListJson.success || ctxListJson.packages.length === 0) {
+      throw new Error(`context packages 列表为空`);
+    }
+    log(`Context Packages persisted: ${ctxListJson.packages.length}`);
+
+    // Phase 2: AI Job Ledger (summary should be empty but valid)
+    const ledgerRes = await fetch(`${BASE}/api/projects/${created.project.id}/ledger/summary`);
+    const ledgerJson = await ledgerRes.json();
+    if (!ledgerRes.ok || !ledgerJson.success || typeof ledgerJson.summary?.totalJobs !== 'number') {
+      throw new Error(`ledger summary 异常: ${JSON.stringify(ledgerJson)}`);
+    }
+    log(`Ledger summary ok: totalJobs=${ledgerJson.summary.totalJobs}`);
 
     const delRes = await fetch(`${BASE}/api/projects/${created.project.id}`, {
       method: 'DELETE',

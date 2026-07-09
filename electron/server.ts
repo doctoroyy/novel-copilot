@@ -81,6 +81,7 @@ async function createApp(): Promise<Hono<{ Bindings: Env }>> {
   const { creditRoutes } = await import('../src/routes/credit.js');
   const { animeRoutes } = await import('../src/routes/anime.js');
   const { storyVaultRoutes } = await import('../src/routes/storyVault.js');
+  const { contextPipelineRoutes } = await import('../src/routes/contextPipeline.js');
 
   // 挂载路由（不需要认证中间件，外层已注入用户上下文）
   app.route('/api/projects', projectsRoutes);
@@ -96,6 +97,7 @@ async function createApp(): Promise<Hono<{ Bindings: Env }>> {
   app.route('/api/credit', creditRoutes);
   app.route('/api/anime', animeRoutes);
   app.route('/api/projects', storyVaultRoutes);
+  app.route('/api/projects', contextPipelineRoutes);
 
   // SSE 事件流（本地简化版本）
   app.get('/api/events', async (c) => {

@@ -5,6 +5,7 @@ import { configRoutes } from './routes/config.js';
 import { generationRoutes } from './routes/generation.js';
 import { charactersRoutes } from './routes/characters.js';
 import { storyVaultRoutes } from './routes/storyVault.js';
+import { contextPipelineRoutes } from './routes/contextPipeline.js';
 import { contextRoutes } from './routes/context.js';
 import { animeRoutes } from './routes/anime.js';
 import { authRoutes } from './routes/auth.js';
@@ -64,6 +65,7 @@ app.use('/api/config/fetch-models', authMiddleware());
 // Mount routes
 app.route('/api/projects', projectsRoutes);
 app.route('/api/projects', storyVaultRoutes);
+app.route('/api/projects', contextPipelineRoutes);
 app.route('/api/config', configRoutes);
 app.route('/api', generationRoutes);
 app.route('/api', tasksRoutes);
