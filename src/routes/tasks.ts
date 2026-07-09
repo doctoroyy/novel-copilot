@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { eventBus } from '../eventBus.js';
@@ -32,14 +34,27 @@ function toTimestampMs(value: unknown): number {
       }
     }
 
+    // SQLite's CURRENT_TIMESTAMP returns UTC text without a timezone marker
+    // (e.g. "2026-05-17 10:23:11"). Date.parse would interpret that as local
+    // time on most engines, causing an 8h drift that makes freshly-inserted
+    // rows look stale. If the string lacks an explicit TZ, treat it as UTC.
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed);
+    if (!hasTz) {
+      const isoish = trimmed.replace(' ', 'T');
+      const parsedUtc = Date.parse(`${isoish}Z`);
+      if (Number.isFinite(parsedUtc)) {
+        return parsedUtc;
+      }
+    }
+
     const parsed = Date.parse(trimmed);
     if (Number.isFinite(parsed)) {
       return parsed;
     }
 
-    const parsedUtc = Date.parse(`${trimmed}Z`);
-    if (Number.isFinite(parsedUtc)) {
-      return parsedUtc;
+    const parsedUtcFallback = Date.parse(`${trimmed}Z`);
+    if (Number.isFinite(parsedUtcFallback)) {
+      return parsedUtcFallback;
     }
   }
   return Date.now();
@@ -75,7 +90,7 @@ function getStaleTaskMessage(taskType: TaskType): string {
   return `任务超过 ${staleMinutes} 分钟无进展，已自动标记失败，请重新发起`;
 }
 
-async function expireStaleTaskRow(db: D1Database, task: any): Promise<any | null> {
+async function expireStaleTaskRow(db: Database, task: any): Promise<any | null> {
   const taskType = (task?.task_type || 'chapters') as TaskType;
   if (!task?.id || task?.status !== 'running' || task?.cancel_requested) {
     return task;
@@ -91,11 +106,11 @@ async function expireStaleTaskRow(db: D1Database, task: any): Promise<any | null
   }
 
   const message = getStaleTaskMessage(taskType);
-  await db.prepare(`
+  db.prepare(`
     UPDATE generation_tasks
     SET status = 'failed', current_message = ?, error_message = ?, updated_at = (unixepoch() * 1000)
     WHERE id = ? AND status = 'running'
-  `).bind(message, message, task.id).run();
+  `).run(message, message, task.id);
   return null;
 }
 
@@ -237,30 +252,30 @@ function mapImagineTemplateJobRow(task: any): GenerationTask {
 }
 
 async function getProjectIdByRef(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string
 ): Promise<string | null> {
-  const project = await db.prepare(`
+  const project = db.prepare(`
     SELECT id
     FROM projects
     WHERE (id = ? OR name = ?) AND user_id = ? AND deleted_at IS NULL
     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectRef, projectRef, userId, projectRef).first() as { id: string } | null;
+  `).get(projectRef, projectRef, userId, projectRef) as { id: string } | null;
 
   return project?.id || null;
 }
 
-async function getActiveTasksForUser(db: D1Database, userId: string): Promise<GenerationTask[]> {
-  const { results: generationTasks } = await db.prepare(`
+async function getActiveTasksForUser(db: Database, userId: string): Promise<GenerationTask[]> {
+  const generationTasks = db.prepare(`
     SELECT t.*, p.name as project_name
     FROM generation_tasks t
     JOIN projects p ON t.project_id = p.id
     WHERE t.user_id = ? AND t.status IN ('running', 'paused')
     AND t.cancel_requested = 0
     ORDER BY CASE WHEN t.status = 'running' THEN 0 ELSE 1 END, t.created_at DESC
-  `).bind(userId).all();
+  `).all(userId);
 
   const activeGenerationRows: any[] = [];
   for (const row of (generationTasks as any[])) {
@@ -274,7 +289,7 @@ async function getActiveTasksForUser(db: D1Database, userId: string): Promise<Ge
 
   // Template jobs are optional for old DBs that haven't run migration 0021 yet.
   try {
-    const { results: templateJobs } = await db.prepare(`
+    const templateJobs = db.prepare(`
       SELECT
         id,
         snapshot_date,
@@ -291,7 +306,7 @@ async function getActiveTasksForUser(db: D1Database, userId: string): Promise<Ge
         AND status IN ('queued', 'running')
       ORDER BY created_at DESC
       LIMIT 20
-    `).bind(userId).all();
+    `).all(userId);
 
     mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
   } catch (error) {
@@ -306,11 +321,11 @@ async function getActiveTasksForUser(db: D1Database, userId: string): Promise<Ge
 }
 
 async function getActiveChapterTaskForProject(
-  db: D1Database,
+  db: Database,
   projectId: string,
   userId: string
 ): Promise<GenerationTask | null> {
-  const task = await db.prepare(`
+  const task = db.prepare(`
     SELECT t.*, p.name as project_name
     FROM generation_tasks t
     JOIN projects p ON t.project_id = p.id
@@ -319,7 +334,7 @@ async function getActiveChapterTaskForProject(
     AND t.cancel_requested = 0
     ORDER BY CASE WHEN t.status = 'running' THEN 0 ELSE 1 END, t.created_at DESC
     LIMIT 1
-  `).bind(projectId, userId).first() as any;
+  `).get(projectId, userId) as any;
 
   const activeTask = task ? await expireStaleTaskRow(db, task) : null;
   return activeTask ? mapGenerationTaskRow(activeTask) : null;
@@ -353,20 +368,20 @@ async function buildTaskHistoryResponse(c: any) {
   try {
     // 1. Fetch history from generation_tasks
     // Use LEFT JOIN to include tasks even if project was deleted
-    const { results: generationTasks } = await c.env.DB.prepare(`
+    const generationTasks = getDb().prepare(`
       SELECT t.*, p.name as project_name
       FROM generation_tasks t
       LEFT JOIN projects p ON t.project_id = p.id
       WHERE t.user_id = ?
       ORDER BY t.created_at DESC
       LIMIT ?
-    `).bind(userId, limit).all();
+    `).all(userId, limit);
 
     const mergedTasks: GenerationTask[] = (generationTasks as any[]).map(mapGenerationTaskRow);
 
     // 2. Fetch history from ai_imagine_template_jobs
     try {
-      const { results: templateJobs } = await c.env.DB.prepare(`
+      const templateJobs = getDb().prepare(`
         SELECT
           id,
           snapshot_date,
@@ -382,7 +397,7 @@ async function buildTaskHistoryResponse(c: any) {
         WHERE requested_by_user_id = ?
         ORDER BY created_at DESC
         LIMIT ?
-      `).bind(userId, limit).all();
+      `).all(userId, limit);
 
       mergedTasks.push(...((templateJobs as any[]).map(mapImagineTemplateJobRow)));
     } catch (error) {
@@ -433,29 +448,29 @@ tasksRoutes.post('/tasks/:id/cancel', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const task = await c.env.DB.prepare(`
+    const task = getDb().prepare(`
       SELECT t.status, p.name as project_name
       FROM generation_tasks t
       LEFT JOIN projects p ON t.project_id = p.id
       WHERE t.id = ? AND t.user_id = ?
-    `).bind(taskId, userId).first() as { status: string; project_name: string | null } | null;
+    `).get(taskId, userId) as { status: string; project_name: string | null } | null;
 
     if (!task) {
       return c.json({ success: false, error: 'Task not found' }, 404);
     }
 
     if (task.status === 'running' || task.status === 'paused') {
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE generation_tasks
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND user_id = ?
-      `).bind(taskId, userId).run();
+      `).run(taskId, userId);
 
       // 同步取消关联的 qc_reports
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
         WHERE task_id = ? AND status IN ('running', 'repairing')
-      `).bind(taskId).run();
+      `).run(taskId);
       
       if (task.project_name) {
         eventBus.progress({
@@ -484,13 +499,13 @@ tasksRoutes.get('/tasks/:id', async (c) => {
   const userId = c.get('userId');
 
   try {
-    const task = await c.env.DB.prepare(`
+    const task = getDb().prepare(`
       SELECT t.*, p.name as project_name
       FROM generation_tasks t
       JOIN projects p ON t.project_id = p.id
       WHERE t.id = ? AND t.user_id = ?
       LIMIT 1
-    `).bind(taskId, userId).first() as any;
+    `).get(taskId, userId) as any;
 
     if (!task) {
       return c.json({ success: false, error: 'Task not found' }, 404);
@@ -526,12 +541,12 @@ tasksRoutes.get('/tasks/:id', async (c) => {
   }
 });
 
-export async function getTaskRuntimeControl(db: D1Database, taskId: number): Promise<TaskRuntimeControl> {
-  const row = await db.prepare(`
+export async function getTaskRuntimeControl(db: Database, taskId: number): Promise<TaskRuntimeControl> {
+  const row = db.prepare(`
     SELECT status, cancel_requested
     FROM generation_tasks
     WHERE id = ?
-  `).bind(taskId).first() as { status: string; cancel_requested: number | null } | null;
+  `).get(taskId) as { status: string; cancel_requested: number | null } | null;
 
   if (!row) {
     return { exists: false, status: null, cancelRequested: false };
@@ -582,11 +597,11 @@ tasksRoutes.post('/projects/:name/tasks/:id/pause', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE generation_tasks 
       SET status = 'paused', updated_at = (unixepoch() * 1000)
       WHERE id = ? AND project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
-    `).bind(taskId, projectId, userId).run();
+    `).run(taskId, projectId, userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -606,28 +621,28 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const task = await c.env.DB.prepare(`
+    const task = getDb().prepare(`
       SELECT status FROM generation_tasks WHERE id = ? AND project_id = ? AND user_id = ?
-    `).bind(taskId, projectId, userId).first() as { status: string } | null;
+    `).get(taskId, projectId, userId) as { status: string } | null;
 
     if (!task) {
       return c.json({ success: false, error: 'Task not found' }, 404);
     }
 
     if (task.status === 'running') {
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE generation_tasks
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
-      `).bind(taskId, projectId, userId).run();
+      `).run(taskId, projectId, userId);
 
       // 同步取消关联的 qc_reports
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
         WHERE task_id = ? AND status IN ('running', 'repairing')
-      `).bind(taskId).run();
+      `).run(taskId);
 
-      const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+      const project = getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | null;
       if (project) {
         eventBus.progress({
           userId,
@@ -643,19 +658,19 @@ tasksRoutes.post('/projects/:name/tasks/:id/cancel', async (c) => {
     }
 
     if (task.status === 'paused') {
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE generation_tasks
         SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
         WHERE id = ? AND project_id = ? AND user_id = ?
-      `).bind(taskId, projectId, userId).run();
+      `).run(taskId, projectId, userId);
 
       // 同步取消关联的 qc_reports
-      await c.env.DB.prepare(`
+      getDb().prepare(`
         UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
         WHERE task_id = ? AND status IN ('running', 'repairing')
-      `).bind(taskId).run();
+      `).run(taskId);
 
-      const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+      const project = getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | null;
       if (project) {
         eventBus.progress({
           userId,
@@ -688,9 +703,9 @@ tasksRoutes.delete('/projects/:name/tasks/:id', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       DELETE FROM generation_tasks WHERE id = ? AND project_id = ? AND user_id = ?
-    `).bind(taskId, projectId, userId).run();
+    `).run(taskId, projectId, userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -709,25 +724,25 @@ tasksRoutes.post('/projects/:name/active-tasks/cancel', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE generation_tasks
       SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'running'
-    `).bind(projectId, userId).run();
+    `).run(projectId, userId);
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE generation_tasks
       SET cancel_requested = 1, status = 'failed', current_message = '任务已取消', error_message = '任务已取消', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status = 'paused'
-    `).bind(projectId, userId).run();
+    `).run(projectId, userId);
 
     // 同步取消该项目下所有进行中的 qc_reports
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE qc_reports SET status = 'failed', updated_at = (unixepoch() * 1000)
       WHERE project_id = ? AND user_id = ? AND status IN ('running', 'repairing')
-    `).bind(projectId, userId).run();
+    `).run(projectId, userId);
     
-    const project = await c.env.DB.prepare('SELECT name FROM projects WHERE id = ?').bind(projectId).first() as { name: string } | null;
+    const project = getDb().prepare('SELECT name FROM projects WHERE id = ?').get(projectId) as { name: string } | null;
     if (project) {
       eventBus.progress({
         userId,
@@ -757,10 +772,10 @@ tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       DELETE FROM generation_tasks 
       WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused')
-    `).bind(projectId, userId).run();
+    `).run(projectId, userId);
 
     return c.json({ success: true });
   } catch (error) {
@@ -770,21 +785,21 @@ tasksRoutes.delete('/projects/:name/active-tasks', async (c) => {
 
 // Helper functions for use in generation.ts
 export async function createGenerationTask(
-  db: D1Database,
+  db: Database,
   projectId: string,
   userId: string,
   targetCount: number,
   startChapter: number
 ): Promise<number> {
   // First, check if there's an existing running task for this project
-  const existing = await db.prepare(`
+  const existing = db.prepare(`
     SELECT id, target_count, start_chapter, status, cancel_requested, completed_chapters
     FROM generation_tasks
     WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
     AND task_type = 'chapters'
     ORDER BY created_at DESC
     LIMIT 1
-  `).bind(projectId, userId).first() as { id: number; target_count: number; start_chapter: number; completed_chapters: string } | null;
+  `).get(projectId, userId) as { id: number; target_count: number; start_chapter: number; completed_chapters: string } | null;
 
   if (existing) {
     const completedChapters = JSON.parse(existing.completed_chapters || '[]') as number[];
@@ -801,11 +816,11 @@ export async function createGenerationTask(
     if (startChapter === maxAttempted + 1) {
       const newTargetCount = existing.target_count + targetCount;
       console.log(`Extending task ${existing.id} target_count to ${newTargetCount}`);
-      await db.prepare(`
+      db.prepare(`
         UPDATE generation_tasks 
         SET target_count = ?, updated_at = (unixepoch() * 1000)
         WHERE id = ?
-      `).bind(newTargetCount, existing.id).run();
+      `).run(newTargetCount, existing.id);
       return existing.id;
     }
 
@@ -813,25 +828,25 @@ export async function createGenerationTask(
     // To maintain serial integrity, we terminate the old one and start new, 
     // OR we could queue it. For now, following the original "replace" logic but with logic check.
     console.log(`New task request ${startChapter} is not a simple extension of current task ${existing.start_chapter}-${maxAttempted}. Replacing.`);
-    await db.prepare(`
+    db.prepare(`
       UPDATE generation_tasks 
       SET status = 'failed', cancel_requested = 1, current_message = '已被新任务替代，任务终止', error_message = '已被新任务替代，任务终止', updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(existing.id).run();
+    `).run(existing.id);
   }
 
   // Create new task
-  const result = await db.prepare(`
+  const result = db.prepare(`
     INSERT INTO generation_tasks (project_id, user_id, target_count, start_chapter, cancel_requested, task_type)
     VALUES (?, ?, ?, ?, 0, 'chapters')
-  `).bind(projectId, userId, targetCount, startChapter).run();
+  `).run(projectId, userId, targetCount, startChapter);
 
-  const newTaskId = result.meta.last_row_id as number;
+  const newTaskId = result.lastInsertRowid as number;
   return newTaskId;
 }
 
 export async function createBackgroundTask(
-  db: D1Database,
+  db: Database,
   projectId: string,
   userId: string,
   taskType: TaskType,
@@ -839,20 +854,20 @@ export async function createBackgroundTask(
   startChapter: number = 0,
   initialMessage: string | null = null
 ): Promise<{ taskId: number; created: boolean }> {
-  const existing = await db.prepare(`
+  const existing = db.prepare(`
     SELECT *
     FROM generation_tasks
     WHERE project_id = ? AND user_id = ? AND status IN ('running', 'paused') AND cancel_requested = 0 AND task_type = ?
     ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectId, userId, taskType).first() as any;
+  `).get(projectId, userId, taskType) as any;
 
   const activeTask = existing ? await expireStaleTaskRow(db, existing) : null;
   if (activeTask?.id) {
     return { taskId: activeTask.id, created: false };
   }
 
-  const result = await db.prepare(`
+  const result = db.prepare(`
     INSERT INTO generation_tasks (
       project_id,
       user_id,
@@ -863,22 +878,22 @@ export async function createBackgroundTask(
       current_message
     )
     VALUES (?, ?, ?, ?, 0, ?, ?)
-  `).bind(projectId, userId, targetCount, startChapter, taskType, initialMessage).run();
+  `).run(projectId, userId, targetCount, startChapter, taskType, initialMessage);
 
-  const newTaskId = result.meta.last_row_id as number;
+  const newTaskId = result.lastInsertRowid as number;
   return { taskId: newTaskId, created: true };
 }
 
 export async function updateTaskProgress(
-  db: D1Database,
+  db: Database,
   taskId: number,
   completedChapter: number,
   failed: boolean = false,
   message?: string
 ): Promise<void> {
-  const task = await db.prepare(`
+  const task = db.prepare(`
     SELECT completed_chapters, failed_chapters FROM generation_tasks WHERE id = ?
-  `).bind(taskId).first() as { completed_chapters: string; failed_chapters: string } | null;
+  `).get(taskId) as { completed_chapters: string; failed_chapters: string } | null;
 
   if (!task) return;
 
@@ -886,7 +901,7 @@ export async function updateTaskProgress(
     const failedChapters = parseJsonNumberArray(task.failed_chapters);
     failedChapters.push(completedChapter);
     const normalizedFailedChapters = Array.from(new Set(failedChapters)).sort((a, b) => a - b);
-    await db.prepare(`
+    db.prepare(`
       UPDATE generation_tasks 
       SET failed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
@@ -895,7 +910,7 @@ export async function updateTaskProgress(
     const completedChapters = parseJsonNumberArray(task.completed_chapters);
     completedChapters.push(completedChapter);
     const normalizedCompletedChapters = Array.from(new Set(completedChapters)).sort((a, b) => a - b);
-    await db.prepare(`
+    db.prepare(`
       UPDATE generation_tasks 
       SET completed_chapters = ?, current_progress = ?, current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
@@ -904,12 +919,12 @@ export async function updateTaskProgress(
 }
 
 export async function completeTask(
-  db: D1Database,
+  db: Database,
   taskId: number,
   success: boolean,
   errorMessage?: string
 ): Promise<void> {
-  await db.prepare(`
+  db.prepare(`
     UPDATE generation_tasks 
     SET status = ?, error_message = ?, current_message = ?, updated_at = (unixepoch() * 1000)
     WHERE id = ?
@@ -923,25 +938,25 @@ export async function completeTask(
 
 // Check if there is a running task for a project (optionally scoped to a user)
 export async function checkRunningTask(
-  db: D1Database,
+  db: Database,
   projectId: string,
   userId?: string
 ): Promise<{ isRunning: boolean; taskId?: number; task?: any }> {
   const task = (userId
-    ? await db.prepare(`
+    ? db.prepare(`
         SELECT * FROM generation_tasks
         WHERE project_id = ? AND user_id = ? AND status = 'running' AND cancel_requested = 0
         AND task_type = 'chapters'
         ORDER BY updated_at DESC
         LIMIT 1
-      `).bind(projectId, userId).first()
-    : await db.prepare(`
+      `).get(projectId, userId)
+    : db.prepare(`
         SELECT * FROM generation_tasks
         WHERE project_id = ? AND status = 'running' AND cancel_requested = 0
         AND task_type = 'chapters'
         ORDER BY updated_at DESC
         LIMIT 1
-      `).bind(projectId).first()) as any;
+      `).get(projectId)) as any;
 
   const activeTask = task ? await expireStaleTaskRow(db, task) : null;
 
@@ -967,38 +982,38 @@ export async function checkRunningTask(
 
 // Update current progress message for live sync
 export async function updateTaskMessage(
-  db: D1Database,
+  db: Database,
   taskId: number,
   message: string,
   currentChapter?: number
 ): Promise<void> {
   if (currentChapter !== undefined) {
-    await db.prepare(`
+    db.prepare(`
       UPDATE generation_tasks 
       SET current_message = ?, current_progress = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(message, currentChapter, taskId).run();
+    `).run(message, currentChapter, taskId);
   } else {
-    await db.prepare(`
+    db.prepare(`
       UPDATE generation_tasks 
       SET current_message = ?, updated_at = (unixepoch() * 1000)
       WHERE id = ?
-    `).bind(message, taskId).run();
+    `).run(message, taskId);
   }
 }
 
 export async function getTaskById(
-  db: D1Database,
+  db: Database,
   taskId: number,
   userId: string
 ): Promise<GenerationTask | null> {
-  const task = await db.prepare(`
+  const task = db.prepare(`
     SELECT t.*, p.name as project_name
     FROM generation_tasks t
     JOIN projects p ON t.project_id = p.id
     WHERE t.id = ? AND t.user_id = ?
     LIMIT 1
-  `).bind(taskId, userId).first() as any;
+  `).get(taskId, userId) as any;
 
   const activeTask = task ? await expireStaleTaskRow(db, task) : null;
   if (!activeTask) return null;

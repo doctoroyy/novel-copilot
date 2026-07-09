@@ -16,6 +16,7 @@ import {
   Sparkles,
   Trash2,
   X,
+  Library,
 } from 'lucide-react';
 import {
   Dialog,
@@ -26,6 +27,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { ProjectDetail } from '@/lib/api';
+import { extractStoryVault, acceptStoryExtract } from '@/lib/api';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { ChapterEditor } from '@/components/ChapterEditor';
 
@@ -111,6 +113,8 @@ export function ChapterListView({
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
+  const [extracting, setExtracting] = useState<number | null>(null);
+  const [extractMsg, setExtractMsg] = useState<string | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [volumeToDelete, setVolumeToDelete] = useState<{ index: number; title: string; fromChapter: number } | null>(null);
@@ -593,6 +597,32 @@ export function ChapterListView({
                   {copySuccess ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                   <span className="hidden sm:inline">{copySuccess ? '已复制' : '复制'}</span>
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={extracting !== null || !viewingChapter}
+                  onClick={async () => {
+                    if (!viewingChapter) return;
+                    setExtracting(viewingChapter.index);
+                    setExtractMsg(null);
+                    try {
+                      const proposal = await extractStoryVault(project.id, {
+                        text: viewingChapter.content,
+                        sourceType: 'chapter',
+                        sourceRef: `chapter-${viewingChapter.index}`,
+                      });
+                      const accepted = await acceptStoryExtract(project.id, proposal.id, {});
+                      setExtractMsg(`已提取并写入资料库：${accepted.entities.length} 个实体、${accepted.threads.length} 条线索`);
+                    } catch (e) {
+                      setExtractMsg(`提取失败：${(e as Error).message}`);
+                    } finally {
+                      setExtracting(null);
+                    }
+                  }}
+                >
+                  {extracting === viewingChapter?.index ? <Loader2 className="h-4 w-4 animate-spin" /> : <Library className="h-4 w-4" />}
+                  <span className="hidden sm:inline">提取到资料库</span>
+                </Button>
               </div>
             </div>
             <DialogDescription className="sr-only">
@@ -604,6 +634,11 @@ export function ChapterListView({
               {viewingChapter?.content}
             </pre>
           </div>
+          {extractMsg && (
+            <div className="mt-3 rounded-md border border-border bg-muted/50 p-2 text-xs text-muted-foreground">
+              {extractMsg}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

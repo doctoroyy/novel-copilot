@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { createBackgroundTask } from './tasks.js';
@@ -10,16 +12,16 @@ function generateReportId(): string {
 }
 
 async function getProjectIdByRef(
-  db: D1Database,
+  db: Database,
   projectRef: string,
   userId: string
 ): Promise<string | null> {
-  const project = await db.prepare(`
+  const project = db.prepare(`
     SELECT id FROM projects
     WHERE (id = ? OR name = ?) AND user_id = ? AND deleted_at IS NULL
     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
     LIMIT 1
-  `).bind(projectRef, projectRef, userId, projectRef).first() as { id: string } | null;
+  `).get(projectRef, projectRef, userId, projectRef) as { id: string } | null;
   return project?.id || null;
 }
 
@@ -53,10 +55,10 @@ qcRoutes.post('/:name/qc/scan', async (c) => {
     );
 
     // Create report row
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       INSERT INTO qc_reports (id, project_id, user_id, scan_mode, report_json, status, task_id)
       VALUES (?, ?, ?, ?, '{}', 'running', ?)
-    `).bind(reportId, projectId, userId, scanMode, taskId).run();
+    `).run(reportId, projectId, userId, scanMode, taskId);
 
     // Enqueue
     await c.env.GENERATION_QUEUE.send({
@@ -85,14 +87,14 @@ qcRoutes.get('/:name/qc/report', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const report = await c.env.DB.prepare(`
+    const report = getDb().prepare(`
       SELECT id, scan_mode, report_json, overall_score, total_issues,
              critical_count, major_count, minor_count, status, created_at, updated_at, task_id
       FROM qc_reports
       WHERE project_id = ? AND user_id = ?
       ORDER BY created_at DESC
       LIMIT 1
-    `).bind(projectId, userId).first() as any;
+    `).get(projectId, userId) as any;
 
     if (!report) {
       return c.json({ success: true, report: null });
@@ -100,14 +102,14 @@ qcRoutes.get('/:name/qc/report', async (c) => {
 
     // 同步检查关联 task 状态：如果 task 已被取消/失败，修正 report 状态
     if ((report.status === 'running' || report.status === 'repairing') && report.task_id) {
-      const task = await c.env.DB.prepare(
+      const task = getDb().prepare(
         'SELECT status, cancel_requested FROM generation_tasks WHERE id = ?'
-      ).bind(report.task_id).first() as { status: string; cancel_requested: number } | null;
+      ).get(report.task_id) as { status: string; cancel_requested: number } | null;
       if (task && (task.cancel_requested || task.status === 'failed' || task.status === 'completed')) {
         const newStatus = task.status === 'completed' ? 'completed' : 'failed';
-        await c.env.DB.prepare(
+        getDb().prepare(
           'UPDATE qc_reports SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
-        ).bind(newStatus, report.id).run();
+        ).run(newStatus, report.id);
         report.status = newStatus;
       }
     }
@@ -150,12 +152,12 @@ qcRoutes.get('/:name/qc/report/:reportId', async (c) => {
       return c.json({ success: false, error: 'Project not found' }, 404);
     }
 
-    const report = await c.env.DB.prepare(`
+    const report = getDb().prepare(`
       SELECT id, scan_mode, report_json, overall_score, total_issues,
              critical_count, major_count, minor_count, status, created_at, updated_at, task_id
       FROM qc_reports
       WHERE id = ? AND project_id = ? AND user_id = ?
-    `).bind(reportId, projectId, userId).first() as any;
+    `).get(reportId, projectId, userId) as any;
 
     if (!report) {
       return c.json({ success: false, error: 'Report not found' }, 404);
@@ -163,14 +165,14 @@ qcRoutes.get('/:name/qc/report/:reportId', async (c) => {
 
     // 同步检查关联 task 状态
     if ((report.status === 'running' || report.status === 'repairing') && report.task_id) {
-      const task = await c.env.DB.prepare(
+      const task = getDb().prepare(
         'SELECT status, cancel_requested FROM generation_tasks WHERE id = ?'
-      ).bind(report.task_id).first() as { status: string; cancel_requested: number } | null;
+      ).get(report.task_id) as { status: string; cancel_requested: number } | null;
       if (task && (task.cancel_requested || task.status === 'failed' || task.status === 'completed')) {
         const newStatus = task.status === 'completed' ? 'completed' : 'failed';
-        await c.env.DB.prepare(
+        getDb().prepare(
           'UPDATE qc_reports SET status = ?, updated_at = (unixepoch() * 1000) WHERE id = ?'
-        ).bind(newStatus, report.id).run();
+        ).run(newStatus, report.id);
         report.status = newStatus;
       }
     }
@@ -230,9 +232,9 @@ qcRoutes.post('/:name/qc/fix', async (c) => {
     );
 
     // Mark report as repairing so frontend can poll
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE qc_reports SET status = 'repairing', task_id = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(taskId, reportId).run();
+    `).run(taskId, reportId);
 
     await c.env.GENERATION_QUEUE.send({
       taskType: 'qc_fix',
@@ -278,9 +280,9 @@ qcRoutes.post('/:name/qc/fix-all', async (c) => {
     );
 
     // Mark report as repairing so frontend can poll
-    await c.env.DB.prepare(`
+    getDb().prepare(`
       UPDATE qc_reports SET status = 'repairing', task_id = ?, updated_at = (unixepoch() * 1000) WHERE id = ?
-    `).bind(taskId, reportId).run();
+    `).run(taskId, reportId);
 
     await c.env.GENERATION_QUEUE.send({
       taskType: 'qc_fix',

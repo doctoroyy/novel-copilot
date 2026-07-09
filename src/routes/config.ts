@@ -1,6 +1,7 @@
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
-import { generateText, AIProvider } from '../services/aiClient';
+import { generateText, AIProvider } from '../services/aiClient.js';
 import { getProviderPresets, getProviderPreset, normalizeProviderId, normalizeGeminiBaseUrl, buildOpenAiModelsUrl } from '../services/providerCatalog.js';
 
 export const configRoutes = new Hono<{ Bindings: Env }>();
@@ -32,11 +33,11 @@ configRoutes.post('/test', async (c) => {
 
     // If providerId is given and no apiKey, look up from DB
     if (providerId && !apiKey) {
-      const row = await c.env.DB.prepare(
+      const row = getDb().prepare(
         `SELECT p.api_key_encrypted, p.base_url, p.protocol,
                 (SELECT m.model_name FROM model_registry m WHERE m.provider_id = p.id AND m.is_active = 1 ORDER BY m.is_default DESC LIMIT 1) as first_model
          FROM provider_registry p WHERE p.id = ?`
-      ).bind(providerId).first() as any;
+      ).get(providerId) as any;
 
       if (!row || !row.api_key_encrypted) {
         return c.json({ success: false, message: '该 Provider 未配置 API Key' }, 400);
@@ -187,3 +188,36 @@ async function testAIConnection(config: {
     return { success: false, message: `连接失败: ${msg}` };
   }
 }
+
+// ==================== License (Phase 4) ====================
+
+configRoutes.get('/license', async (c) => {
+  try {
+    const { getLicenseStatus } = await import('../services/licenseService.js');
+    const status = getLicenseStatus();
+    return c.json({ success: true, license: status });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});
+
+configRoutes.post('/license/activate', async (c) => {
+  try {
+    const { activateLicense } = await import('../services/licenseService.js');
+    const body = await c.req.json();
+    const record = activateLicense(String(body.key || ''));
+    return c.json({ success: true, license: record });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 400);
+  }
+});
+
+configRoutes.delete('/license', async (c) => {
+  try {
+    const { deactivateLicense } = await import('../services/licenseService.js');
+    deactivateLicense();
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: (error as Error).message }, 500);
+  }
+});

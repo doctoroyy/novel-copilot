@@ -1,5 +1,11 @@
-import { completeSimple, Model as PiAiModel, streamSimple, SimpleStreamOptions } from '@mariozechner/pi-ai';
+import type { Database } from 'better-sqlite3';
 import { detectProviderByBaseUrl, getProviderPreset, normalizeGeminiBaseUrl, normalizeProviderId } from './providerCatalog.js';
+
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 export type AIProvider = string;
 
@@ -88,54 +94,46 @@ const SANITIZED_HEADERS: Record<string, string> = {
 };
 
 /**
- * Convert internal AIConfig to pi-ai Model
+ * Get LangChain ChatModel instance for the given AIConfig
  */
-function toPiAiModel(config: AIConfig): PiAiModel<any> {
-  let api: any = 'openai-completions';
+export function getLangChainModel(config: AIConfig, options?: { temperature?: number, maxTokens?: number }): BaseChatModel {
   const normalizedProvider = normalizeProviderId(config.provider);
   const providerByUrl = detectProviderByBaseUrl(config.baseUrl);
   const effectiveProvider = providerByUrl || normalizedProvider;
   const preset = getProviderPreset(effectiveProvider) || getProviderPreset(normalizedProvider);
 
-  let provider: any = effectiveProvider || 'openai';
+  let provider = effectiveProvider || 'openai';
   let baseUrl = config.baseUrl || preset?.defaultBaseUrl;
-  let maxTokens = DEFAULT_MAX_OUTPUT_TOKENS;
 
   if (preset?.protocol === 'gemini' || effectiveProvider === 'gemini') {
-    api = 'google-generative-ai';
-    provider = 'google';
-    baseUrl = normalizeGeminiBaseUrl(baseUrl);
-    maxTokens = GEMINI_DEFAULT_MAX_OUTPUT_TOKENS;
+    return new ChatGoogleGenerativeAI({
+      model: config.model,
+      apiKey: config.apiKey,
+      baseUrl: normalizeGeminiBaseUrl(baseUrl) || undefined,
+      temperature: options?.temperature ?? 0.8,
+      maxOutputTokens: options?.maxTokens ?? GEMINI_DEFAULT_MAX_OUTPUT_TOKENS,
+    }) as unknown as BaseChatModel;
   } else if (preset?.protocol === 'anthropic' || effectiveProvider === 'anthropic') {
-    api = 'anthropic';
-    provider = 'anthropic';
+    return new ChatAnthropic({
+      model: config.model,
+      apiKey: config.apiKey,
+      anthropicApiUrl: baseUrl || undefined,
+      temperature: options?.temperature ?? 0.8,
+      maxTokens: options?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    }) as unknown as BaseChatModel;
   } else {
-    api = 'openai-completions';
-    provider = effectiveProvider || 'openai';
+    // Default to OpenAI compatible
+    return new ChatOpenAI({
+      model: config.model,
+      apiKey: config.apiKey,
+      configuration: {
+        baseURL: baseUrl,
+        defaultHeaders: SANITIZED_HEADERS
+      },
+      temperature: options?.temperature ?? 0.8,
+      maxTokens: options?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    }) as unknown as BaseChatModel;
   }
-
-  if (!baseUrl && provider === 'custom') {
-    throw new Error('Custom provider requires baseUrl');
-  }
-  if (!baseUrl && !preset && effectiveProvider !== 'openai') {
-    throw new Error(`Provider "${config.provider}" requires baseUrl`);
-  }
-
-  return {
-    id: config.model,
-    name: config.model,
-    api,
-    provider,
-    baseUrl: baseUrl || '',
-    reasoning: true, // Enable reasoning field support
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: undefined, // 移除所有 token 上限限制
-    compat: {
-      supportsDeveloperRole: false
-    }
-  } as any;
 }
 
 function estimateTokenCount(text: string | undefined): number {
@@ -169,41 +167,32 @@ export async function generateText(
   }
 
   const startTime = Date.now();
-  const model = toPiAiModel(config);
+  const requestedMaxTokens = normalizeRequestedMaxTokens(args.maxTokens);
+  const model = getLangChainModel(config, {
+    temperature: args.temperature,
+    maxTokens: requestedMaxTokens,
+  });
+  
   const abortController = new AbortController();
   const timeoutMs = callOptions?.timeoutMs ?? AI_REQUEST_TIMEOUT_MS;
   const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
-  const requestedMaxTokens = normalizeRequestedMaxTokens(args.maxTokens);
-  const options: SimpleStreamOptions = {
-    apiKey: config.apiKey,
-    temperature: args.temperature || 0.8,
-    maxTokens: requestedMaxTokens,
-    headers: SANITIZED_HEADERS,
-    signal: abortController.signal,
-  };
 
   let resultText = '';
   let stopReason: string | undefined;
   try {
-    const response = await completeSimple(model, {
-      systemPrompt: args.system,
-      messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
-    }, options);
+    const messages = [
+      new SystemMessage(args.system),
+      new HumanMessage(args.prompt)
+    ];
 
-    stopReason = response.stopReason;
+    const response = await model.invoke(messages, { signal: abortController.signal });
+    
+    resultText = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+    stopReason = String(response.response_metadata?.finishReason || 'stop');
 
-    if (response.stopReason === 'error') {
-      throw new Error(response.errorMessage || 'An error occurred during generation');
+    if (isTruncatedStopReason(stopReason)) {
+      throw new Error(`AI 输出被截断（stopReason=${stopReason}）`);
     }
-    if (isTruncatedStopReason(response.stopReason)) {
-      throw new Error(`AI 输出被截断（stopReason=${response.stopReason}）`);
-    }
-    if (response.stopReason === 'aborted') {
-      throw new Error(response.errorMessage || 'Generation aborted');
-    }
-
-    // pi-ai automatically collects content from reasoning fields and content fields
-    resultText = response.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
 
     // Record successful trace
     if (callOptions?.tracer) {
@@ -479,31 +468,26 @@ export async function* generateTextStream(
     throw new Error('API Key not configured. Please set up in Settings.');
   }
 
-  const model = toPiAiModel(config);
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), AI_REQUEST_TIMEOUT_MS);
   const requestedMaxTokens = normalizeRequestedMaxTokens(args.maxTokens);
-  const options: SimpleStreamOptions = {
-    apiKey: config.apiKey,
-    temperature: args.temperature || 0.8,
+
+  const model = getLangChainModel(config, {
+    temperature: args.temperature,
     maxTokens: requestedMaxTokens,
-    headers: SANITIZED_HEADERS,
-    signal: abortController.signal,
-  };
+  });
 
   try {
-    const stream = streamSimple(model, {
-      systemPrompt: args.system,
-      messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
-    }, options);
+    const messages = [
+      new SystemMessage(args.system),
+      new HumanMessage(args.prompt)
+    ];
 
-    for await (const event of stream) {
-      if (event.type === 'text_delta') {
-        yield event.delta;
-      } else if (event.type === 'thinking_delta') {
-        // Skip thinking deltas for chapter generation
-      } else if (event.type === 'error') {
-        throw new Error(event.error.errorMessage || 'Streaming error');
+    const stream = await model.stream(messages, { signal: abortController.signal });
+
+    for await (const chunk of stream) {
+      if (typeof chunk.content === 'string' && chunk.content.length > 0) {
+        yield chunk.content;
       }
     }
   } finally {
@@ -566,18 +550,18 @@ export function getAIConfigFromHeaders(headers: Record<string, string | string[]
 /**
  * Get AI config from Model Registry (server-side, admin-configured)
  */
-export async function getAIConfigFromRegistry(db: D1Database, featureKey?: string): Promise<AIConfig | null> {
+export async function getAIConfigFromRegistry(db: Database, featureKey?: string): Promise<AIConfig | null> {
   try {
     let model: any = null;
 
     if (featureKey) {
-      const mapping = await db.prepare(
+      const mapping = db.prepare(
         `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id, fmm.temperature as override_temperature 
        FROM feature_model_mappings fmm
        JOIN model_registry m ON fmm.model_id = m.id
        JOIN provider_registry p ON m.provider_id = p.id
        WHERE fmm.feature_key = ? AND m.is_active = 1`
-      ).bind(featureKey).first();
+      ).get(featureKey);
 
       if (mapping) {
         model = mapping;
@@ -585,21 +569,21 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
     }
 
     if (!model) {
-      model = await db.prepare(
+      model = db.prepare(
         `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
          FROM model_registry m
          JOIN provider_registry p ON m.provider_id = p.id
          WHERE m.is_default = 1 AND m.is_active = 1 LIMIT 1`
-      ).first();
+      ).get();
     }
 
     if (!model) {
-      model = await db.prepare(
+      model = db.prepare(
         `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
          FROM model_registry m
          JOIN provider_registry p ON m.provider_id = p.id
          WHERE m.is_active = 1 LIMIT 1`
-      ).first();
+      ).get();
 
       if (!model) return null;
     }
@@ -620,17 +604,17 @@ export async function getAIConfigFromRegistry(db: D1Database, featureKey?: strin
  * Get a list of fallback AI configs (other active models) from Model Registry
  */
 export async function getFallbackAIConfigsFromRegistry(
-  db: D1Database,
+  db: Database,
   excludeModelName: string
 ): Promise<AIConfig[]> {
   try {
-    const { results } = await db.prepare(
+    const results = db.prepare(
       `SELECT m.*, p.api_key_encrypted as provider_api_key, p.base_url as provider_base_url, p.id as provider_id
        FROM model_registry m
        JOIN provider_registry p ON m.provider_id = p.id
        WHERE m.is_active = 1 AND m.model_name != ?
        ORDER BY m.is_default DESC, m.id ASC LIMIT 3`
-    ).bind(excludeModelName).all();
+    ).all(excludeModelName);
 
     if (!results || results.length === 0) return [];
 

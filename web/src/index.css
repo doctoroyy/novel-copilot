@@ -3,6 +3,19 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Electron titlebar safe area */
+:root {
+  --titlebar-height: 0px;
+}
+.electron-app {
+  --titlebar-height: 38px;
+}
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+}
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
 /* Modern Theme Variables */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);

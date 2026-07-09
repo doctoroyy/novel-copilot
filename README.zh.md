@@ -22,6 +22,24 @@
   <img src="./docs/images/app-chapter-content.png" alt="NovelCopilot App 正文页" width="220" />
 </p>
 
+## 桌面本地优先（Local-First）
+
+当前 local-first 桌面路径说明见：
+
+- [docs/desktop-local-first.md](./docs/desktop-local-first.md)
+- 产品重构计划：[docs/plans/2026-07-04-ai-novel-copilot-product-refactor-plan.md](./docs/plans/2026-07-04-ai-novel-copilot-product-refactor-plan.md)
+
+常用命令：
+
+```bash
+pnpm install
+pnpm rebuild:native   # 换 Node 版本后重建 better-sqlite3
+pnpm typecheck
+pnpm test:agent
+pnpm smoke:desktop
+pnpm dev:desktop
+```
+
 ## 核心能力
 
 ### 创作流程

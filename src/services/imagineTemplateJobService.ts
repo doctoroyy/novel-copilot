@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import { getDb } from '../db/db.js';
 import {
   refreshImagineTemplatesForDate,
   toChinaDateKey,
@@ -96,21 +98,21 @@ function parseJobRow(row: any): ImagineTemplateRefreshJob | null {
 }
 
 export async function getImagineTemplateRefreshJob(
-  db: D1Database,
+  db: Database,
   jobId: string
 ): Promise<ImagineTemplateRefreshJob | null> {
-  const row = await db.prepare(`
+  const row = db.prepare(`
     SELECT *
     FROM ai_imagine_template_jobs
     WHERE id = ?
     LIMIT 1
-  `).bind(cleanText(jobId)).first();
+  `).bind(cleanText(jobId)).get();
 
   return parseJobRow(row);
 }
 
 export async function listImagineTemplateRefreshJobs(
-  db: D1Database,
+  db: Database,
   options?: {
     limit?: number;
     requestedByUserId?: string;
@@ -144,14 +146,14 @@ export async function listImagineTemplateRefreshJobs(
     LIMIT ?
   `;
 
-  const rows = await db.prepare(sql).bind(...binds, limit).all();
-  return ((rows.results || []) as any[])
+  const rows = db.prepare(sql).all(...binds, limit);
+  return ((rows) as any[])
     .map((row) => parseJobRow(row))
     .filter(Boolean) as ImagineTemplateRefreshJob[];
 }
 
 export async function createImagineTemplateRefreshJob(
-  db: D1Database,
+  db: Database,
   options?: {
     snapshotDate?: string;
     force?: boolean;
@@ -166,7 +168,7 @@ export async function createImagineTemplateRefreshJob(
   const now = Date.now();
   const staleRunningBefore = now - 20 * 60 * 1000;
 
-  await db.prepare(`
+  db.prepare(`
     UPDATE ai_imagine_template_jobs
     SET
       status = 'failed',
@@ -177,7 +179,7 @@ export async function createImagineTemplateRefreshJob(
     WHERE status = 'running'
     AND started_at IS NOT NULL
     AND started_at < ?
-  `).bind(now, now, staleRunningBefore).run();
+  `).run(now, now, staleRunningBefore);
 
   const snapshotDate = normalizeSnapshotDate(options?.snapshotDate);
   const force = options?.force === undefined ? true : Boolean(options.force);
@@ -191,14 +193,14 @@ export async function createImagineTemplateRefreshJob(
   const dedupeActive = options?.dedupeActive !== false;
 
   if (dedupeActive) {
-    const existingRow = await db.prepare(`
+    const existingRow = db.prepare(`
       SELECT *
       FROM ai_imagine_template_jobs
       WHERE snapshot_date = ?
       AND status IN ('queued', 'running')
       ORDER BY created_at DESC
       LIMIT 1
-    `).bind(snapshotDate).first();
+    `).get(snapshotDate);
 
     const existing = parseJobRow(existingRow);
     if (existing) {
@@ -208,7 +210,7 @@ export async function createImagineTemplateRefreshJob(
 
   const id = crypto.randomUUID();
 
-  await db.prepare(`
+  db.prepare(`
     INSERT INTO ai_imagine_template_jobs (
       id,
       snapshot_date,
@@ -283,7 +285,7 @@ export async function runImagineTemplateRefreshJob(
   }
 
   const startedAt = Date.now();
-  await env.DB.prepare(`
+  getDb().prepare(`
     UPDATE ai_imagine_template_jobs
     SET
       status = 'running',
@@ -292,7 +294,7 @@ export async function runImagineTemplateRefreshJob(
       updated_at = ?
     WHERE id = ?
     AND status IN ('queued', 'running')
-  `).bind('正在抓取榜单并生成模板...', startedAt, startedAt, current.id).run();
+  `).run('正在抓取榜单并生成模板...', startedAt, startedAt, current.id);
 
   try {
     const result = await refreshImagineTemplatesForDate(env, {
@@ -304,7 +306,7 @@ export async function runImagineTemplateRefreshJob(
 
     const finishedAt = Date.now();
     if (result.status === 'error') {
-      await env.DB.prepare(`
+      getDb().prepare(`
         UPDATE ai_imagine_template_jobs
         SET
           status = 'failed',
@@ -316,7 +318,7 @@ export async function runImagineTemplateRefreshJob(
           finished_at = ?,
           updated_at = ?
         WHERE id = ?
-      `).bind(
+      `).run(
         '模板生成失败',
         result.errorMessage || 'Unknown error',
         result.templateCount,
@@ -325,9 +327,9 @@ export async function runImagineTemplateRefreshJob(
         finishedAt,
         finishedAt,
         current.id
-      ).run();
+      );
     } else {
-      await env.DB.prepare(`
+      getDb().prepare(`
         UPDATE ai_imagine_template_jobs
         SET
           status = 'completed',
@@ -339,7 +341,7 @@ export async function runImagineTemplateRefreshJob(
           finished_at = ?,
           updated_at = ?
         WHERE id = ?
-      `).bind(
+      `).run(
         result.skipped ? '已存在可用模板，无需重复生成' : '模板生成完成',
         result.templateCount,
         result.hotCount,
@@ -347,13 +349,13 @@ export async function runImagineTemplateRefreshJob(
         finishedAt,
         finishedAt,
         current.id
-      ).run();
+      );
     }
   } catch (error) {
     const finishedAt = Date.now();
     const errorMessage = (error as Error).message || 'Unknown error';
 
-    await env.DB.prepare(`
+    getDb().prepare(`
       UPDATE ai_imagine_template_jobs
       SET
         status = 'failed',
@@ -362,7 +364,7 @@ export async function runImagineTemplateRefreshJob(
         finished_at = ?,
         updated_at = ?
       WHERE id = ?
-    `).bind('模板生成失败', errorMessage, finishedAt, finishedAt, current.id).run();
+    `).run('模板生成失败', errorMessage, finishedAt, finishedAt, current.id);
   }
 
   return getImagineTemplateRefreshJob(env.DB, current.id);

@@ -1,3 +1,4 @@
+import { getDb } from '../db/db.js';
 import { Hono } from 'hono';
 import type { Env } from '../worker.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
@@ -14,9 +15,9 @@ creditRoutes.get('/balance', async (c) => {
   if (!userId) return c.json({ success: false, error: '未登录' }, 401);
 
   try {
-    const user = await c.env.DB.prepare(
+    const user = getDb().prepare(
       'SELECT credit_balance, vip_type, vip_expire_at, level FROM users WHERE id = ?'
-    ).bind(userId).first() as any;
+    ).get(userId) as any;
 
     if (!user) return c.json({ success: false, error: '用户不存在' }, 404);
 

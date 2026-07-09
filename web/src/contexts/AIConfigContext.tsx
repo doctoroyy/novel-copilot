@@ -293,7 +293,7 @@ export function useAIConfig() {
   return context;
 }
 
-// 将自定义 AI 配置转换为后端 getAIConfig 识别的请求头 (x-custom-*)
+// 将自定义 AI 配置转换为后端 getAIConfig 识别的请求头。
 export function getAIConfigHeaders(_config?: AIConfig): Record<string, string> {
   let target = _config;
   if (!target) {
@@ -306,9 +306,9 @@ export function getAIConfigHeaders(_config?: AIConfig): Record<string, string> {
   if (!target || !target.apiKey) return {};
 
   return {
-    'x-custom-provider': target.provider || '',
-    'x-custom-model': target.model || '',
-    'x-custom-api-key': target.apiKey || '',
-    'x-custom-base-url': target.baseUrl || '',
+    'X-AI-Provider': target.provider || '',
+    'X-AI-Model': target.model || '',
+    'X-AI-Key': target.apiKey || '',
+    'X-AI-BaseUrl': target.baseUrl || '',
   };
 }
