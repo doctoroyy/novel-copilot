@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import { launch } from '@cloudflare/playwright';
+
 import { generateTextWithRetry, getAIConfigFromRegistry, type AIConfig } from './aiClient.js';
 import { parse as parsePartialJson } from 'partial-json';
 
@@ -231,6 +231,7 @@ async function launchBrowserWithRetry(browserBinding: Fetcher): Promise<any> {
 
   for (let attempt = 0; attempt <= PLAYWRIGHT_LAUNCH_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
+      const { launch } = await import('@cloudflare/playwright');
       return await launch(browserBinding);
     } catch (error) {
       lastError = error as Error;

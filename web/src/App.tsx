@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { HashRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { AIConfigProvider } from './contexts/AIConfigContext';
 import { AuthProvider } from './contexts/AuthContext';
@@ -21,7 +21,7 @@ const SettingsPage = lazyWithRecovery('SettingsPage', () => import('./pages/proj
 const CharactersPage = lazyWithRecovery('CharactersPage', () => import('./pages/project/CharactersPage'));
 const AnimePage = lazyWithRecovery('AnimePage', () => import('./pages/project/AnimePage'));
 const QualityPage = lazyWithRecovery('QualityPage', () => import('./pages/project/QualityPage'));
-const AdminPage = lazyWithRecovery('AdminPage', async () => ({ default: (await import('./pages/AdminPage')).AdminPage }));
+// Local-first: Admin/credit 云端入口不进入桌面主路径
 
 function RouteLoadingFallback() {
   return (
@@ -42,12 +42,10 @@ export default function App() {
           <ServerEventsProvider>
             <ThemeProvider>
               <WebMCPProvider />
-              <BrowserRouter>
+              <Router>
                 <AppErrorBoundary>
                   <Suspense fallback={<RouteLoadingFallback />}>
                     <Routes>
-                      <Route path="/admin" element={<AdminPage />} />
-
                       <Route element={<ProjectLayout />}>
                         <Route index element={<DashboardPage />} />
                         <Route path="project/:projectId" element={<Navigate to="dashboard" replace />} />
@@ -60,13 +58,15 @@ export default function App() {
                         <Route path="project/:projectId/chapters" element={<ChaptersPage />} />
                         <Route path="project/:projectId/characters" element={<CharactersPage />} />
                         <Route path="project/:projectId/quality" element={<QualityPage />} />
+                        {/* Anime 暂沉到 Labs：路由保留兼容 */}
                         <Route path="project/:projectId/anime" element={<AnimePage />} />
                         <Route path="project/:projectId/anime/episode/:episodeId" element={<AnimePage />} />
                       </Route>
+                      <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </Suspense>
                 </AppErrorBoundary>
-              </BrowserRouter>
+              </Router>
             </ThemeProvider>
           </ServerEventsProvider>
         </GenerationProvider>

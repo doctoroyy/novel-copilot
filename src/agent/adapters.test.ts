@@ -33,7 +33,7 @@ test('AnthropicDirectAdapter correctly formats system prompt and tools for cachi
   await adapter.chat(systemPrompt, messages, tools);
 
   assert.strictEqual(mockCreate.mock.calls.length, 1);
-  const callArgs = mockCreate.mock.calls[0].arguments[0];
+  const callArgs = (mockCreate.mock.calls[0].arguments as any[])[0] as any;
 
   assert.strictEqual(callArgs.system, 'You are an AI.');
   assert.strictEqual(callArgs.messages.length, 1);
@@ -85,7 +85,7 @@ test('OpenAIDirectAdapter correctly formats tools and parses tool calls', async 
   const result = await adapter.chat(systemPrompt, messages, tools);
 
   assert.strictEqual(mockCreate.mock.calls.length, 1);
-  const callArgs = mockCreate.mock.calls[0].arguments[0];
+  const callArgs = (mockCreate.mock.calls[0].arguments as any[])[0] as any;
 
   assert.strictEqual(callArgs.messages.length, 2);
   assert.strictEqual(callArgs.messages[0].role, 'system');

@@ -12,7 +12,6 @@ import {
   BookMarked,
   Newspaper,
   Network,
-  Clapperboard,
   ShieldCheck,
   Settings,
   RefreshCw,
@@ -46,7 +45,7 @@ const tabs: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'summary', label: '剧情摘要', icon: Newspaper },
   { id: 'characters', label: '人物关系', icon: Network },
   { id: 'quality', label: '质量检测', icon: ShieldCheck },
-  { id: 'anime', label: 'AI动漫', icon: Clapperboard },
+  // Local-first Phase 0: Anime 暂沉 Labs，不进入主导航
 ];
 
 export function Header({ 
