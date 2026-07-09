@@ -2366,3 +2366,240 @@ export async function fixAllIssues(
   if (!data.success) throw new Error(data.error);
   return { taskId: data.taskId };
 }
+
+
+// ========== Story Vault ==========
+
+export type StoryEntityType =
+  | 'premise'
+  | 'style'
+  | 'world'
+  | 'character'
+  | 'location'
+  | 'item'
+  | 'faction'
+  | 'rule'
+  | 'thread'
+  | 'market'
+  | 'note';
+
+export interface StoryEntity {
+  id: string;
+  projectId: string;
+  type: StoryEntityType;
+  name: string;
+  aliases: string[];
+  content: string;
+  status: Record<string, unknown>;
+  triggerTerms: string[];
+  importance: number;
+  lastReferencedChapter: number | null;
+  sourceRefs: Array<Record<string, unknown>>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoryThread {
+  id: string;
+  projectId: string;
+  name: string;
+  kind: 'main' | 'sub' | 'foreshadow' | 'romance' | 'mystery' | 'other';
+  status: 'open' | 'active' | 'paused' | 'resolved' | 'abandoned';
+  summary: string;
+  stakes: string;
+  relatedEntityIds: string[];
+  firstChapter: number | null;
+  lastChapter: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoryNote {
+  id: string;
+  projectId: string;
+  title: string;
+  content: string;
+  tags: string[];
+  source: 'manual' | 'extract' | 'import' | 'agent';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoryExtractProposal {
+  id: string;
+  projectId: string;
+  sourceType: 'chapter' | 'bible' | 'chat' | 'manual';
+  sourceRef: string | null;
+  summary: string;
+  entities: Array<Partial<StoryEntity> & { type: StoryEntityType; name: string; content?: string }>;
+  threads: Array<Partial<StoryThread> & { name: string }>;
+  notes: Array<Partial<StoryNote> & { content: string }>;
+  status: 'pending' | 'accepted' | 'rejected' | 'partial';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoryVaultSnapshot {
+  projectId: string;
+  projectName: string;
+  bibleRaw: string;
+  entities: StoryEntity[];
+  threads: StoryThread[];
+  notes: StoryNote[];
+  counts: Record<string, number>;
+  health: {
+    entityCount: number;
+    openThreadCount: number;
+    openLoopCount: number;
+    generatedChapters: number;
+    totalChapters: number;
+    hasBible: boolean;
+    hasOutline: boolean;
+  };
+  migrated: boolean;
+}
+
+export async function fetchStoryVault(projectRef: string): Promise<StoryVaultSnapshot> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault`, {
+    headers: getAuthHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load story vault');
+  return data.vault as StoryVaultSnapshot;
+}
+
+export async function createStoryEntity(
+  projectRef: string,
+  input: {
+    type: StoryEntityType;
+    name: string;
+    content?: string;
+    aliases?: string[];
+    triggerTerms?: string[];
+    importance?: number;
+  },
+): Promise<StoryEntity> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/entities`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to create entity');
+  return data.entity as StoryEntity;
+}
+
+export async function updateStoryEntity(
+  projectRef: string,
+  entityId: string,
+  patch: Partial<{
+    type: StoryEntityType;
+    name: string;
+    content: string;
+    aliases: string[];
+    triggerTerms: string[];
+    importance: number;
+  }>,
+): Promise<StoryEntity> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/entities/${encodeURIComponent(entityId)}`, {
+    method: 'PUT',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update entity');
+  return data.entity as StoryEntity;
+}
+
+export async function deleteStoryEntity(projectRef: string, entityId: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/entities/${encodeURIComponent(entityId)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to delete entity');
+}
+
+export async function createStoryThread(
+  projectRef: string,
+  input: {
+    name: string;
+    kind?: StoryThread['kind'];
+    status?: StoryThread['status'];
+    summary?: string;
+    stakes?: string;
+  },
+): Promise<StoryThread> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/threads`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to create thread');
+  return data.thread as StoryThread;
+}
+
+export async function updateStoryThread(
+  projectRef: string,
+  threadId: string,
+  patch: Partial<{
+    name: string;
+    kind: StoryThread['kind'];
+    status: StoryThread['status'];
+    summary: string;
+    stakes: string;
+  }>,
+): Promise<StoryThread> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/threads/${encodeURIComponent(threadId)}`, {
+    method: 'PUT',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update thread');
+  return data.thread as StoryThread;
+}
+
+export async function deleteStoryThread(projectRef: string, threadId: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/threads/${encodeURIComponent(threadId)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to delete thread');
+}
+
+export async function extractStoryVault(
+  projectRef: string,
+  input: { text: string; sourceType?: StoryExtractProposal['sourceType']; sourceRef?: string },
+): Promise<StoryExtractProposal> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/extract`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to extract');
+  return data.proposal as StoryExtractProposal;
+}
+
+export async function acceptStoryExtract(
+  projectRef: string,
+  proposalId: string,
+  options?: { entityIndexes?: number[]; threadIndexes?: number[]; noteIndexes?: number[] },
+): Promise<{
+  entities: StoryEntity[];
+  threads: StoryThread[];
+  notes: StoryNote[];
+  proposal: StoryExtractProposal;
+}> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectRef)}/vault/extract/${encodeURIComponent(proposalId)}/accept`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(options || {}),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Failed to accept extract');
+  return data;
+}

@@ -21,6 +21,7 @@ const SettingsPage = lazyWithRecovery('SettingsPage', () => import('./pages/proj
 const CharactersPage = lazyWithRecovery('CharactersPage', () => import('./pages/project/CharactersPage'));
 const AnimePage = lazyWithRecovery('AnimePage', () => import('./pages/project/AnimePage'));
 const QualityPage = lazyWithRecovery('QualityPage', () => import('./pages/project/QualityPage'));
+const StoryVaultPage = lazyWithRecovery('StoryVaultPage', () => import('./pages/project/StoryVaultPage'));
 // Local-first: Admin/credit 云端入口不进入桌面主路径
 
 function RouteLoadingFallback() {
@@ -52,6 +53,7 @@ export default function App() {
                         <Route path="project/:projectId/dashboard" element={<DashboardPage />} />
                         <Route path="project/:projectId/settings" element={<SettingsPage />} />
                         <Route path="project/:projectId/bible" element={<BiblePage />} />
+                        <Route path="project/:projectId/vault" element={<StoryVaultPage />} />
                         <Route path="project/:projectId/summary" element={<SummaryPage />} />
                         <Route path="project/:projectId/outline" element={<OutlinePage />} />
                         <Route path="project/:projectId/generate" element={<GeneratePage />} />
