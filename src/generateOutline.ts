@@ -1266,7 +1266,9 @@ ${batchSpecificConstraints}
         parseLooseJson(raw, 'array'),
         batchStartChapter
       );
-      if (normalized.length === batchChapterCount) {
+      if (normalized.length === batchChapterCount && normalized.every((chapter, offset) =>
+        chapter.index === batchStartChapter + offset && chapter.title.trim() && chapter.goal.trim()
+      )) {
         return normalized;
       }
       parsedCount = Math.max(parsedCount, normalized.length);
@@ -1274,7 +1276,9 @@ ${batchSpecificConstraints}
       // JSON is only a compatibility fallback now.
     }
 
-    lastParseError = `expected ${batchChapterCount}, got ${parsedCount}`;
+    lastParseError = parsedCount === batchChapterCount
+      ? `expected ${batchChapterCount} valid chapters, but chapter numbers or content were invalid`
+      : `expected ${batchChapterCount}, got ${parsedCount}`;
     console.warn(
       `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 解析尝试 ${parseAttempt + 1}/${parseRetryLimit} 失败 (${lastParseError})`
     );

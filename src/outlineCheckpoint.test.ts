@@ -84,3 +84,28 @@ test('does not silently replace missing generated chapters with placeholders', a
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
   }
 });
+
+test('rejects a full-sized JSON batch with missing descriptions or wrong chapter numbers', async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      const content = JSON.stringify([{ index: 1, title: '标题一', goal: '主角寻找重要线索', hook: '悬念' }, { index: 1, title: '标题二', goal: '', hook: '悬念' }]);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end();
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server did not start');
+    await assert.rejects(generateVolumeChapters({ provider: 'openai', model: 'test', apiKey: 'test', baseUrl: `http://127.0.0.1:${address.port}/v1` }, {
+      bible: '测试设定', masterOutline: { mainGoal: '测试目标', milestones: [] },
+      volume: { title: '第一卷', startChapter: 1, endChapter: 2, goal: '目标', conflict: '冲突', climax: '高潮' },
+    }), /batch/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  }
+});
