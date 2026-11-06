@@ -765,7 +765,7 @@ export async function runOutlineGenerationTaskInBackground(params: {
             env.DB,
             taskId,
             `正在生成第 ${i + 1}/${totalVolumes} 卷「${vol.title}」的章节...${suffix}`,
-            computeOutlineProgress(i, totalVolumes)
+            Math.max(20, Math.min(80, 20 + Math.round(((i + batchIndex / totalBatches) / totalVolumes) * 60)))
           );
         },
       });
