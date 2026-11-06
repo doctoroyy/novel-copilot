@@ -251,6 +251,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Keep the project list in sync with the active project's generation state.
+  useEffect(() => {
+    if (!selectedProject) return;
+    setProjects((previous) => previous.map((project) => project.id === selectedProject.id
+      ? { ...project, name: selectedProject.name, state: selectedProject.state, hasOutline: Boolean(selectedProject.outline) }
+      : project));
+  }, [selectedProject]);
+
   const loadProjectIfRouteActive = useCallback(async (targetProjectId: string) => {
     if (!targetProjectId) return false;
     if (routeProjectIdRef.current !== targetProjectId) return false;

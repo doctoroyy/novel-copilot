@@ -1305,6 +1305,8 @@ export async function generateVolumeChapters(
     /** 之前所有已完成的卷（含章节），用于构建全局大纲上下文 */
     previousVolumes?: Array<Omit<VolumeOutline, 'chapters'> & { chapters?: ChapterOutline[] }>;
     onBatchStart?: (progress: VolumeChapterBatchProgress) => Promise<void> | void;
+    initialChapters?: ChapterOutline[];
+    onBatchComplete?: (chapters: ChapterOutline[]) => Promise<void> | void;
   }
 ): Promise<ChapterOutline[]> {
   const {
@@ -1316,6 +1318,8 @@ export async function generateVolumeChapters(
     actualStorySummary,
     previousVolumes,
     onBatchStart,
+    initialChapters = [],
+    onBatchComplete,
   } = args;
 
   const chapterCount = volume.endChapter - volume.startChapter + 1;
@@ -1329,6 +1333,15 @@ export async function generateVolumeChapters(
 
   for (let batchIndex = 0; batchIndex < batchRanges.length; batchIndex += 1) {
     const batchRange = batchRanges[batchIndex];
+
+    const savedBatch = initialChapters.filter(chapter =>
+      chapter.index >= batchRange.startChapter && chapter.index <= batchRange.endChapter
+    ).sort((a, b) => a.index - b.index);
+    if (savedBatch.length === batchRange.endChapter - batchRange.startChapter + 1
+      && savedBatch.every((chapter, index) => chapter.index === batchRange.startChapter + index)) {
+      generatedChapters.push(...savedBatch);
+      continue;
+    }
 
     await onBatchStart?.({
       batchIndex,
@@ -1354,6 +1367,7 @@ export async function generateVolumeChapters(
     });
 
     generatedChapters.push(...batchChapters);
+    await onBatchComplete?.([...generatedChapters]);
 
     if (batchIndex < batchRanges.length - 1) {
       await sleep(1000);

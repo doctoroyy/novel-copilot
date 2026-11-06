@@ -570,11 +570,24 @@ export async function runOutlineGenerationTaskInBackground(params: {
       return;
     }
 
-    try {
-      await consumeCredit(env.DB, userId, 'generate_outline', appendMode ? `追加卷: ${project.name}` : `生成大纲: ${project.name}`);
-    } catch (creditError) {
-      await completeTask(env.DB, taskId, false, (creditError as Error).message);
-      return;
+    const checkpointRow = !appendMode ? await env.DB.prepare(
+      'SELECT outline_json FROM outline_generation_checkpoints WHERE task_id = ?'
+    ).bind(taskId).first() as { outline_json?: string } | null : null;
+    if (!checkpointRow) {
+      // Claim billing for this task before making the charge. A replay must
+      // never charge again, even if a worker stops while processing a request.
+      let shouldCharge = true;
+      if (!appendMode) {
+        const claim = await env.DB.prepare('INSERT OR IGNORE INTO outline_generation_checkpoints (task_id, outline_json) VALUES (?, ?)')
+          .bind(taskId, '{}').run();
+        shouldCharge = Number(claim.meta.changes) > 0;
+      }
+      try {
+        if (shouldCharge) await consumeCredit(env.DB, userId, 'generate_outline', appendMode ? `追加卷: ${project.name}` : `生成大纲: ${project.name}`);
+      } catch (creditError) {
+        await completeTask(env.DB, taskId, false, (creditError as Error).message);
+        return;
+      }
     }
 
     let bible = project.bible;
@@ -601,12 +614,8 @@ export async function runOutlineGenerationTaskInBackground(params: {
     let resumedVolumes: any[] = [];
     let masterOutline: any;
 
-    const existingOutlineRow = await env.DB.prepare(`
-      SELECT outline_json FROM outlines WHERE project_id = ?
-    `).bind(project.id).first() as { outline_json?: string } | null;
-
-    const existingSnapshot = existingOutlineRow?.outline_json
-      ? JSON.parse(existingOutlineRow.outline_json)
+    const existingSnapshot = checkpointRow?.outline_json
+      ? JSON.parse(checkpointRow.outline_json)
       : null;
 
     const canResume = existingSnapshot
@@ -617,7 +626,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
     if (canResume) {
       // 检查哪些卷已有 chapters（已完成）
       const completedCount = existingSnapshot.volumes.filter(
-        (v: any) => Array.isArray(v.chapters) && v.chapters.length > 0
+        (v: any) => v.checkpointCompleted === true && Array.isArray(v.chapters)
+          && v.chapters.length === Number(v.endChapter) - Number(v.startChapter) + 1
+          && v.chapters.every((chapter: any, index: number) => Number(chapter.index) === Number(v.startChapter) + index)
       ).length;
 
       if (completedCount >= existingSnapshot.volumes.length) {
@@ -628,8 +639,11 @@ export async function runOutlineGenerationTaskInBackground(params: {
         const outline = existingSnapshot;
         const validation = validateOutline(outline, targetChapters);
         if (!validation.valid) {
-          console.warn('Outline validation issues:', validation.issues);
+          throw new Error(`断点大纲不完整: ${validation.issues.join('; ')}`);
         }
+
+        await env.DB.prepare('INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)')
+          .bind(project.id, JSON.stringify(outline)).run();
 
         await env.DB.prepare(`
           UPDATE states SET total_chapters = ?, min_chapter_words = ? WHERE project_id = ?
@@ -679,6 +693,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
         characters,
         minChapterWords: effectiveMinChapterWords,
       });
+      resumedVolumes = masterOutline.volumes.map((volume: any) => ({ ...volume, chapters: [] }));
+      await env.DB.prepare('UPDATE outline_generation_checkpoints SET outline_json = ? WHERE task_id = ?')
+        .bind(JSON.stringify({ totalChapters: targetChapters, targetWordCount, mainGoal: masterOutline.mainGoal, milestones: masterOutline.milestones, volumes: resumedVolumes }), taskId).run();
     }
 
     const totalVolumes = masterOutline.volumes?.length || 0;
@@ -704,7 +721,9 @@ export async function runOutlineGenerationTaskInBackground(params: {
 
       // 断点续传：如果该卷已有 chapters，直接复用
       const resumedVol = resumedVolumes[i];
-      if (resumedVol && Array.isArray(resumedVol.chapters) && resumedVol.chapters.length > 0) {
+      if (resumedVol?.checkpointCompleted === true && Array.isArray(resumedVol.chapters)
+        && resumedVol.chapters.length === Number(resumedVol.endChapter) - Number(resumedVol.startChapter) + 1
+        && resumedVol.chapters.every((chapter: any, index: number) => Number(chapter.index) === Number(resumedVol.startChapter) + index)) {
         volumes.push(resumedVol);
         console.log(`Resume: skipping volume ${i + 1} "${resumedVol.title}" (already has ${resumedVol.chapters.length} chapters)`);
         continue;
@@ -731,6 +750,13 @@ export async function runOutlineGenerationTaskInBackground(params: {
         previousVolumeSummary: previousVolumeEndState || undefined,
         minChapterWords: effectiveMinChapterWords,
         previousVolumes: volumes,
+        initialChapters: resumedVol?.chapters || [],
+        onBatchComplete: async (savedChapters) => {
+          resumedVolumes[i] = { ...vol, chapters: savedChapters };
+          const snapshot = buildOutlineSnapshot(resumedVolumes);
+          await env.DB.prepare('UPDATE outline_generation_checkpoints SET outline_json = ? WHERE task_id = ?')
+            .bind(JSON.stringify(snapshot), taskId).run();
+        },
         onBatchStart: async ({ batchIndex, totalBatches, startChapter, endChapter }) => {
           const suffix = totalBatches > 1
             ? ` (批次 ${batchIndex + 1}/${totalBatches}，第 ${startChapter}-${endChapter} 章)`
@@ -746,8 +772,12 @@ export async function runOutlineGenerationTaskInBackground(params: {
 
       const normalizedVolume = normalizeVolume(vol, i, chapters);
       volumes.push(normalizedVolume);
+      resumedVolumes[i] = { ...normalizedVolume, checkpointCompleted: true };
 
-      const snapshotOutline = ensureUniqueChapterTitlesInOutline(buildOutlineSnapshot(volumes));
+      await env.DB.prepare('UPDATE outline_generation_checkpoints SET outline_json = ? WHERE task_id = ?')
+        .bind(JSON.stringify(buildOutlineSnapshot(resumedVolumes)), taskId).run();
+
+      const snapshotOutline = ensureUniqueChapterTitlesInOutline(buildOutlineSnapshot(resumedVolumes));
       await env.DB.prepare(`
         INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)
       `).bind(project.id, JSON.stringify(snapshotOutline)).run();
