@@ -345,6 +345,7 @@ export async function generateTextWithRetry(
   let lastError: Error | undefined;
   const requestArgs: Parameters<typeof generateText>[1] = { ...args };
   const retryLimit = callOptions?.maxRetries ?? maxRetries;
+  let reducedForProviderLimit = false;
 
   for (let i = 0; i < retryLimit; i++) {
     try {
@@ -353,6 +354,18 @@ export async function generateTextWithRetry(
       lastError = error as Error;
       const errorType = classifyError(lastError);
       console.warn(`Generation attempt ${i + 1} failed (${errorType}):`, lastError.message);
+
+      // Some compatible providers enforce a smaller output limit than the
+      // requested budget. Retry once at the previous conservative default.
+      if (!reducedForProviderLimit && errorType === 'invalid_request'
+        && /max(?:imum)?[_\s-]*(?:completion[_\s-]*|output[_\s-]*)?tokens?/i.test(lastError.message)
+        && /(?:exceed|maximum|limit|at most|less than|range)/i.test(lastError.message)
+        && (requestArgs.maxTokens ?? 0) > 2048) {
+        requestArgs.maxTokens = 2048;
+        reducedForProviderLimit = true;
+        i--;
+        continue;
+      }
 
         if (errorType === 'truncated') {
         const cap = getAutoExpandTokenCap(config);

@@ -144,3 +144,40 @@ test('gives a 15-chapter batch enough initial output budget', async () => {
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
   }
 });
+
+test('falls back when a provider rejects the initial output token budget', async () => {
+  const { createServer } = await import('node:http');
+  const budgets: number[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const budget = body.max_completion_tokens ?? body.max_tokens ?? 0;
+      budgets.push(budget);
+      if (budget > 2048) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'max_tokens exceeds maximum 2048', type: 'invalid_request_error' } }));
+        return;
+      }
+      const content = Array.from({ length: 15 }, (_, i) => `${i + 1}|章节标题${i + 1}|主角找到线索并向目标前进|敌人逐渐逼近`).join('\n');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end();
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server did not start');
+    const chapters = await generateVolumeChapters({ provider: 'openai', model: 'test', apiKey: 'test', baseUrl: `http://127.0.0.1:${address.port}/v1` }, {
+      bible: '测试设定', masterOutline: { mainGoal: '测试目标', milestones: [] },
+      volume: { title: '第一卷', startChapter: 1, endChapter: 15, goal: '目标', conflict: '冲突', climax: '高潮' },
+    });
+    assert.equal(chapters.length, 15);
+    assert.deepEqual(budgets, [7680, 2048]);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  }
+});
