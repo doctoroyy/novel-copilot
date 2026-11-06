@@ -1248,7 +1248,9 @@ ${batchSpecificConstraints}
   let lastParseError = '';
 
   for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt++) {
-    const estimatedTokens = Math.max(2048, batchChapterCount * 120);
+    // Reasoning models spend part of this budget before emitting the outline.
+    // Starting too low repeatedly truncates and restarts the same batch.
+    const estimatedTokens = Math.max(4096, batchChapterCount * 512);
     const raw = await generateTextWithRetry(aiConfig, {
       system,
       prompt,

@@ -109,3 +109,38 @@ test('rejects a full-sized JSON batch with missing descriptions or wrong chapter
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
   }
 });
+
+test('gives a 15-chapter batch enough initial output budget', async () => {
+  const { createServer } = await import('node:http');
+  let requests = 0;
+  let firstBudget = 0;
+  const server = createServer((req, res) => {
+    const parts: Buffer[] = [];
+    req.on('data', chunk => parts.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(parts).toString());
+      const budget = body.max_completion_tokens ?? body.max_tokens ?? 0;
+      if (!requests) firstBudget = budget;
+      requests++;
+      const content = Array.from({ length: 15 }, (_, i) => `${i + 1}|章节标题${i + 1}|主角找到线索并向目标前进|敌人逐渐逼近`).join('\n');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'test', choices: [{ index: 0, delta: {}, finish_reason: budget < 7680 ? 'length' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end();
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server did not start');
+    const chapters = await generateVolumeChapters({ provider: 'openai', model: 'test', apiKey: 'test', baseUrl: `http://127.0.0.1:${address.port}/v1` }, {
+      bible: '测试设定', masterOutline: { mainGoal: '测试目标', milestones: [] },
+      volume: { title: '第一卷', startChapter: 1, endChapter: 15, goal: '目标', conflict: '冲突', climax: '高潮' },
+    });
+    assert.equal(chapters.length, 15);
+    assert.ok(firstBudget >= 7680, `initial budget was ${firstBudget}`);
+    assert.equal(requests, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  }
+});
