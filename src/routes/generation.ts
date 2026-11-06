@@ -639,7 +639,13 @@ export async function runOutlineGenerationTaskInBackground(params: {
         const outline = existingSnapshot;
         const validation = validateOutline(outline, targetChapters);
         if (!validation.valid) {
-          throw new Error(`断点大纲不完整: ${validation.issues.join('; ')}`);
+          const indices = outline.volumes.flatMap((volume: any) => volume.chapters.map((chapter: any) => Number(chapter.index)));
+          const unique = new Set(indices);
+          if (indices.length !== targetChapters || unique.size !== targetChapters
+            || Array.from({ length: targetChapters }, (_, index) => index + 1).some(index => !unique.has(index))) {
+            throw new Error(`断点大纲不完整: ${validation.issues.join('; ')}`);
+          }
+          console.warn('Outline validation issues:', validation.issues);
         }
 
         await env.DB.prepare('INSERT OR REPLACE INTO outlines (project_id, outline_json) VALUES (?, ?)')
