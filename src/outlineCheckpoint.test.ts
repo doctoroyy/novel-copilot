@@ -45,6 +45,8 @@ test('resumes only the missing batch with the saved chapters as context', async 
     assert.equal(requests, 1);
     assert.match(prompt, /已保存15/);
     assert.match(prompt, /旧卷3/);
+    assert.match(prompt, /旧章0-0/);
+    assert.match(prompt, /旧章2-79/);
     assert.ok(prompt.length < 30000, `上下文过长: ${prompt.length}`);
     assert.deepEqual(checkpoints, [30]);
     assert.equal(result.length, 30);
