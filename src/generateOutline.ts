@@ -1092,12 +1092,24 @@ function buildExistingVolumesDetailedContext(
       return header;
     }
 
-    // 构建近期卷的完整章节概要
-    const chapterLines = chapters.map((ch) => {
-      return `    第${ch.index}章 ${ch.title}${ch.goal ? ' | ' + ch.goal : ''}`;
+    // Preserve the beginning, representative milestones, and the most recent
+    // chapters without letting older outlines dominate the next model call.
+    const selectedIndices = chapters.length <= 16
+      ? chapters.map((_, index) => index)
+      : Array.from(new Set([
+          0, 1, 2,
+          ...Array.from({ length: 5 }, (_, sample) => Math.floor((sample + 1) * (chapters.length - 9) / 6)),
+          ...Array.from({ length: 8 }, (_, offset) => chapters.length - 8 + offset),
+        ])).sort((a, b) => a - b);
+    const chapterLines = selectedIndices.map((index) => {
+      const ch = chapters[index];
+      const goal = ch.goal ? String(ch.goal).slice(0, 180) : '';
+      return `    第${ch.index}章 ${ch.title}${goal ? ' | ' + goal : ''}`;
     }).join('\n');
 
-    return `${header}\n  章节概要:\n${chapterLines}`;
+    const samplingNote = selectedIndices.length < chapters.length
+      ? `（共 ${chapters.length} 章，以下为开头、代表性节点和最近章节）` : '';
+    return `${header}\n  章节概要${samplingNote}:\n${chapterLines}`;
   }).join('\n\n');
 }
 
@@ -1234,7 +1246,6 @@ ${batchSpecificConstraints}
 
   const parseRetryLimit = 3;
   let lastParseError = '';
-  let lastRawText = '';
 
   for (let parseAttempt = 0; parseAttempt < parseRetryLimit; parseAttempt++) {
     const estimatedTokens = Math.max(2048, batchChapterCount * 120);
@@ -1249,13 +1260,7 @@ ${batchSpecificConstraints}
     if (textChapters.length === batchChapterCount) {
       return textChapters;
     }
-    if (textChapters.length > 0 && textChapters.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
-      console.warn(
-        `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 文本解析章节数不匹配：期望 ${batchChapterCount}，实际 ${textChapters.length}，使用占位补全`
-      );
-      return padChaptersToCount(textChapters, batchStartChapter, batchChapterCount);
-    }
-
+    let parsedCount = textChapters.length;
     try {
       const normalized = normalizeVolumeChapterPayload(
         parseLooseJson(raw, 'array'),
@@ -1264,20 +1269,14 @@ ${batchSpecificConstraints}
       if (normalized.length === batchChapterCount) {
         return normalized;
       }
-      if (normalized.length > 0 && normalized.length >= Math.max(1, Math.ceil(batchChapterCount * 0.5))) {
-        console.warn(
-          `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} JSON 解析章节数不匹配：期望 ${batchChapterCount}，实际 ${normalized.length}，使用占位补全`
-        );
-        return padChaptersToCount(normalized, batchStartChapter, batchChapterCount);
-      }
+      parsedCount = Math.max(parsedCount, normalized.length);
     } catch {
       // JSON is only a compatibility fallback now.
     }
 
-    lastParseError = `expected ${batchChapterCount}, got 0`;
-    lastRawText = raw;
+    lastParseError = `expected ${batchChapterCount}, got ${parsedCount}`;
     console.warn(
-      `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 解析尝试 ${parseAttempt + 1}/${parseRetryLimit} 失败 (${lastParseError})，AI 原始返回前500字：${raw.slice(0, 500)}`
+      `[generateVolumeChapters] 批次 ${batchIndex + 1}/${totalBatches} 解析尝试 ${parseAttempt + 1}/${parseRetryLimit} 失败 (${lastParseError})`
     );
 
     if (parseAttempt < parseRetryLimit - 1) {
@@ -1285,8 +1284,7 @@ ${batchSpecificConstraints}
     }
   }
 
-  const debugInfo = lastRawText ? `\n\n[DEBUG OUTPUT]:\n${lastRawText.slice(0, 1500)}` : '';
-  throw new Error(`Failed to parse volume chapter batch ${batchIndex + 1}/${totalBatches} after ${parseRetryLimit} attempts: ${lastParseError}${debugInfo}`);
+  throw new Error(`Failed to parse volume chapter batch ${batchIndex + 1}/${totalBatches} after ${parseRetryLimit} attempts: ${lastParseError}`);
 }
 
 /**
