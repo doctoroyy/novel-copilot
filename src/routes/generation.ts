@@ -570,18 +570,15 @@ export async function runOutlineGenerationTaskInBackground(params: {
       return;
     }
 
-    const checkpointRow = !appendMode ? await env.DB.prepare(
+    const checkpointRow = await env.DB.prepare(
       'SELECT outline_json FROM outline_generation_checkpoints WHERE task_id = ?'
-    ).bind(taskId).first() as { outline_json?: string } | null : null;
+    ).bind(taskId).first() as { outline_json?: string } | null;
     if (!checkpointRow) {
       // Claim billing for this task before making the charge. A replay must
       // never charge again, even if a worker stops while processing a request.
-      let shouldCharge = true;
-      if (!appendMode) {
-        const claim = await env.DB.prepare('INSERT OR IGNORE INTO outline_generation_checkpoints (task_id, outline_json) VALUES (?, ?)')
-          .bind(taskId, '{}').run();
-        shouldCharge = Number(claim.meta.changes) > 0;
-      }
+      const claim = await env.DB.prepare('INSERT OR IGNORE INTO outline_generation_checkpoints (task_id, outline_json) VALUES (?, ?)')
+        .bind(taskId, '{}').run();
+      const shouldCharge = Number(claim.meta.changes) > 0;
       try {
         if (shouldCharge) await consumeCredit(env.DB, userId, 'generate_outline', appendMode ? `追加卷: ${project.name}` : `生成大纲: ${project.name}`);
       } catch (creditError) {
@@ -1792,7 +1789,11 @@ export async function runChapterGenerationTaskInBackground(params: {
     try {
       // 6.0 Consume Credit
       try {
-        await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+        const claim = await env.DB.prepare('INSERT OR IGNORE INTO chapter_generation_charges (task_id, chapter_index) VALUES (?, ?)')
+          .bind(taskId, chapterIndex).run();
+        if (Number(claim.meta.changes) > 0) {
+          await consumeCredit(env.DB, userId, 'generate_chapter', `生成章节: ${project.name} 第 ${chapterIndex} 章`);
+        }
       } catch (creditError) {
         await updateTaskMessage(env.DB, taskId, `能量不足: ${(creditError as Error).message}`, chapterIndex);
         await completeTask(env.DB, taskId, false, (creditError as Error).message);
